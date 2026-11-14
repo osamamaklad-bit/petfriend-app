@@ -10,6 +10,8 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 
 Each tool keeps **its own login**, the same as before: POS asks for its PIN, Orders for its API URL and app key (Settings), and Shipments for its PIN. Each one remembers its login on the phone.
 
+**Language:** English by default. The globe button in the tab bar switches every tab between English and Arabic (right-to-left), and the phone remembers the choice. The translations are in `i18n.js`: add new on-screen text to `EXACT`, or to `PATTERNS` if it contains a name or number.
+
 A tab you leave keeps its state (for example, a POS cart survives while you check a shipment), and its camera switches off.
 
 ## Layout
@@ -17,6 +19,7 @@ A tab you leave keeps its state (for example, a POS cart survives while you chec
 ```
 index.html               main page: tab bar that loads each tool
 manifest.webmanifest     install info (name, icons, shortcuts to each tab)
+i18n.js                  English / Arabic translations (shared by all tabs)
 sw.js                    offline cache for all tools (bump CACHE on each release)
 pos/index.html           POS
 orders/index.html        Fulfill + Returns

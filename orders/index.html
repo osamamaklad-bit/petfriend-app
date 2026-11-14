@@ -9,6 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PF Orders">
 <title>Pet Friend Orders</title>
+<script src="../i18n.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
   /* Pet Friend brand: same palette as the Shipments and POS tabs */
@@ -110,7 +111,7 @@
   .chips { display: flex; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; }
   .chips button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 600; }
   .chips button.on { background: var(--accent); border-color: var(--accent); color: var(--on); }
-  .ord { display: flex; justify-content: space-between; gap: 10px; align-items: center; width: 100%; text-align: left;
+  .ord { display: flex; justify-content: space-between; gap: 10px; align-items: center; width: 100%; text-align: start;
     background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; color: var(--ink); font: inherit; }
   .ord .a { font-weight: 800; font-size: 18px; }
   .ord .b { color: var(--muted); font-size: 13px; margin-top: 2px; }
@@ -118,7 +119,7 @@
   .pill.u { background: var(--bad-bg); color: var(--bad); }
   .pill.p { background: var(--warn-bg); color: var(--warn); }
   .pill.o { background: var(--soft); color: var(--muted); }
-  .ord .q { text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .ord .q { text-align: end; font-size: 13px; color: var(--muted); white-space: nowrap; }
   .ord .q b { display: block; font-size: 20px; color: var(--ink); }
 
   /* ---------- mode switch (fulfill / returns) ---------- */
@@ -222,6 +223,7 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const T = (s) => (window.pfT ? window.pfT(s) : s); // Arabic for confirm/prompt boxes
   const state = { mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
   const isRet = () => state.mode === 'return';
   function idleMsg() {
@@ -309,7 +311,8 @@
 
   function fmtDate(iso) {
     const d = new Date(iso);
-    return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const loc = window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : [];
+    return d.toLocaleString(loc, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
 
   function renderOrders() {
@@ -345,6 +348,7 @@
     renderOrders();
   });
   $('refreshBtn').addEventListener('click', loadList);
+  document.addEventListener('pf-lang', renderOrders); // dates follow the language
   $('orderInput').addEventListener('input', renderOrders);
 
   // ---------- scanning ----------
@@ -458,8 +462,8 @@
     if (state.busy) return;
     const n = totalGot(), name = state.order.name;
     const restock = $('restock').checked;
-    if (!confirm('Create a return for ' + n + (n === 1 ? ' item' : ' items') + ' on ' + name + '?' +
-      (restock ? '\nThe items will be put back into stock.' : '\nThe items will NOT be restocked.'))) return;
+    if (!confirm(T('Create a return for ' + n + (n === 1 ? ' item' : ' items') + ' on ' + name + '?' +
+      (restock ? '\nThe items will be put back into stock.' : '\nThe items will NOT be restocked.')))) return;
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Creating return for ' + name + '...');
     try {
@@ -510,7 +514,7 @@
   function setMode(m, initial) {
     if (!initial) {
       if (m === state.mode || state.busy) return;
-      if (state.order && totalGot() > 0 && !confirm('Discard the scans for ' + state.order.name + '?')) return;
+      if (state.order && totalGot() > 0 && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
     }
     state.mode = m;
     store.set('mode', m);
@@ -534,9 +538,9 @@
 
   // ---------- settings ----------
   function openSettings() {
-    const url = prompt('Apps Script web app URL', store.get('apiUrl'));
+    const url = prompt(T('Apps Script web app URL'), store.get('apiUrl'));
     if (url !== null) store.set('apiUrl', url.trim());
-    const key = prompt('App key', store.get('appKey'));
+    const key = prompt(T('App key'), store.get('appKey'));
     if (key !== null) store.set('appKey', key.trim());
   }
   $('settingsBtn').addEventListener('click', openSettings);

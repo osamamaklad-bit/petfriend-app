@@ -11,6 +11,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PetFriend">
 <title>PetFriend</title>
+<script src="i18n.js"></script>
 <style>
   :root { --bar: #ffffff; --line: #d5dbd4; --ink: #17201a; --muted: #6b7280; --acc: #d9001b; --bg: #f3f5f2; }
   @media (prefers-color-scheme: dark) {
@@ -47,6 +48,9 @@
     nav button { flex: 0 0 auto; padding: 12px 4px; font-size: 13px; }
     nav button svg { width: 26px; height: 26px; }
     nav button.on { background: color-mix(in srgb, var(--acc) 10%, transparent); box-shadow: inset 3px 0 0 var(--acc); }
+    [dir="rtl"] nav button.on { box-shadow: inset -3px 0 0 var(--acc); }
+    [dir="rtl"] nav { border-right: 0; border-left: 1px solid var(--line); }
+    nav #langBtn { margin-top: auto; }
   }
 </style>
 </head>
@@ -62,6 +66,9 @@
   </button>
   <button data-t="shipments" aria-label="Shipment photos">
     <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Shipments
+  </button>
+  <button id="langBtn" aria-label="Language">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg><span data-no-i18n id="langName"></span>
   </button>
 </nav>
 <script>
@@ -95,6 +102,22 @@
     try { localStorage.setItem('pf_tab', t); } catch (e) {}
     if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t);
   }
+
+  // ---------- language (English default, Arabic option); shared by every tab ----------
+  function showLangName() {
+    // The button names the language you would switch TO
+    document.getElementById('langName').textContent = window.pfLang.get() === 'ar' ? 'English' : 'العربية';
+  }
+  document.getElementById('langBtn').addEventListener('click', function () {
+    const next = window.pfLang.get() === 'ar' ? 'en' : 'ar';
+    window.pfLang.set(next);
+    Object.keys(frames).forEach(function (k) {
+      try { frames[k].contentWindow.postMessage({ type: 'pf-lang', lang: next }, location.origin); } catch (e) {}
+    });
+    showLangName();
+  });
+  document.addEventListener('pf-lang', showLangName);
+  showLangName();
 
   document.getElementById('tabs').addEventListener('click', function (e) {
     const b = e.target.closest('button[data-t]');

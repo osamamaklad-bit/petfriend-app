@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PetFriend POS</title>
+<script src="../i18n.js"></script>
 <meta name="theme-color" content="#8ef5fc">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -29,6 +30,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #f2b705}
   .w{max-width:1200px;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:20px;align-items:start}
   .right{position:sticky;top:20px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
   .right:has(#cart:empty)::before{content:"Cart is empty";display:block;color:#5b675f;padding:6px 0}
+  [lang="ar"] .right:has(#cart:empty)::before{content:"السلة فارغة"}
   #v{max-height:340px}
   #res{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
   #res .i{margin:0}
