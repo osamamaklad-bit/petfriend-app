@@ -22,6 +22,12 @@
     'Shipment photos': 'صور الشحنات',
     'Tools': 'الأدوات',
     'Language': 'اللغة',
+    'Cancel': 'إلغاء',
+    'Show': 'إظهار',
+    'Hide': 'إخفاء',
+    'Open Settings and enter the PIN.': 'افتح الإعدادات وأدخل الرقم السري.',
+    'Wrong PIN. Open Settings and enter it again.': 'رقم سري خاطئ. افتح الإعدادات وأدخله مرة أخرى.',
+    'Pet Friend POS': 'نقطة بيع بت فريند',
 
     // ---- Orders (fulfill + returns)
     'Pet Friend Orders': 'طلبات بت فريند',

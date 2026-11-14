@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="PF Orders">
 <title>Pet Friend Orders</title>
 <script src="../i18n.js"></script>
+<script src="../settings.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
   /* Pet Friend brand: same palette as the Shipments and POS tabs */
@@ -544,18 +545,17 @@
   // ---------- settings ----------
   function apiUrl() { return API_URL || store.get('apiUrl'); }
   function ready() { return !!(apiUrl() && store.get('appKey')); }
-  function openSettings() {
-    if (!API_URL) { // only asked if no URL is set in the code above
-      const url = prompt(T('Apps Script web app URL'), store.get('apiUrl'));
-      if (url !== null) store.set('apiUrl', url.trim());
-    }
-    const key = prompt(T('App key'), store.get('appKey'));
-    if (key !== null) store.set('appKey', key.trim());
+  async function openSettings() {
+    const fields = [];
+    if (!API_URL) fields.push({ key: 'apiUrl', label: 'Apps Script web app URL', value: store.get('apiUrl') }); // only if not set in the code above
+    fields.push({ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') });
+    const v = await pfSettings({ title: 'Settings', fields: fields });
+    if (!v) return;
+    Object.keys(v).forEach(function (k) { store.set(k, v[k]); });
+    if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
+    else { say(idleMsg()); if (!state.order && !isRet()) loadList(); }
   }
-  $('settingsBtn').addEventListener('click', function () {
-    openSettings();
-    if (ready() && !state.order && !isRet()) loadList();
-  });
+  $('settingsBtn').addEventListener('click', openSettings);
 
   // Inside the PetFriend app: stop the camera when the user switches to another tab
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
