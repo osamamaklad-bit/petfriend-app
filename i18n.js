@@ -71,6 +71,8 @@
     'Set the API URL and key in Settings': 'أدخل رابط الخادم والمفتاح في الإعدادات',
     'Request failed': 'فشل الطلب',
     'Open Settings and enter the API URL and app key.': 'افتح الإعدادات وأدخل رابط الخادم ومفتاح التطبيق.',
+    'Open Settings and enter the app key.': 'افتح الإعدادات وأدخل مفتاح التطبيق.',
+    'Enter the app key in Settings': 'أدخل مفتاح التطبيق في الإعدادات',
     'Apps Script web app URL': 'رابط تطبيق Apps Script',
     'App key': 'مفتاح التطبيق',
     'The items will be put back into stock.': 'سيتم إرجاع المنتجات إلى المخزون.',

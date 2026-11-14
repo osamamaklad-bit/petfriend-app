@@ -216,7 +216,12 @@
 
 <script>
 (function () {
-  // ---------- storage (API URL and key stay on this phone, not in the code) ----------
+  // ---------- server ----------
+  // The Orders Apps Script web app (same idea as API_URL in the POS and Shipments tabs).
+  // The app key is NOT kept here: each phone enters it once in Settings.
+  const API_URL = '';
+
+  // ---------- storage (the app key stays on this phone, not in the code) ----------
   const store = {
     get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -255,8 +260,8 @@
 
   // ---------- API ----------
   async function api(payload) {
-    const url = store.get('apiUrl'), key = store.get('appKey');
-    if (!url || !key) { openSettings(); throw new Error('Set the API URL and key in Settings'); }
+    const url = apiUrl(), key = store.get('appKey');
+    if (!url || !key) { openSettings(); throw new Error(API_URL ? 'Enter the app key in Settings' : 'Set the API URL and key in Settings'); }
     // No Content-Type header: keeps it a "simple" request so Apps Script needs no CORS preflight
     const res = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ key: key }, payload)) });
     const data = await res.json();
@@ -525,7 +530,7 @@
     render();
     if (!initial) {
       say(idleMsg());
-      if (m === 'fulfill' && store.get('apiUrl')) loadList();
+      if (m === 'fulfill' && ready()) loadList();
     }
   }
   $('modes').addEventListener('click', function (e) {
@@ -537,19 +542,26 @@
   $('camBtn').addEventListener('click', toggleCamera);
 
   // ---------- settings ----------
+  function apiUrl() { return API_URL || store.get('apiUrl'); }
+  function ready() { return !!(apiUrl() && store.get('appKey')); }
   function openSettings() {
-    const url = prompt(T('Apps Script web app URL'), store.get('apiUrl'));
-    if (url !== null) store.set('apiUrl', url.trim());
+    if (!API_URL) { // only asked if no URL is set in the code above
+      const url = prompt(T('Apps Script web app URL'), store.get('apiUrl'));
+      if (url !== null) store.set('apiUrl', url.trim());
+    }
     const key = prompt(T('App key'), store.get('appKey'));
     if (key !== null) store.set('appKey', key.trim());
   }
-  $('settingsBtn').addEventListener('click', openSettings);
+  $('settingsBtn').addEventListener('click', function () {
+    openSettings();
+    if (ready() && !state.order && !isRet()) loadList();
+  });
 
   // Inside the PetFriend app: stop the camera when the user switches to another tab
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
 
   setMode(store.get('mode') === 'return' ? 'return' : 'fulfill', true);
-  if (!store.get('apiUrl')) say('Open Settings and enter the API URL and app key.', 'warn');
+  if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
   else if (isRet()) say(idleMsg());
   else loadList();
 })();
