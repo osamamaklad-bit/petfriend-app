@@ -3,26 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#14213d">
+<meta name="theme-color" content="#e3031b">
+<link rel="icon" href="../icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Fulfill">
-<title>Scan to Fulfill</title>
+<meta name="apple-mobile-web-app-title" content="PF Orders">
+<title>Pet Friend Orders</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
+  /* Pet Friend brand: same palette as the Shipments and POS tabs */
   :root {
-    --ink: #14213d;
-    --paper: #f6f7f9;
+    --ink: #2a1417;
+    --paper: #e9fcfd;
     --card: #ffffff;
-    --line: #d9dde5;
-    --muted: #5d667a;
+    --line: #b9ecf1;
+    --muted: #6b5f62;
     --ok: #15803d;
     --ok-bg: #dcfce7;
-    --warn: #b45309;
+    --warn: #9a4a00;
     --warn-bg: #fef3c7;
-    --bad: #b91c1c;
-    --bad-bg: #fee2e2;
-    --accent: #14213d;
+    --bad: #c00018;
+    --bad-bg: #ffe4e7;
+    --accent: #e3031b;
+    --on: #ffffff;
+    --soft: #f1fdfe;
+    --done-bg: #f3fbf5;
+    --ret: #9a3412;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eaf7f8; --paper: #0f1c1e; --card: #17282b; --line: #27403f; --muted: #8fb0b3;
+      --ok: #4ade80; --ok-bg: #12301f; --warn: #f0a35e; --warn-bg: #3a2610; --bad: #ff6b7a; --bad-bg: #3a1218;
+      --accent: #ff4a5c; --on: #1a0508; --soft: #1d3236; --done-bg: #132b20; --ret: #f0a35e;
+    }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
@@ -31,12 +44,12 @@
     background: var(--paper); color: var(--ink);
     padding-top: env(safe-area-inset-top, 0px);
   }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; background: var(--ink); color: #fff;
-  }
-  header h1 { font-size: 18px; margin: 0; font-weight: 700; }
-  header button { background: transparent; color: #fff; border: 1px solid #ffffff55; border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+  header { display: flex; align-items: center; gap: 10px; max-width: 640px; margin: 0 auto; padding: 14px 12px 4px; }
+  header .logo { width: 44px; height: 44px; border-radius: 12px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; }
+  header h1 small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+  body.ret header h1 small { color: var(--ret); }
+  header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; font: inherit; font-size: 13px; }
   main { padding: 12px 12px 140px; max-width: 640px; margin: 0 auto; }
 
   .orderbar { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -45,7 +58,7 @@
     border-radius: 10px; background: var(--card); color: var(--ink);
   }
   button.primary {
-    background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+    background: var(--accent); color: var(--on); border: 0; border-radius: 10px;
     padding: 12px 16px; font-size: 16px; font-weight: 600;
   }
   button.ghost { background: var(--card); color: var(--ink); border: 2px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 16px; font-weight: 600; }
@@ -73,8 +86,8 @@
     background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px;
   }
   .item.part { border-color: var(--warn); }
-  .item.done { border-color: var(--ok); background: #f3fbf5; }
-  .item img, .item .noimg { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: #e8ebf0; }
+  .item.done { border-color: var(--ok); background: var(--done-bg); }
+  .item img, .item .noimg { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--soft); }
   .item .t { font-weight: 600; font-size: 15px; line-height: 1.25; }
   .item .m { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-all; }
   .count { text-align: center; }
@@ -90,13 +103,13 @@
   }
   footer .row { max-width: 640px; margin: 0 auto; display: flex; gap: 8px; align-items: center; }
   footer label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-  #fulfillBtn { flex: 1; padding: 16px; font-size: 18px; background: var(--ok); }
+  #fulfillBtn { flex: 1; padding: 16px; font-size: 18px; background: var(--accent); }
   #fulfillBtn:disabled { background: var(--muted); }
   .empty { color: var(--muted); text-align: center; padding: 28px 8px; }
 
   .chips { display: flex; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; }
   .chips button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 600; }
-  .chips button.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .chips button.on { background: var(--accent); border-color: var(--accent); color: var(--on); }
   .ord { display: flex; justify-content: space-between; gap: 10px; align-items: center; width: 100%; text-align: left;
     background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; color: var(--ink); font: inherit; }
   .ord .a { font-weight: 800; font-size: 18px; }
@@ -104,16 +117,14 @@
   .ord .pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
   .pill.u { background: var(--bad-bg); color: var(--bad); }
   .pill.p { background: var(--warn-bg); color: var(--warn); }
-  .pill.o { background: #e8ebf0; color: var(--muted); }
+  .pill.o { background: var(--soft); color: var(--muted); }
   .ord .q { text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; }
   .ord .q b { display: block; font-size: 20px; color: var(--ink); }
 
   /* ---------- mode switch (fulfill / returns) ---------- */
   .modes { display: flex; gap: 4px; padding: 4px; margin-bottom: 10px; background: var(--card); border: 2px solid var(--line); border-radius: 12px; }
   .modes button { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 10px; border-radius: 8px; font-size: 16px; font-weight: 700; }
-  .modes button.on { background: var(--ink); color: #fff; }
-  :root { --ret: #9a3412; }
-  body.ret header { background: var(--ret); }
+  .modes button.on { background: var(--accent); color: var(--on); }
   body.ret .modes button.on { background: var(--ret); }
   body.ret #fulfillBtn { background: var(--ret); }
   body.ret #fulfillBtn:disabled { background: var(--muted); }
@@ -125,7 +136,8 @@
 </head>
 <body>
 <header>
-  <h1>Scan to Fulfill</h1>
+  <img class="logo" src="../icon-192.png" alt="Pet Friend">
+  <h1>Pet Friend Orders<small id="modeLabel">Fulfill</small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -389,7 +401,7 @@
       ? (totalGot() ? 'Return ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Return')
       : 'Fulfill';
     if (!state.order) {
-      list.innerHTML = '<div class="empty">' + (isRet() ? 'Scan or type an order number to start a return.' : 'No order loaded.') + '</div>';
+      list.innerHTML = isRet() ? '<div class="empty">Scan or type an order number to start a return.</div>' : '';
       $('fulfillBtn').disabled = true; return;
     }
     $('orderName').textContent = state.order.name;
@@ -486,6 +498,7 @@
     state.mode = m;
     store.set('mode', m);
     document.body.classList.toggle('ret', m === 'return');
+    $('modeLabel').textContent = m === 'return' ? 'Returns' : 'Fulfill';
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
     state.order = null; state.items = [];
     render();
