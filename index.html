@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#d9001b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PetFriend">
+<title>PetFriend</title>
+<style>
+  :root { --bar: #ffffff; --line: #d5dbd4; --ink: #17201a; --muted: #6b7280; --acc: #d9001b; --bg: #f3f5f2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bar: #17282b; --line: #27403f; --ink: #eaf7f8; --muted: #8fb0b3; --acc: #ff4a5c; --bg: #0f1c1e; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; height: 100dvh; background: var(--bg);
+    font: 16px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  #frames { flex: 1; position: relative; min-height: 0; }
+  #frames iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  #frames iframe[hidden] { display: none; }
+  nav {
+    display: flex; background: var(--bar); border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  nav button {
+    flex: 1; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
+    padding: 8px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer;
+  }
+  nav button svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  nav button.on { color: var(--acc); }
+  nav button:focus-visible { outline: 3px solid var(--acc); outline-offset: -3px; }
+</style>
+</head>
+<body>
+<div id="frames"></div>
+<nav id="tabs" aria-label="Tools">
+  <button data-t="pos" aria-label="Point of sale">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M7 8h4"/></svg>POS
+  </button>
+  <button data-t="orders" aria-label="Fulfill and returns">
+    <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></svg>Orders
+  </button>
+  <button data-t="shipments" aria-label="Shipment photos">
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Shipments
+  </button>
+</nav>
+<script>
+(function () {
+  // Each tool is its own page with its own login (PIN / key); loaded on first use and kept alive after that,
+  // so e.g. a POS cart survives while you check a shipment.
+  const PAGES = { pos: 'pos/index.html', orders: 'orders/index.html', shipments: 'shipments/index.html' };
+  const frames = {};
+  let current = null;
+
+  function show(t) {
+    if (!PAGES[t] || t === current) return;
+    if (current && frames[current]) {
+      frames[current].hidden = true;
+      try { frames[current].contentWindow.postMessage('pf-hide', location.origin); } catch (e) {} // turns its camera off
+    }
+    if (!frames[t]) {
+      const f = document.createElement('iframe');
+      f.src = PAGES[t];
+      f.title = t;
+      f.allow = 'camera; microphone; autoplay; fullscreen';
+      document.getElementById('frames').appendChild(f);
+      frames[t] = f;
+    }
+    frames[t].hidden = false;
+    current = t;
+    document.querySelectorAll('#tabs button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.t === t);
+      b.setAttribute('aria-current', b.dataset.t === t ? 'page' : 'false');
+    });
+    try { localStorage.setItem('pf_tab', t); } catch (e) {}
+    if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t);
+  }
+
+  document.getElementById('tabs').addEventListener('click', function (e) {
+    const b = e.target.closest('button[data-t]');
+    if (b) show(b.dataset.t);
+  });
+
+  let start = location.hash.slice(1);
+  if (!PAGES[start]) { try { start = localStorage.getItem('pf_tab') || ''; } catch (e) { start = ''; } }
+  show(PAGES[start] ? start : 'pos');
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+})();
+</script>
+</body>
+</html>

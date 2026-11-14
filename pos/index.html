@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PetFriend POS</title>
+<meta name="theme-color" content="#8ef5fc">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PetFriend POS">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+:root{--bg:#f3f5f2;--ink:#17201a;--green:#d9001b;--line:#d5dbd4}
+*{box-sizing:border-box}
+body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+.w{max-width:720px;margin:auto;padding:12px}
+input,button{font:inherit;padding:11px;border:1px solid var(--line);border-radius:6px}
+button{background:var(--green);color:#fff;border:0;cursor:pointer}
+button.g{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible{outline:3px solid #f2b705}
+.r{display:flex;gap:6px;margin:8px 0}.r input{flex:1;min-width:0}
+.i{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;padding:8px 10px;border-radius:6px;margin:4px 0}
+.i b{display:block}.i small{color:#5b675f}
+.q{display:flex;align-items:center;gap:6px}
+#total{font-size:44px;font-weight:700;margin:10px 0 2px}
+#v{width:100%;max-height:220px;border-radius:6px;display:none;background:#000}
+#msg{min-height:22px;color:#a32020}
+#rc{display:none}
+@media print{.w{display:none}#rc{display:block;font:12px monospace;width:72mm}}
+</style></head><body>
+<div class="w">
+  <div class="r"><input id="pin" type="password" placeholder="PIN" autocomplete="off"><button class="g" id="today">Today</button></div>
+  <div class="r"><input id="q" placeholder="Scan or type barcode / name" autofocus autocomplete="off"><button id="cam">Camera</button></div>
+  <video id="v" playsinline muted></video>
+  <div id="msg"></div>
+  <div id="res"></div>
+  <div id="cart"></div>
+  <div class="r"><input id="disc" type="number" min="0" placeholder="Discount"><select id="dtype" style="padding:11px;border:1px solid var(--line);border-radius:6px"><option value="pct">%</option><option value="amount">EGP</option></select><input id="cash" type="number" min="0" placeholder="Cash received"></div>
+  <div id="total">0.00</div>
+  <div id="chg"></div>
+  <div class="r"><button id="pay" style="flex:1">Complete cash sale</button><button class="g" id="clr">Clear</button></div>
+  <div id="td"></div>
+</div>
+<div id="rc"></div>
+<script>
+const API_URL = 'https://script.google.com/macros/s/AKfycbzbjctavfEQOvwqVNI3GUP_VUsPfUALPSIyNJ2Zr3k0rNC18ozBJMd5b5g-V2E4KiGE/exec';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let cart = [], stream = null, lastScan = '', lastAt = 0;
+try { $('pin').value = localStorage.getItem('pin') || ''; } catch (e) {}
+
+async function api(action, data) {
+  const pin = $('pin').value;
+  try { localStorage.setItem('pin', pin); } catch (e) {}
+  const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action, pin, ...data }) }); // text/plain avoids CORS preflight
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error);
+  return j.data;
+}
+const say = t => $('msg').textContent = t || '';
+const sub = () => cart.reduce((s, i) => s + i.price * i.qty, 0);
+const total = () => { const d = Number($('disc').value) || 0, s = sub(); return Math.max(0, $('dtype').value === 'amount' ? s - d : s * (1 - d / 100)); };
+
+function add(v) {
+  const c = cart.find(i => i.id === v.id);
+  c ? c.qty++ : cart.push({ id: v.id, name: v.displayName, price: Number(v.price), list: Number(v.price), qty: 1 });
+  $('res').innerHTML = ''; $('q').value = ''; $('q').focus(); render();
+}
+
+async function find(text) {
+  const q = (text || $('q').value).trim();
+  if (!q) return;
+  say('Searching…');
+  try {
+    const list = await api('search', { q });
+    say(list.length ? '' : 'No product found for "' + q + '"');
+    if (list.length === 1 && /^\d+$/.test(q)) return add(list[0]);
+    $('res').innerHTML = list.map((v, k) => `<div class="i"><span><b>${esc(v.displayName)}</b><small>${esc(v.sku || '')} · stock ${v.inventoryQuantity}</small></span><button data-k="${k}">${v.price}</button></div>`).join('');
+    $('res').querySelectorAll('button').forEach(b => b.onclick = () => add(list[b.dataset.k]));
+  } catch (e) { say(e.message); }
+}
+
+function render() {
+  $('cart').innerHTML = cart.map((i, k) => `<div class="i"><span><b>${esc(i.name)}</b><small>Price <input class="p" type="number" step="0.01" min="0" value="${i.price}" data-k="${k}" style="width:90px;padding:4px"></small></span><span class="q"><button class="g" data-k="${k}" data-d="-1">−</button>${i.qty}<button class="g" data-k="${k}" data-d="1">+</button></span></div>`).join('');
+  $('cart').querySelectorAll('input.p').forEach(x => x.onchange = () => {
+    const i = cart[x.dataset.k]; let p = Number(x.value);
+    if (!(p >= 0) || p > i.list) { say('Price must be between 0 and ' + i.list); p = i.list; }
+    i.price = p; render();
+  });
+  $('cart').querySelectorAll('button').forEach(b => b.onclick = () => {
+    const i = cart[b.dataset.k]; i.qty += Number(b.dataset.d);
+    if (i.qty <= 0) cart.splice(b.dataset.k, 1); render();
+  });
+  $('total').textContent = total().toFixed(2);
+  const ch = (Number($('cash').value) || 0) - total();
+  $('chg').textContent = $('cash').value ? (ch >= 0 ? 'Change: ' + ch.toFixed(2) : 'Short by ' + (-ch).toFixed(2)) : '';
+}
+
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') find(); }); // USB/Bluetooth scanners send Enter
+$('disc').oninput = $('cash').oninput = $('dtype').onchange = render;
+$('clr').onclick = () => { cart = []; $('cash').value = $('disc').value = ''; render(); };
+
+$('pay').onclick = async () => {
+  if (!cart.length) return say('Cart is empty');
+  const dv = Number($('disc').value) || 0;
+  if ($('dtype').value === 'pct' && dv > 100) return say('Discount cannot exceed 100%');
+  if ($('dtype').value === 'amount' && dv > sub()) return say('Discount is more than the cart total');
+  const t = total(), cash = Number($('cash').value) || t;
+  if (cash < t) return say('Cash received is less than the total');
+  $('pay').disabled = true; say('Saving sale…');
+  try {
+    const items = cart.map(i => ({ id: i.id, qty: i.qty, price: i.price })), disc = Number($('disc').value) || 0;
+    const o = await api('sale', { items, discountType: $('dtype').value, discountValue: disc });
+    receipt(o, cash); say('Sale ' + o.name + ' saved');
+    cart = []; $('cash').value = $('disc').value = ''; render(); window.print();
+  } catch (e) { say(e.message); }
+  $('pay').disabled = false; $('q').focus();
+};
+
+function receipt(o, cash) {
+  $('rc').innerHTML = `<b>PetFriend Stores</b><br>${new Date().toLocaleString()}<br>Order ${esc(o.name)}<hr>` +
+    cart.map(i => `${esc(i.name)}<br>${i.qty} × ${i.price.toFixed(2)} = ${(i.qty * i.price).toFixed(2)}<br>`).join('') +
+    `<hr>Total: ${Number(o.total).toFixed(2)}<br>Cash: ${cash.toFixed(2)}<br>Change: ${(cash - o.total).toFixed(2)}<br>Thank you!`;
+}
+
+$('today').onclick = async () => {
+  try {
+    const l = await api('today', {});
+    $('td').innerHTML = `<div class="i"><b>Today: ${l.length} sales</b><b>${l.reduce((s, o) => s + Number(o.total), 0).toFixed(2)}</b></div>` +
+      l.map(o => `<div class="i"><span>${esc(o.name)} <small>${new Date(o.time).toLocaleTimeString()}</small></span>${Number(o.total).toFixed(2)}</div>`).join('');
+  } catch (e) { say(e.message); }
+};
+
+$('cam').onclick = async () => {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; $('v').style.display = 'none'; return; }
+  if (!('BarcodeDetector' in window)) return say('Camera scanning is not supported in this browser. Use Chrome on Android or a scanner.');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    $('v').srcObject = stream; $('v').style.display = 'block'; await $('v').play();
+    const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'] });
+    (async function loop() {
+      if (!stream) return;
+      try {
+        const b = await det.detect($('v'));
+        if (b[0] && (b[0].rawValue !== lastScan || Date.now() - lastAt > 2500)) {
+          lastScan = b[0].rawValue; lastAt = Date.now(); if (navigator.vibrate) navigator.vibrate(60); await find(lastScan);
+        }
+      } catch (e) {}
+      setTimeout(loop, 250);
+    })();
+  } catch (e) { say('Camera blocked: ' + e.message); }
+};
+render();
+// Inside the PetFriend app: stop the camera when the user switches to another tab
+window.addEventListener('message', e => { if (e.origin === location.origin && e.data === 'pf-hide' && stream) { stream.getTracks().forEach(t => t.stop()); stream = null; $('v').style.display = 'none'; } });
+</script></body></html>
