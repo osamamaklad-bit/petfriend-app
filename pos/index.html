@@ -24,20 +24,33 @@ button:focus-visible,input:focus-visible{outline:3px solid #f2b705}
 #v{width:100%;max-height:220px;border-radius:6px;display:none;background:#000}
 #msg{min-height:22px;color:#a32020}
 #rc{display:none}
+/* Computer / tablet: products on the left, cart and payment on the right */
+@media (min-width:900px){
+  .w{max-width:1200px;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:20px;align-items:start}
+  .right{position:sticky;top:20px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .right:has(#cart:empty)::before{content:"Cart is empty";display:block;color:#5b675f;padding:6px 0}
+  #v{max-height:340px}
+  #res{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
+  #res .i{margin:0}
+}
 @media print{.w{display:none}#rc{display:block;font:12px monospace;width:72mm}}
 </style></head><body>
 <div class="w">
+ <div class="col left">
   <div class="r"><input id="pin" type="password" placeholder="PIN" autocomplete="off"><button class="g" id="today">Today</button></div>
   <div class="r"><input id="q" placeholder="Scan or type barcode / name" autofocus autocomplete="off"><button id="cam">Camera</button></div>
   <video id="v" playsinline muted></video>
   <div id="msg"></div>
   <div id="res"></div>
+ </div>
+ <div class="col right">
   <div id="cart"></div>
   <div class="r"><input id="disc" type="number" min="0" placeholder="Discount"><select id="dtype" style="padding:11px;border:1px solid var(--line);border-radius:6px"><option value="pct">%</option><option value="amount">EGP</option></select><input id="cash" type="number" min="0" placeholder="Cash received"></div>
   <div id="total">0.00</div>
   <div id="chg"></div>
   <div class="r"><button id="pay" style="flex:1">Complete cash sale</button><button class="g" id="clr">Clear</button></div>
   <div id="td"></div>
+ </div>
 </div>
 <div id="rc"></div>
 <script>

@@ -132,6 +132,23 @@
   body.ret .retopts { display: flex !important; }
   .retopts select { flex: 1; min-width: 0; padding: 10px; font-size: 15px; border: 2px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
   body.ret main { padding-bottom: 200px; }
+
+  /* ---------- computer / tablet ---------- */
+  @media (min-width: 900px) {
+    header, main, footer .row { max-width: 1180px; }
+    main { padding: 12px 20px 110px; }
+    header { padding: 18px 20px 6px; }
+    .modes { max-width: 420px; }
+    .orderbar { max-width: 720px; }
+    #camwrap { max-width: 560px; }
+    #orderList, #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+    #orderList .ord, #list .item { margin-bottom: 0; }
+    #orderList .empty, #list .empty { grid-column: 1 / -1; }
+    footer .row { padding: 0 8px; }
+    #fulfillBtn { flex: 0 1 360px; margin-left: auto; }
+    .retopts select { flex: 0 1 360px; }
+    body.ret main { padding-bottom: 170px; }
+  }
 </style>
 </head>
 <body>
