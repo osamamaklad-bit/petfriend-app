@@ -25,17 +25,29 @@ sw.js                    offline cache for all tools (bump CACHE on each release
 pos/index.html           POS
 orders/index.html        Fulfill + Returns
 shipments/index.html     Shipment photos
-apps-script/orders/returns.gs     server code to ADD to the Orders Apps Script (returns)
-apps-script/shipments/Code.gs     the Shipments Apps Script server
+apps-script/Code.gs      the ONE Apps Script server for POS, Orders (fulfill + returns) and Shipments
 ```
 
-## Servers (Google Apps Script)
+## Server (Google Apps Script)
 
-Each tool still talks to its own Apps Script web app, unchanged:
+`apps-script/Code.gs` is one script for all three tabs. It recognises which tab a request comes from and answers in the same format each tab already expects. Each tab keeps its own login: POS checks `POS_PIN`, Orders checks `APP_KEY`, and Shipments checks `APP_PIN`. The full list of Script Properties is in the comment at the top of the file.
 
-- **POS**: the URL is set in `pos/index.html` (`API_URL`). The server code is not in this repo.
-- **Orders**: the URL is set in `orders/index.html` (`API_URL`); the app key is entered in Settings. The server code is not in this repo, apart from `apps-script/orders/returns.gs`, which adds returns. See the comment at the top of that file for setup.
-- **Shipments**: the URL is set in `shipments/index.html` (`API_URL`). The server code is `apps-script/shipments/Code.gs`. Its `doGet` also serves an `Index` HTML file. That's only needed if you open the script URL directly, and the app doesn't use it.
+### Moving to the single script (one time)
+
+The easiest home for it is the **existing Shipments project**, because it's already attached to the sheet and already has the Bosta settings, the photo folder and the trigger. Its web-app URL also stays the same.
+
+1. Open the Shipments Apps Script project (from the sheet: **Extensions → Apps Script**).
+2. Replace everything in `Code.gs` with `apps-script/Code.gs` from this repo, then save. The old `Index` HTML file can stay; nothing uses it.
+3. **Project Settings → Script properties**: add the properties of the other two projects, with the same names and values:
+   - from the **POS** project: `POS_PIN`, `SHOP`, `CLIENT_ID`, `CLIENT_SECRET`
+   - from the **Orders** project: `APP_KEY`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, and `SHOPIFY_STORE` (`xxx.myshopify.com`) if it isn't there yet
+4. In Shopify, give the **Orders** app the extra scopes `read_returns`, `write_returns` and `read_locations` for Returns, and release the new version.
+5. In the editor, run **`testAll`**, allow the permissions it asks for, and check that the log shows `OK` everywhere.
+6. Run **`installTrigger`** once. This also fixes the hourly Bosta sync, which never synced anything with the old code.
+7. **Deploy → Manage deployments →** the pencil icon on the web app **→ Version: New version → Deploy**. The URL stays the same.
+8. Point the POS and Orders tabs to that URL. That's a one-line change in each of `pos/index.html` and `orders/index.html` (`API_URL`).
+
+The old POS and Orders scripts can stay as a backup until everything works, and then be deleted.
 
 ## Hosting
 
