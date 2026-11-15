@@ -89,7 +89,7 @@ function getToken_() {
   return j.access_token;
 }
 
-function shopify_(query, variables) {
+function shopify_(query, variables, retried) {
   const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOPIFY_STORE') + '/admin/api/' + SHOPIFY_API + '/graphql.json', {
     method: 'post',
     contentType: 'application/json',
@@ -98,6 +98,12 @@ function shopify_(query, variables) {
     muteHttpExceptions: true
   });
   const j = JSON.parse(res.getContentText());
+  // A cached token keeps the permissions it was issued with: after adding scopes to the Shopify app,
+  // "Access denied" means it is out of date, so get a fresh one and try once more.
+  if (!retried && (res.getResponseCode() === 401 || /access denied/i.test(JSON.stringify(j.errors || '')))) {
+    CacheService.getScriptCache().remove('shopify_token');
+    return shopify_(query, variables, true);
+  }
   if (j.errors) throw new Error('Shopify: ' + (Array.isArray(j.errors) ? j.errors.map(function (x) { return x.message; }).join('; ') : JSON.stringify(j.errors)));
   return j.data;
 }
@@ -683,6 +689,19 @@ function testAll() {
   Logger.log('Shipments wrong PIN refused: ' + !!call({ fn: 'checkPin', args: ['x'] }).error);
   Logger.log('POS today with real PIN ok: ' + call({ action: 'today', pin: P.getProperty('POS_PIN') }).ok);
   Logger.log('Orders list with real key ok: ' + call({ action: 'listOrders', key: P.getProperty('APP_KEY') }).ok);
+}
+
+/** Run after changing a Shopify app's scopes: forgets the saved Shopify tokens so new ones are fetched. */
+function resetTokens() {
+  CacheService.getScriptCache().removeAll(['shopify_token', 'tok']);
+  Logger.log('Saved Shopify tokens cleared. The next request gets fresh ones.');
+}
+
+/** Returns: read-only check that the Shopify app may read returns (needs read_returns). */
+function testReturns() {
+  const r = getReturnable_({ query: TEST_ORDER });
+  Logger.log('Returnable items on ' + r.order.name + ': ' + r.items.length);
+  r.items.forEach(function (i) { Logger.log('  ' + i.need + ' x ' + i.title + ' | barcode: ' + (i.barcode || '-')); });
 }
 
 /** Orders: read-only check of one real order. */
