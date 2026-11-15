@@ -1,6 +1,6 @@
 // One service worker for all three tools: makes the app installable and lets the screens open offline.
 // Bump CACHE when you release, so phones drop old copies.
-const CACHE = 'petfriend-v7';
+const CACHE = 'petfriend-v8';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './i18n.js', './settings.js',
   './pos/index.html', './orders/index.html', './shipments/index.html',

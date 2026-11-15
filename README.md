@@ -45,7 +45,7 @@ The easiest home for it is the **existing Shipments project**, because it's alre
 5. In the editor, run **`testAll`**, allow the permissions it asks for, and check that the log shows `OK` everywhere.
 6. Run **`installTrigger`** once. This also fixes the hourly Bosta sync, which never synced anything with the old code.
 7. **Deploy → Manage deployments →** the pencil icon on the web app **→ Version: New version → Deploy**. The URL stays the same.
-8. Point the POS and Orders tabs to that URL. That's a one-line change in each of `pos/index.html` and `orders/index.html` (`API_URL`).
+8. Point the POS and Orders tabs to that URL (`API_URL` in `pos/index.html` and `orders/index.html`). **Done**: all three tabs use the Shipments project's URL.
 
 The old POS and Orders scripts can stay as a backup until everything works, and then be deleted.
 
