@@ -52,8 +52,11 @@ const P = PropertiesService.getScriptProperties();
  * Entry points
  * ===================================================================================== */
 
+// Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
+const SERVER_VERSION = '2026-11-17.2';
+
 function doGet() {
-  return json_({ ok: true, service: 'petfriend', parts: ['pos', 'orders', 'shipments'] });
+  return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
 }
 
 function doPost(e) {
@@ -904,6 +907,7 @@ function syncBosta(only) {
 
 /** Checks every Script Property and that each part can log in. Changes nothing. */
 function testAll() {
+  Logger.log('Script version in the editor: ' + SERVER_VERSION + ' (open the web-app URL to see the deployed one)');
   const need = {
     'Shared (Orders/Shipments)': ['SHOPIFY_STORE', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'],
     'POS': ['POS_PIN', 'SHOP', 'CLIENT_ID', 'CLIENT_SECRET'],
