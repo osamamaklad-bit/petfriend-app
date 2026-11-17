@@ -4,7 +4,8 @@
  *   POS        search, sale, today                       body {action, pin, ...}       -> {ok, data} / {ok:false, error}
  *   Orders     listOrders, getOrder, fulfill,            body {action, key, ...}       -> {ok, ...}  / {ok:false, error}
  *              getReturnable, processReturn,
- *              listPOs, getPO, receivePO (receiving supplier purchase orders)
+ *              listPOs, getPO, receivePO (receiving supplier purchase orders),
+ *              setItemMeta (edit an item's bin locations / expiry dates)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -26,6 +27,7 @@
  *     SHOPIFY_LOCATION_ID    (optional) where returns are restocked if the original location is unknown
  *     BIN_VARIANT_METAFIELD  (optional) variant bin-location metafield shown in Receive, default custom.bin_location
  *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
+ *     EXPIRY_METAFIELD       (optional) product expiry-date metafield, default custom.expiry_date
  *   Shipments
  *     APP_PIN                the Shipments PIN
  *     SHEET_ID               the Google Sheet's ID (only if this script is NOT opened from that sheet)
@@ -37,7 +39,8 @@
  *   read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders,
  *   read_returns, write_returns (and read_locations for restocking),
  *   and for receiving from suppliers: read_inventory_purchase_orders, read_inventory_transfers,
- *   read_inventory, write_inventory_shipments_received_items, write_inventory_shipments.
+ *   read_inventory, write_inventory_shipments_received_items, write_inventory_shipments,
+ *   and write_products to edit bin locations / expiry dates.
  *
  * Deploy: Deploy > Manage deployments (or New deployment) > Web app, Execute as: Me, Who has access: Anyone.
  * Run installTrigger() once for the hourly Bosta sync. Run testAll() to check the setup.
@@ -227,7 +230,8 @@ const ORDER_ACTIONS = {
   processReturn: function (r) { return processReturn_(r); },
   listPOs: function () { return listPOs_(); },
   getPO: function (r) { return getPO_(r); },
-  receivePO: function (r) { return receivePO_(r); }
+  receivePO: function (r) { return receivePO_(r); },
+  setItemMeta: function (r) { return setItemMeta_(r); }
 };
 
 function ordersApi_(r) {
@@ -482,26 +486,45 @@ function defaultLocation_() {
  * ===================================================================================== */
 
 const RECEIVE_API = '2026-10';
-// Bin locations shown on each item: a variant metafield and a product metafield ("namespace.key").
-// Defaults to custom.bin_location for both; change with the Script Properties
-// BIN_VARIANT_METAFIELD / BIN_PRODUCT_METAFIELD if your definitions use another key.
-function binField_(prop) {
-  const m = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(P.getProperty(prop) || 'custom.bin_location');
-  if (!m) throw new Error(prop + ' must look like custom.bin_location');
-  return 'metafield(namespace: "' + m[1] + '", key: "' + m[2] + '") { value }';
+// Item metafields shown (and editable) in Receive: bin location on the variant and on the product,
+// expiry date on the product. Each is "namespace.key"; defaults below (they match the store's
+// definitions), change with the Script Properties named here.
+const ITEM_META = {
+  binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field' },
+  binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field' },
+  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date' }
+};
+function metaKey_(name) {
+  const f = ITEM_META[name];
+  const m = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(P.getProperty(f.prop) || f.def);
+  if (!m) throw new Error(f.prop + ' must look like ' + f.def);
+  return { namespace: m[1], key: m[2] };
+}
+function metaQuery_(owner) {   // "vBin: metafield(...) { value type } vExp: ..." for the variant or the product
+  return Object.keys(ITEM_META).filter(function (n) { return ITEM_META[n].owner === owner; }).map(function (n) {
+    const k = metaKey_(n);
+    return ITEM_META[n].alias + ': metafield(namespace: "' + k.namespace + '", key: "' + k.key + '") { value type }';
+  }).join(' ');
 }
 function poItemFields_() {
-  return 'inventoryItem { id sku variants(first: 1) { nodes { displayName barcode sku' +
-    ' vBin: ' + binField_('BIN_VARIANT_METAFIELD') +
-    ' product { pBin: ' + binField_('BIN_PRODUCT_METAFIELD') + ' } } } }';
+  return 'inventoryItem { id sku variants(first: 1) { nodes { id displayName barcode sku ' + metaQuery_('variant') +
+    ' product { id ' + metaQuery_('product') + ' } } } }';
+}
+function metaValues_(variant) {
+  const out = {};
+  Object.keys(ITEM_META).forEach(function (n) {
+    const f = ITEM_META[n], host = f.owner === 'variant' ? variant : (variant && variant.product);
+    out[n] = binValue_(host && host[f.alias]);
+  });
+  return out;
 }
 
 function poItem_(inv, extra) {
   const v = (inv && inv.variants && inv.variants.nodes[0]) || {};
   return Object.assign({
     title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: '',
-    binVariant: binValue_(v.vBin), binProduct: binValue_(v.product && v.product.pBin)
-  }, extra);
+    variantId: v.id || '', productId: (v.product && v.product.id) || ''
+  }, metaValues_(v), extra);
 }
 // Metafield values come as text; list-type metafields come as JSON arrays: show them comma-separated
 function binValue_(mf) {
@@ -509,6 +532,48 @@ function binValue_(mf) {
   const v = String(mf.value);
   try { const j = JSON.parse(v); if (Array.isArray(j)) return j.join(', '); } catch (e) {}
   return v;
+}
+
+/** Saves bin locations / expiry date for one item. body.values: any of binVariant, binProduct, expProduct.
+ *  An empty value removes the metafield. Uses the type of the store's metafield definition when there is one. */
+function setItemMeta_(body) {
+  if (!body.variantId) throw new Error('Missing item');
+  const vals = body.values || {};
+  const cur = shopifyAt_(RECEIVE_API, 'query($id: ID!) { productVariant(id: $id) { id ' + metaQuery_('variant') +
+    ' product { id ' + metaQuery_('product') + ' } } }', { id: body.variantId }).productVariant;
+  if (!cur) throw new Error('Item not found in Shopify');
+  const sets = [], dels = [];
+  Object.keys(ITEM_META).forEach(function (n) {
+    if (!Object.prototype.hasOwnProperty.call(vals, n)) return;
+    const f = ITEM_META[n], k = metaKey_(n), host = f.owner === 'variant' ? cur : cur.product;
+    const existing = host[f.alias], v = String(vals[n] == null ? '' : vals[n]).trim();
+    if (v === binValue_(existing)) return;                        // unchanged
+    if (!v) { if (existing) dels.push({ ownerId: host.id, namespace: k.namespace, key: k.key }); return; }
+    const type = (existing && existing.type) || metaDefType_(f.owner, k) || f.type;
+    let value = v;
+    if (/^list\./.test(type)) value = JSON.stringify(v.split(',').map(function (x) { return x.trim(); }).filter(Boolean));
+    if (type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('Expiry date must be a date (YYYY-MM-DD)');
+    sets.push({ ownerId: host.id, namespace: k.namespace, key: k.key, type: type, value: value });
+  });
+  if (sets.length) {
+    const r = shopifyAt_(RECEIVE_API, 'mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { key } userErrors { field message } } }', { m: sets });
+    userErrors_(r.metafieldsSet.userErrors);
+  }
+  if (dels.length) {
+    const r = shopifyAt_(RECEIVE_API, 'mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }', { m: dels });
+    userErrors_(r.metafieldsDelete.userErrors);
+  }
+  const now = shopifyAt_(RECEIVE_API, 'query($id: ID!) { productVariant(id: $id) { id ' + metaQuery_('variant') +
+    ' product { id ' + metaQuery_('product') + ' } } }', { id: body.variantId }).productVariant;
+  return { ok: true, values: metaValues_(now), changed: sets.length + dels.length };
+}
+// Type of the store's metafield definition (e.g. "date", "single_line_text_field", "list.single_line_text_field")
+function metaDefType_(owner, k) {
+  const d = shopifyAt_(RECEIVE_API, 'query($o: MetafieldOwnerType!, $ns: String!, $key: String!) {' +
+    ' metafieldDefinitions(first: 1, ownerType: $o, namespace: $ns, key: $key) { nodes { type { name } } } }',
+    { o: owner === 'variant' ? 'PRODUCTVARIANT' : 'PRODUCT', ns: k.namespace, key: k.key });
+  const n = d.metafieldDefinitions.nodes[0];
+  return n ? n.type.name : '';
 }
 function digits_(s) { return String(s || '').replace(/\D/g, ''); }
 

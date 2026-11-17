@@ -95,6 +95,8 @@
   .item .bin { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font-size: 13px; }
   .item .bin span { color: var(--muted); }
   .item .bin b { color: var(--rcv); font-size: 14px; }
+  .item .bin b.expired { color: var(--bad); }
+  .item .bin .edit { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .count { text-align: center; }
   .count .n { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .item.done .n { color: var(--ok); }
@@ -479,23 +481,68 @@
         '<button data-i="' + idx + '" data-d="1" aria-label="Add one">+</button></div></div>';
       el.querySelector('.t').textContent = it.title;
       el.querySelector('.m').textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
-      // Receive: bin locations from the variant and product metafields
+      // Receive: bin locations (variant + product) and the product's expiry date, editable
       const bins = [];
       if (it.binVariant) bins.push(['Variant bin:', it.binVariant]);
       if (it.binProduct && it.binProduct !== it.binVariant) bins.push(['Product bin:', it.binProduct]);
+      if (it.expProduct) bins.push(['Expiry:', it.expProduct, isExpired(it.expProduct)]);
       const binBox = el.querySelector('.bin');
-      if (!bins.length) binBox.remove();
       bins.forEach(function (b) {
         const w = document.createElement('div'), lab = document.createElement('span'), val = document.createElement('b');
         lab.textContent = b[0] + ' '; val.textContent = b[1]; val.setAttribute('data-no-i18n', '');
-        w.appendChild(lab); w.appendChild(val); binBox.appendChild(w);
+        w.appendChild(lab); w.appendChild(val);
+        if (b[2]) { val.className = 'expired'; const x = document.createElement('span'); x.textContent = ' (expired)'; w.appendChild(x); }
+        binBox.appendChild(w);
       });
+      if (isRcv() && it.variantId) {
+        const e = document.createElement('button');
+        e.className = 'edit'; e.dataset.edit = idx; e.textContent = 'Edit';
+        binBox.appendChild(e);
+      }
+      if (!binBox.childNodes.length) binBox.remove();
       list.appendChild(el);
     });
     $('fulfillBtn').disabled = (isRet() || isRcv()) ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
   }
 
+  // ---------- bin locations / expiry date (Receive) ----------
+  function isExpired(v) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+    if (!m) return false;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return new Date(+m[1], +m[2] - 1, +m[3]) < today;
+  }
+  async function editMeta(idx) {
+    const it = state.items[idx];
+    if (!it || state.busy) return;
+    const exp = it.expProduct || '';
+    const v = await pfSettings({ title: it.title, fields: [
+      { key: 'binVariant', label: 'Variant bin location', value: it.binVariant || '' },
+      { key: 'binProduct', label: 'Product bin location', value: it.binProduct || '' },
+      // date picker when the stored value is a plain date (or empty); otherwise keep it as text
+      { key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }
+    ] });
+    if (!v) return;
+    state.busy = true;
+    say('Saving ' + it.title + '...');
+    try {
+      const data = await api({ action: 'setItemMeta', variantId: it.variantId, values: v });
+      // the same variant / product can be on several lines: update them all
+      state.items.forEach(function (x) {
+        if (x.variantId === it.variantId) x.binVariant = data.values.binVariant;
+        if (x.productId && x.productId === it.productId) { x.binProduct = data.values.binProduct; x.expProduct = data.values.expProduct; }
+      });
+      render();
+      say(data.changed ? 'Saved bin location and expiry date for ' + it.title : 'No changes', 'ok');
+      feedback('ok');
+    } catch (e) {
+      say(e.message, 'bad'); feedback('bad');
+    } finally { state.busy = false; }
+  }
+
   $('list').addEventListener('click', function (e) {
+    const ed = e.target.closest('button[data-edit]');
+    if (ed) { editMeta(+ed.dataset.edit); return; }
     const b = e.target.closest('button[data-i]');
     if (!b) return;
     const it = state.items[+b.dataset.i], d = +b.dataset.d;

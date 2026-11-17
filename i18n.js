@@ -73,6 +73,15 @@
     'PO number': 'رقم أمر الشراء',
     'Variant bin:': 'موقع المتغيّر:',
     'Product bin:': 'موقع المنتج:',
+    'Expiry:': 'تاريخ الانتهاء:',
+    '(expired)': '(منتهي الصلاحية)',
+    'Edit': 'تعديل',
+    'Variant bin location': 'موقع تخزين المتغيّر',
+    'Product bin location': 'موقع تخزين المنتج',
+    'Expiry date': 'تاريخ الانتهاء',
+    'No changes': 'لا توجد تغييرات',
+    'Expiry date must be a date (YYYY-MM-DD)': 'يجب أن يكون تاريخ الانتهاء تاريخًا (YYYY-MM-DD)',
+    'Item not found in Shopify': 'المنتج غير موجود في Shopify',
     'Ordered': 'تم الطلب',
     'No purchase orders waiting for stock.': 'لا توجد أوامر شراء في انتظار البضاعة.',
     'Receive: pick a purchase order, or scan or type its number.': 'الاستلام: اختر أمر شراء، أو امسح رقمه أو اكتبه.',
@@ -172,6 +181,7 @@
 
     // Receiving from suppliers
     [/^Loading purchase order (.+)\.\.\.$/, 'جارٍ تحميل أمر الشراء $1...'],
+    [/^Saved bin location and expiry date for (.+)$/, 'تم حفظ موقع التخزين وتاريخ الانتهاء لـ $1'],
     [/^(.+) from (.+): scan each item that arrived\.$/, '$1 من $2: امسح كل منتج وصل.'],
     [/^(.+): scan each item that arrived\.$/, '$1: امسح كل منتج وصل.'],
     [/^(\d+) purchase orders?$/, '$1 أمر شراء'],

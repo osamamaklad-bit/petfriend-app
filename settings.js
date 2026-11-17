@@ -59,7 +59,7 @@
         var row = document.createElement('div');
         row.className = 'in';
         var inp = document.createElement('input');
-        inp.type = f.secret ? 'password' : 'text';
+        inp.type = f.secret ? 'password' : (f.type || 'text'); // e.g. 'date' shows a date picker
         inp.value = f.value || '';
         inp.autocomplete = 'off';
         inp.spellcheck = false;
