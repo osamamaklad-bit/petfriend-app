@@ -96,6 +96,7 @@
   .item .bin span { color: var(--muted); }
   .item .bin b { color: var(--rcv); font-size: 14px; }
   .item .bin b.expired { color: var(--bad); }
+  .item .nobc { color: var(--bad); font-weight: 700; font-size: 12px; margin-top: 3px; }
   .item .bin .edit { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .count { text-align: center; }
   .count .n { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -394,7 +395,8 @@
     if (!state.order) { loadOrder(code); return; }
 
     const c = norm(code);
-    const matches = state.items.filter((i) => (i.barcode && norm(i.barcode) === c) || (i.sku && norm(i.sku) === c));
+    // Receive counts by barcode only; Fulfill and Returns also accept the SKU
+    const matches = state.items.filter((i) => (i.barcode && norm(i.barcode) === c) || (!isRcv() && i.sku && norm(i.sku) === c));
     if (!matches.length) {
       say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code, 'bad'); feedback('bad'); return;
     }
@@ -453,7 +455,7 @@
   function render() {
     const list = $('list');
     $('orderTitle').hidden = !state.order;
-    $('orderInput').placeholder = state.order ? 'Item barcode or SKU' : isRcv() ? 'PO number' : 'Order number';
+    $('orderInput').placeholder = state.order ? (isRcv() ? 'Item barcode' : 'Item barcode or SKU') : isRcv() ? 'PO number' : 'Order number';
     $('loadBtn').textContent = state.order ? 'Add' : 'Load';
     $('orderInput').inputMode = state.order ? 'text' : 'numeric'; // SKUs can contain letters
     $('openOrders').hidden = !!state.order || isRet();
@@ -482,9 +484,17 @@
         '<div><div class="t"></div><div class="m"></div><div class="bin"></div></div>' +
         '<div class="count"><div class="n">' + it.got + '/' + it.need + '</div>' +
         '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one">&minus;</button>' +
-        '<button data-i="' + idx + '" data-d="1" aria-label="Add one">+</button></div></div>';
+        (isRcv() ? '' : '<button data-i="' + idx + '" data-d="1" aria-label="Add one">+</button>') + '</div></div>'; // Receive: scan to add, − only to undo
       el.querySelector('.t').textContent = it.title;
-      el.querySelector('.m').textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
+      const codes = document.createElement('span');
+      codes.dir = 'ltr'; // keep SKU / barcode as written, also in Arabic
+      codes.textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
+      el.querySelector('.m').appendChild(codes);
+      if (isRcv() && !it.barcode) {
+        const w = document.createElement('div');
+        w.className = 'nobc'; w.textContent = 'No barcode: add one in Shopify to receive this item';
+        el.querySelector('.m').after(w);
+      }
       // Receive: bin locations (variant + product) and the product's expiry date, editable
       const bins = [];
       if (it.binVariant) bins.push(['Variant bin:', it.binVariant]);
@@ -494,6 +504,7 @@
       bins.forEach(function (b) {
         const w = document.createElement('div'), lab = document.createElement('span'), val = document.createElement('b');
         lab.textContent = b[0] + ' '; val.textContent = b[1]; val.setAttribute('data-no-i18n', '');
+        val.dir = 'ltr'; // keep "A-12" and "2026-01-31" as written, also in Arabic
         w.appendChild(lab); w.appendChild(val);
         if (b[2]) { val.className = 'expired'; const x = document.createElement('span'); x.textContent = ' (expired)'; w.appendChild(x); }
         binBox.appendChild(w);
@@ -550,6 +561,7 @@
     const b = e.target.closest('button[data-i]');
     if (!b) return;
     const it = state.items[+b.dataset.i], d = +b.dataset.d;
+    if (isRcv() && d > 0) return; // Receive: items are added by scanning their barcode only
     it.got = Math.max(0, Math.min(it.need, it.got + d));
     render();
   });

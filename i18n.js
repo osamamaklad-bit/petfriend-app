@@ -72,6 +72,8 @@
     'Purchase orders': 'أوامر الشراء',
     'PO number': 'رقم أمر الشراء',
     'Item barcode or SKU': 'باركود المنتج أو SKU',
+    'Item barcode': 'باركود المنتج',
+    'No barcode: add one in Shopify to receive this item': 'بدون باركود: أضف باركود في Shopify لاستلام هذا المنتج',
     'Add': 'إضافة',
     'Variant bin:': 'موقع المتغيّر:',
     'Product bin:': 'موقع المنتج:',
