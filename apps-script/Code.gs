@@ -3,7 +3,8 @@
  *
  *   POS        search, sale, today                       body {action, pin, ...}       -> {ok, data} / {ok:false, error}
  *   Orders     listOrders, getOrder, fulfill,            body {action, key, ...}       -> {ok, ...}  / {ok:false, error}
- *              getReturnable, processReturn
+ *              getReturnable, processReturn,
+ *              listPOs, getPO, receivePO (receiving supplier purchase orders)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -32,7 +33,9 @@
  *
  * Shopify scopes for the Orders app: read_orders, read_products,
  *   read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders,
- *   read_returns, write_returns (and read_locations for restocking).
+ *   read_returns, write_returns (and read_locations for restocking),
+ *   and for receiving from suppliers: read_inventory_purchase_orders, read_inventory_transfers,
+ *   read_inventory, write_inventory_shipments_received_items, write_inventory_shipments.
  *
  * Deploy: Deploy > Manage deployments (or New deployment) > Web app, Execute as: Me, Who has access: Anyone.
  * Run installTrigger() once for the hourly Bosta sync. Run testAll() to check the setup.
@@ -89,8 +92,10 @@ function getToken_() {
   return j.access_token;
 }
 
-function shopify_(query, variables, retried) {
-  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOPIFY_STORE') + '/admin/api/' + SHOPIFY_API + '/graphql.json', {
+function shopify_(query, variables) { return shopifyAt_(SHOPIFY_API, query, variables); }
+
+function shopifyAt_(version, query, variables, retried) {
+  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOPIFY_STORE') + '/admin/api/' + version + '/graphql.json', {
     method: 'post',
     contentType: 'application/json',
     headers: { 'X-Shopify-Access-Token': getToken_() },
@@ -102,7 +107,7 @@ function shopify_(query, variables, retried) {
   // "Access denied" means it is out of date, so get a fresh one and try once more.
   if (!retried && (res.getResponseCode() === 401 || /access denied/i.test(JSON.stringify(j.errors || '')))) {
     CacheService.getScriptCache().remove('shopify_token');
-    return shopify_(query, variables, true);
+    return shopifyAt_(version, query, variables, true);
   }
   if (j.errors) throw new Error('Shopify: ' + (Array.isArray(j.errors) ? j.errors.map(function (x) { return x.message; }).join('; ') : JSON.stringify(j.errors)));
   return j.data;
@@ -217,7 +222,10 @@ const ORDER_ACTIONS = {
   getOrder: function (r) { return getOrder_(r.query); },
   fulfill: function (r) { return fulfill_(r.items, r.notify); },
   getReturnable: function (r) { return getReturnable_(r); },
-  processReturn: function (r) { return processReturn_(r); }
+  processReturn: function (r) { return processReturn_(r); },
+  listPOs: function () { return listPOs_(); },
+  getPO: function (r) { return getPO_(r); },
+  receivePO: function (r) { return receivePO_(r); }
 };
 
 function ordersApi_(r) {
@@ -462,6 +470,135 @@ function defaultLocation_() {
 }
 
 /* =====================================================================================
+ * Orders: receiving stock from suppliers (Shopify purchase orders)
+ *
+ * A purchase order (PO) that is ORDERED has one or more inventory transfers; the goods arrive on
+ * the transfers' shipments. Receiving = inventoryShipmentReceive on those shipment lines (ACCEPTED),
+ * which adds the stock at the PO's destination location. Anything not scanned stays open on the PO.
+ * If a transfer has no shipment yet, one is created for exactly what was scanned, then received.
+ * Needs API 2026-10 or later (purchase orders became readable there).
+ * ===================================================================================== */
+
+const RECEIVE_API = '2026-10';
+const PO_ITEM_FIELDS = 'inventoryItem { id sku variants(first: 1) { nodes { displayName barcode sku } } }';
+
+function poItem_(inv, extra) {
+  const v = (inv && inv.variants && inv.variants.nodes[0]) || {};
+  return Object.assign({ title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: '' }, extra);
+}
+function digits_(s) { return String(s || '').replace(/\D/g, ''); }
+
+/** Purchase orders still waiting for stock (status ORDERED, not fully received). */
+function listPOs_() {
+  const d = shopifyAt_(RECEIVE_API,
+    'query { inventoryPurchaseOrders(first: 100, query: "status:ORDERED") { nodes {' +
+    '  id name orderedAt origin { supplierName } destination { name }' +
+    '  transfers(first: 3) { nodes { totalQuantity receivedQuantity } }' +
+    '} } }');
+  const orders = d.inventoryPurchaseOrders.nodes.map(function (po) {
+    const total = po.transfers.nodes.reduce(function (s, t) { return s + t.totalQuantity; }, 0);
+    const received = po.transfers.nodes.reduce(function (s, t) { return s + t.receivedQuantity; }, 0);
+    return {
+      id: po.id, name: po.name, status: 'ORDERED',
+      customer: po.origin && po.origin.supplierName || '',      // shown where the customer is for orders
+      city: po.destination && po.destination.name || '',
+      createdAt: po.orderedAt,
+      qty: Math.max(0, total - received)
+    };
+  }).filter(function (po) { return po.qty > 0; });
+  return { ok: true, orders: orders };
+}
+
+/** One purchase order with everything still to receive, line by line. */
+function getPO_(body) {
+  const q = String(body.query || '').trim().toUpperCase(), num = digits_(q);
+  if (!num) throw new Error('Enter a purchase order number');
+  const list = shopifyAt_(RECEIVE_API, 'query { inventoryPurchaseOrders(first: 250, query: "status:ORDERED") { nodes { id name } } }')
+    .inventoryPurchaseOrders.nodes;
+  const found = list.filter(function (po) { return po.name.toUpperCase() === q; })[0] ||
+                list.filter(function (po) { return digits_(po.name) === num; })[0];
+  if (!found) throw new Error('Purchase order ' + q + ' not found (or not marked as ordered)');
+
+  const po = shopifyAt_(RECEIVE_API,
+    'query($id: ID!) { inventoryPurchaseOrder(id: $id) { id name origin { supplierName } destination { name }' +
+    '  transfers(first: 5) { nodes { id status shipments(first: 10) { nodes { id status } } } }' +
+    '} }', { id: found.id }).inventoryPurchaseOrder;
+
+  const items = [];
+  po.transfers.nodes.forEach(function (t) {
+    const open = t.shipments.nodes.filter(function (sh) { return sh.status === 'IN_TRANSIT' || sh.status === 'PARTIALLY_RECEIVED'; });
+    open.forEach(function (sh) {
+      const lines = shopifyAt_(RECEIVE_API,
+        'query($id: ID!) { inventoryShipment(id: $id) { lineItems(first: 250) { nodes { id unreceivedQuantity ' + PO_ITEM_FIELDS + ' } } } }',
+        { id: sh.id }).inventoryShipment.lineItems.nodes;
+      lines.forEach(function (l) {
+        if (l.unreceivedQuantity > 0) items.push(poItem_(l.inventoryItem, { shipmentId: sh.id, sliId: l.id, need: l.unreceivedQuantity }));
+      });
+    });
+    if (!open.length && t.status !== 'TRANSFERRED' && t.status !== 'CANCELED') {
+      // No incoming shipment yet: offer what has not been shipped; a shipment is created when receiving
+      const lines = shopifyAt_(RECEIVE_API,
+        'query($id: ID!) { inventoryTransfer(id: $id) { lineItems(first: 250) { nodes { shippableQuantity ' + PO_ITEM_FIELDS + ' } } } }',
+        { id: t.id }).inventoryTransfer.lineItems.nodes;
+      lines.forEach(function (l) {
+        if (l.shippableQuantity > 0 && l.inventoryItem) items.push(poItem_(l.inventoryItem, { transferId: t.id, inventoryItemId: l.inventoryItem.id, need: l.shippableQuantity }));
+      });
+    }
+  });
+  if (!items.length) throw new Error('Purchase order ' + po.name + ' has nothing left to receive');
+  return {
+    ok: true,
+    order: { id: po.id, name: po.name, supplier: po.origin && po.origin.supplierName || '', location: po.destination && po.destination.name || '' },
+    items: items
+  };
+}
+
+/** Receives the scanned quantities (ACCEPTED) into stock. requestId makes a repeated tap safe. */
+function receivePO_(body) {
+  const items = (body.items || []).filter(function (i) { return Number(i.qty) > 0; });
+  if (!items.length) throw new Error('Nothing to receive');
+  const rid = String(body.requestId || Utilities.getUuid());
+  const byShip = {}, byTransfer = {};
+  items.forEach(function (i) {
+    if (i.shipmentId && i.sliId) (byShip[i.shipmentId] = byShip[i.shipmentId] || []).push({ shipmentLineItemId: i.sliId, quantity: Number(i.qty), reason: 'ACCEPTED' });
+    else if (i.transferId && i.inventoryItemId) (byTransfer[i.transferId] = byTransfer[i.transferId] || []).push({ inventoryItemId: i.inventoryItemId, quantity: Number(i.qty) });
+  });
+
+  let step = 0, done = 0;
+  try {
+    Object.keys(byTransfer).forEach(function (tid) {
+      const c = shopifyAt_(RECEIVE_API,
+        'mutation($input: InventoryShipmentCreateInput!, $key: String!) {' +
+        '  inventoryShipmentCreateInTransit(input: $input) @idempotent(key: $key) {' +
+        '    inventoryShipment { id lineItems(first: 250) { nodes { id quantity } } }' +
+        '    userErrors { field message }' +
+        '  }' +
+        '}', { input: { movementId: tid, lineItems: byTransfer[tid] }, key: rid + '-t' + (step++) });
+      userErrors_(c.inventoryShipmentCreateInTransit.userErrors);
+      const sh = c.inventoryShipmentCreateInTransit.inventoryShipment;
+      byShip[sh.id] = (byShip[sh.id] || []).concat(sh.lineItems.nodes.map(function (l) {
+        return { shipmentLineItemId: l.id, quantity: l.quantity, reason: 'ACCEPTED' };
+      }));
+    });
+    Object.keys(byShip).forEach(function (sid) {
+      const res = shopifyAt_(RECEIVE_API,
+        'mutation($id: ID!, $li: [InventoryShipmentReceiveItemInput!], $key: String!) {' +
+        '  inventoryShipmentReceive(id: $id, lineItems: $li) @idempotent(key: $key) {' +
+        '    inventoryShipment { id status }' +
+        '    userErrors { field message }' +
+        '  }' +
+        '}', { id: sid, li: byShip[sid], key: rid + '-s' + (step++) });
+      userErrors_(res.inventoryShipmentReceive.userErrors);
+      done += byShip[sid].reduce(function (s, l) { return s + l.quantity; }, 0);
+    });
+  } catch (e) {
+    if (done) throw new Error(done + ' items were received, then it stopped: ' + e.message + '. Load the purchase order again to see what is left.');
+    throw e;
+  }
+  return { ok: true, received: done };
+}
+
+/* =====================================================================================
  * Shipments: photos + Bosta bulky tracker
  * ===================================================================================== */
 
@@ -679,6 +816,7 @@ function testAll() {
   Logger.log('Hourly Bosta sync trigger: ' + (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'syncBosta') ? 'installed' : 'NOT installed, run installTrigger()'));
 
   try { Logger.log('Orders Shopify: ' + shopify_('{ shop { name } }').shop.name); } catch (e) { Logger.log('Orders Shopify FAILED: ' + e.message); }
+  try { Logger.log('Receiving: ' + listPOs_().orders.length + ' purchase order(s) waiting'); } catch (e) { Logger.log('Receiving FAILED (scopes?): ' + e.message); }
   try { Logger.log('POS Shopify: ' + posGql_('{ shop { name } }').shop.name); } catch (e) { Logger.log('POS Shopify FAILED: ' + e.message); }
   try { Logger.log('Shipments sheet: ' + sh_('Tracking').getParent().getName()); } catch (e) { Logger.log('Shipments sheet FAILED: ' + e.message); }
 

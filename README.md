@@ -5,7 +5,7 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 | Tab | What it does | Came from |
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
-| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock | `scan-fulfill` |
+| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory | `scan-fulfill` |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
@@ -41,7 +41,7 @@ The easiest home for it is the **existing Shipments project**, because it's alre
 3. **Project Settings → Script properties**: add the properties of the other two projects, with the same names and values:
    - from the **POS** project: `POS_PIN`, `SHOP`, `CLIENT_ID`, `CLIENT_SECRET`
    - from the **Orders** project: `APP_KEY`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, and `SHOPIFY_STORE` (`xxx.myshopify.com`) if it isn't there yet
-4. In Shopify, give the **Orders** app the extra scopes `read_returns`, `write_returns` and `read_locations` for Returns, and release the new version.
+4. In Shopify, give the **Orders** app the extra scopes `read_returns`, `write_returns` and `read_locations` for Returns, plus `read_inventory_purchase_orders`, `read_inventory_transfers`, `read_inventory`, `write_inventory_shipments_received_items` and `write_inventory_shipments` for Receive. Then release the new version and approve it in the Shopify admin.
 5. In the editor, run **`testAll`**, allow the permissions it asks for, and check that the log shows `OK` everywhere.
 6. Run **`installTrigger`** once. This also fixes the hourly Bosta sync, which never synced anything with the old code.
 7. **Deploy → Manage deployments →** the pencil icon on the web app **→ Version: New version → Deploy**. The URL stays the same.

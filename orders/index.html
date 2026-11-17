@@ -134,6 +134,14 @@
   body.ret .retopts { display: flex !important; }
   .retopts select { flex: 1; min-width: 0; padding: 10px; font-size: 15px; border: 2px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
   body.ret main { padding-bottom: 200px; }
+  /* receive (from suppliers) */
+  :root { --rcv: #0f766e; }
+  @media (prefers-color-scheme: dark) { :root { --rcv: #5eead4; } }
+  body.rcv header h1 small { color: var(--rcv); }
+  body.rcv .modes button.on { background: var(--rcv); color: var(--on); }
+  body.rcv #fulfillBtn { background: var(--rcv); color: var(--on); }
+  body.rcv #fulfillBtn:disabled { background: var(--muted); }
+  body.rcv #notifyLbl, body.rcv #chips button[data-f] { display: none; }
 
   /* ---------- computer / tablet ---------- */
   @media (min-width: 900px) {
@@ -164,6 +172,7 @@
   <div class="modes" id="modes">
     <button data-m="fulfill" class="on">Fulfill</button>
     <button data-m="return">Returns</button>
+    <button data-m="receive">Receive</button>
   </div>
 
   <div class="orderbar">
@@ -176,7 +185,7 @@
   <div id="banner">Pick an order, scan its barcode, or type the number.</div>
 
   <div id="openOrders">
-    <div class="ordertitle"><strong>Open orders</strong><span id="ordersCount"></span></div>
+    <div class="ordertitle"><strong id="listTitle">Open orders</strong><span id="ordersCount"></span></div>
     <div class="chips" id="chips">
       <button data-f="all" class="on">All</button>
       <button data-f="UNFULFILLED">Unfulfilled</button>
@@ -210,7 +219,7 @@
   </div>
   <div class="row">
     <button class="ghost" id="resetBtn">Clear</button>
-    <label><input type="checkbox" id="notify"> Email customer</label>
+    <label id="notifyLbl"><input type="checkbox" id="notify"> Email customer</label>
     <button class="primary" id="fulfillBtn" disabled>Fulfill</button>
   </div>
 </footer>
@@ -232,10 +241,15 @@
   const T = (s) => (window.pfT ? window.pfT(s) : s); // Arabic for confirm/prompt boxes
   const state = { mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
   const isRet = () => state.mode === 'return';
+  const isRcv = () => state.mode === 'receive';   // receiving stock from suppliers (purchase orders)
   function idleMsg() {
+    if (isRcv()) return 'Receive: pick a purchase order, or scan or type its number.';
     return isRet()
       ? 'Returns: scan the order barcode on the packing slip, or type the number.'
       : 'Pick an order, scan its barcode, or type the number.';
+  }
+  function newRequestId() {
+    try { return crypto.randomUUID(); } catch (e) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
   }
 
   // ---------- feedback ----------
@@ -278,12 +292,12 @@
 
   async function loadOrder(raw) {
     if (state.busy) return;
-    const q = orderNumberFrom(raw);
+    const q = isRcv() ? String(raw).trim() : orderNumberFrom(raw); // PO names look like PO-1003
     if (!q) return;
     state.busy = true;
-    say('Loading order ' + q + '...');
+    say((isRcv() ? 'Loading purchase order ' : 'Loading order ') + q + '...');
     try {
-      const data = await api({ action: isRet() ? 'getReturnable' : 'getOrder', query: q });
+      const data = await api({ action: isRcv() ? 'getPO' : isRet() ? 'getReturnable' : 'getOrder', query: q });
       if (isRet() && !data.items.length) {
         say('Order ' + data.order.name + ' has nothing to return (not shipped yet, or already returned).', 'bad');
         feedback('bad');
@@ -291,9 +305,11 @@
       }
       state.order = data.order;
       state.items = data.items.map((i) => Object.assign({ got: 0 }, i));
+      state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
       $('orderInput').value = '';
       render();
-      say(isRet()
+      if (isRcv()) say(data.order.name + (data.order.supplier ? ' from ' + data.order.supplier : '') + ': scan each item that arrived.', 'ok');
+      else say(isRet()
         ? 'Order ' + data.order.name + ': scan each item being returned.'
         : 'Order ' + data.order.name + ' loaded. Scan the items.', 'ok');
       feedback('ok');
@@ -304,14 +320,17 @@
 
   // ---------- open orders list ----------
   async function loadList() {
+    const mode = state.mode;
+    state.orders = []; renderOrders();
     $('ordersCount').textContent = 'loading...';
+    let rows = [];
     try {
-      const data = await api({ action: 'listOrders' });
-      state.orders = data.orders;
+      rows = (await api({ action: mode === 'receive' ? 'listPOs' : 'listOrders' })).orders;
     } catch (e) {
-      state.orders = [];
-      say(e.message, 'bad');
+      if (mode === state.mode) say(e.message, 'bad');
     }
+    if (mode !== state.mode) return; // switched mode while loading
+    state.orders = rows;
     renderOrders();
   }
 
@@ -325,21 +344,22 @@
     const box = $('orderList');
     const term = $('orderInput').value.replace(/[^0-9a-z]/gi, '').toLowerCase();
     const rows = state.orders.filter(function (o) {
-      if (state.filter !== 'all' && o.status !== state.filter) return false;
+      if (!isRcv() && state.filter !== 'all' && o.status !== state.filter) return false;
       return !term || o.name.replace(/[^0-9a-z]/gi, '').toLowerCase().indexOf(term) !== -1;
     });
-    $('ordersCount').textContent = rows.length + (rows.length === 1 ? ' order' : ' orders');
+    $('listTitle').textContent = isRcv() ? 'Purchase orders' : 'Open orders';
+    $('ordersCount').textContent = rows.length + (isRcv() ? (rows.length === 1 ? ' purchase order' : ' purchase orders') : (rows.length === 1 ? ' order' : ' orders'));
     box.innerHTML = '';
-    if (!rows.length) { box.innerHTML = '<div class="empty">No orders to show.</div>'; return; }
+    if (!rows.length) { box.innerHTML = '<div class="empty">' + (isRcv() ? 'No purchase orders waiting for stock.' : 'No orders to show.') + '</div>'; return; }
     rows.forEach(function (o) {
       const b = document.createElement('button');
       b.className = 'ord';
       const pillCls = o.status === 'UNFULFILLED' ? 'u' : o.status === 'PARTIALLY_FULFILLED' ? 'p' : 'o';
-      const pillTxt = o.status === 'UNFULFILLED' ? 'Unfulfilled' : o.status === 'PARTIALLY_FULFILLED' ? 'Partial' : o.status.replace(/_/g, ' ').toLowerCase();
+      const pillTxt = isRcv() ? 'Ordered' : o.status === 'UNFULFILLED' ? 'Unfulfilled' : o.status === 'PARTIALLY_FULFILLED' ? 'Partial' : o.status.replace(/_/g, ' ').toLowerCase();
       b.innerHTML = '<div><div class="a"></div><div class="b"></div><div style="margin-top:6px"><span class="pill ' + pillCls + '">' + pillTxt + '</span></div></div>' +
         '<div class="q"><b></b>items</div>';
       b.querySelector('.a').textContent = o.name;
-      b.querySelector('.b').textContent = [o.customer, o.city, fmtDate(o.createdAt)].filter(Boolean).join(' · ');
+      b.querySelector('.b').textContent = [o.customer, o.city, o.createdAt && fmtDate(o.createdAt)].filter(Boolean).join(' · ');
       b.querySelector('.q b').textContent = o.qty;
       b.addEventListener('click', function () { loadOrder(o.name); });
       box.appendChild(b);
@@ -370,13 +390,14 @@
     const c = norm(code);
     const matches = state.items.filter((i) => (i.barcode && norm(i.barcode) === c) || (i.sku && norm(i.sku) === c));
     if (!matches.length) {
-      say((isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code, 'bad'); feedback('bad'); return;
+      say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code, 'bad'); feedback('bad'); return;
     }
     // The same product can be on more than one line (e.g. shipped in two parcels): fill the first line with room left
     const item = matches.find((i) => i.got < i.need);
     if (!item) {
       const need = matches.reduce((s, i) => s + i.need, 0);
-      say(isRet()
+      say(isRcv() ? 'Too many: only ' + need + ' ' + matches[0].title + ' expected'
+        : isRet()
         ? 'Too many: only ' + need + ' ' + matches[0].title + ' can be returned'
         : 'Too many: ' + matches[0].title + ' (need ' + need + ')', 'bad');
       feedback('bad'); return;
@@ -384,7 +405,10 @@
     item.got++;
     render();
     const left = totalNeed() - totalGot();
-    if (isRet()) {
+    if (isRcv()) {
+      say(item.title + ': received ' + item.got + ' of ' + item.need + (left === 0 ? '. Everything on this purchase order scanned.' : ''), 'ok');
+      feedback('ok');
+    } else if (isRet()) {
       say(item.title + ': returning ' + item.got + ' of ' + item.need + (left === 0 ? '. Every returnable item scanned.' : ''), 'ok');
       feedback('ok');
     } else if (left === 0) { say('All items scanned. Ready to fulfill.', 'ok'); feedback('ok'); }
@@ -424,7 +448,9 @@
     const list = $('list');
     $('orderTitle').hidden = !state.order;
     $('openOrders').hidden = !!state.order || isRet();
-    $('fulfillBtn').textContent = isRet()
+    $('fulfillBtn').textContent = isRcv()
+      ? (totalGot() ? 'Receive ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Receive')
+      : isRet()
       ? (totalGot() ? 'Return ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Return')
       : 'Fulfill';
     if (!state.order) {
@@ -432,7 +458,9 @@
       $('fulfillBtn').disabled = true; return;
     }
     $('orderName').textContent = state.order.name;
-    $('orderSummary').textContent = isRet()
+    $('orderSummary').textContent = isRcv()
+      ? totalGot() + ' received · ' + totalNeed() + ' expected'
+      : isRet()
       ? totalGot() + ' to return · ' + totalNeed() + ' returnable'
       : totalGot() + ' of ' + totalNeed() + ' items';
     list.innerHTML = '';
@@ -450,7 +478,7 @@
       el.querySelector('.m').textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
       list.appendChild(el);
     });
-    $('fulfillBtn').disabled = isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
+    $('fulfillBtn').disabled = (isRet() || isRcv()) ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
   }
 
   $('list').addEventListener('click', function (e) {
@@ -462,7 +490,31 @@
   });
 
   // ---------- fulfill ----------
-  $('fulfillBtn').addEventListener('click', function () { if (isRet()) submitReturn(); else submitFulfill(); });
+  $('fulfillBtn').addEventListener('click', function () { if (isRcv()) submitReceive(); else if (isRet()) submitReturn(); else submitFulfill(); });
+
+  async function submitReceive() {
+    if (state.busy) return;
+    const n = totalGot(), name = state.order.name, missing = totalNeed() - n;
+    if (!confirm(T('Receive ' + n + (n === 1 ? ' item' : ' items') + ' from ' + name + ' into stock?' +
+      (missing > 0 ? '\n' + missing + ' not scanned will stay open on the purchase order.' : '')))) return;
+    state.busy = true; $('fulfillBtn').disabled = true;
+    say('Receiving ' + name + '...');
+    try {
+      const data = await api({
+        action: 'receivePO',
+        requestId: state.requestId,
+        items: state.items.filter((i) => i.got > 0).map((i) => ({
+          shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '', qty: i.got
+        }))
+      });
+      feedback('ok');
+      state.order = null; state.items = []; render();
+      say('Received ' + data.received + (data.received === 1 ? ' item' : ' items') + ' from ' + name + ' into stock.', 'ok');
+      loadList();
+    } catch (e) {
+      say(e.message, 'bad'); feedback('bad'); $('fulfillBtn').disabled = false;
+    } finally { state.busy = false; }
+  }
 
   async function submitReturn() {
     if (state.busy) return;
@@ -525,13 +577,15 @@
     state.mode = m;
     store.set('mode', m);
     document.body.classList.toggle('ret', m === 'return');
-    $('modeLabel').textContent = m === 'return' ? 'Returns' : 'Fulfill';
+    document.body.classList.toggle('rcv', m === 'receive');
+    $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : 'Fulfill';
+    $('orderInput').placeholder = m === 'receive' ? 'Purchase order number' : 'Order number';
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
     state.order = null; state.items = [];
     render();
     if (!initial) {
       say(idleMsg());
-      if (m === 'fulfill' && ready()) loadList();
+      if (m !== 'return' && ready()) loadList();
     }
   }
   $('modes').addEventListener('click', function (e) {
@@ -560,7 +614,7 @@
   // Inside the PetFriend app: stop the camera when the user switches to another tab
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
 
-  setMode(store.get('mode') === 'return' ? 'return' : 'fulfill', true);
+  setMode(['return', 'receive'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
   if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
   else if (isRet()) say(idleMsg());
   else loadList();
