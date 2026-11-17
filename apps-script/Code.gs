@@ -577,14 +577,26 @@ function metaDefType_(owner, k) {
 }
 function digits_(s) { return String(s || '').replace(/\D/g, ''); }
 
-/** Purchase orders still waiting for stock (status ORDERED, not fully received). */
+/** All ORDERED purchase orders, page by page (Shopify lists them oldest first and has no sort option). */
+function allPOs_(fields, pageSize, maxPages) {
+  const out = [];
+  let after = null;
+  for (let page = 0; page < maxPages; page++) {
+    const d = shopifyAt_(RECEIVE_API,
+      'query($after: String) { inventoryPurchaseOrders(first: ' + pageSize + ', after: $after, query: "status:ORDERED") {' +
+      ' nodes { ' + fields + ' } pageInfo { hasNextPage endCursor } } }', { after: after }).inventoryPurchaseOrders;
+    Array.prototype.push.apply(out, d.nodes);
+    if (!d.pageInfo || !d.pageInfo.hasNextPage) break;
+    after = d.pageInfo.endCursor;
+  }
+  return out;
+}
+
+/** Purchase orders still waiting for stock (status ORDERED, not fully received), newest first. */
 function listPOs_() {
-  const d = shopifyAt_(RECEIVE_API,
-    'query { inventoryPurchaseOrders(last: 100, query: "status:ORDERED") { nodes {' +   // last = the newest 100
-    '  id name orderedAt dateCreated origin { supplierName } destination { name }' +
-    '  transfers(first: 3) { nodes { totalQuantity receivedQuantity } }' +
-    '} } }');
-  const orders = d.inventoryPurchaseOrders.nodes.map(function (po) {
+  const nodes = allPOs_('id name orderedAt dateCreated origin { supplierName } destination { name }' +
+    ' transfers(first: 3) { nodes { totalQuantity receivedQuantity } }', 100, 10);
+  const orders = nodes.map(function (po) {
     const total = po.transfers.nodes.reduce(function (s, t) { return s + t.totalQuantity; }, 0);
     const received = po.transfers.nodes.reduce(function (s, t) { return s + t.receivedQuantity; }, 0);
     return {
@@ -603,8 +615,7 @@ function listPOs_() {
 function getPO_(body) {
   const q = String(body.query || '').trim().toUpperCase(), num = digits_(q);
   if (!num) throw new Error('Enter a purchase order number');
-  const list = shopifyAt_(RECEIVE_API, 'query { inventoryPurchaseOrders(last: 250, query: "status:ORDERED") { nodes { id name } } }')
-    .inventoryPurchaseOrders.nodes;
+  const list = allPOs_('id name', 250, 20);
   const found = list.filter(function (po) { return po.name.toUpperCase() === q; })[0] ||
                 list.filter(function (po) { return digits_(po.name) === num; })[0];
   if (!found) throw new Error('Purchase order ' + q + ' not found (or not marked as ordered)');
