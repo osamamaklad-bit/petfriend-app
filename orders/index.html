@@ -385,9 +385,10 @@
   // ---------- scanning ----------
   function norm(s) { return String(s || '').trim().toLowerCase(); }
 
-  function onScan(code) {
+  function onScan(code, typed) {
     const now = Date.now();
-    if (code === state.lastCode && now - state.lastAt < 1500) return; // same frame burst
+    // the camera reads the same barcode many times a second; a typed or scanner-gun entry always counts
+    if (!typed && code === state.lastCode && now - state.lastAt < 1500) return;
     state.lastCode = code; state.lastAt = now;
 
     if (!state.order) { loadOrder(code); return; }
@@ -452,6 +453,9 @@
   function render() {
     const list = $('list');
     $('orderTitle').hidden = !state.order;
+    $('orderInput').placeholder = state.order ? 'Item barcode or SKU' : isRcv() ? 'PO number' : 'Order number';
+    $('loadBtn').textContent = state.order ? 'Add' : 'Load';
+    $('orderInput').inputMode = state.order ? 'text' : 'numeric'; // SKUs can contain letters
     $('openOrders').hidden = !!state.order || isRet();
     $('fulfillBtn').textContent = isRcv()
       ? (totalGot() ? 'Receive ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Receive')
@@ -640,7 +644,6 @@
     document.body.classList.toggle('ret', m === 'return');
     document.body.classList.toggle('rcv', m === 'receive');
     $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : 'Fulfill';
-    $('orderInput').placeholder = m === 'receive' ? 'PO number' : 'Order number';
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
     state.order = null; state.items = [];
     render();
@@ -653,8 +656,16 @@
     const b = e.target.closest('button[data-m]');
     if (b) setMode(b.dataset.m);
   });
-  $('loadBtn').addEventListener('click', function () { loadOrder($('orderInput').value); });
-  $('orderInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadOrder(e.target.value); });
+  // The box loads an order when none is open; once one is open it counts items by barcode or SKU,
+  // so a USB / Bluetooth barcode scanner (which types the code and presses Enter) works too.
+  function submitBox() {
+    const v = $('orderInput').value.trim();
+    if (!v) return;
+    if (state.order) { $('orderInput').value = ''; onScan(v, true); }
+    else loadOrder(v);
+  }
+  $('loadBtn').addEventListener('click', submitBox);
+  $('orderInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitBox(); });
   $('camBtn').addEventListener('click', toggleCamera);
 
   // ---------- settings ----------

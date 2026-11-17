@@ -580,8 +580,8 @@ function digits_(s) { return String(s || '').replace(/\D/g, ''); }
 /** Purchase orders still waiting for stock (status ORDERED, not fully received). */
 function listPOs_() {
   const d = shopifyAt_(RECEIVE_API,
-    'query { inventoryPurchaseOrders(first: 100, query: "status:ORDERED") { nodes {' +
-    '  id name orderedAt origin { supplierName } destination { name }' +
+    'query { inventoryPurchaseOrders(last: 100, query: "status:ORDERED") { nodes {' +   // last = the newest 100
+    '  id name orderedAt dateCreated origin { supplierName } destination { name }' +
     '  transfers(first: 3) { nodes { totalQuantity receivedQuantity } }' +
     '} } }');
   const orders = d.inventoryPurchaseOrders.nodes.map(function (po) {
@@ -591,10 +591,11 @@ function listPOs_() {
       id: po.id, name: po.name, status: 'ORDERED',
       customer: po.origin && po.origin.supplierName || '',      // shown where the customer is for orders
       city: po.destination && po.destination.name || '',
-      createdAt: po.orderedAt,
+      createdAt: po.orderedAt || po.dateCreated,
       qty: Math.max(0, total - received)
     };
-  }).filter(function (po) { return po.qty > 0; });
+  }).filter(function (po) { return po.qty > 0; })
+    .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); }); // newest first
   return { ok: true, orders: orders };
 }
 
@@ -602,7 +603,7 @@ function listPOs_() {
 function getPO_(body) {
   const q = String(body.query || '').trim().toUpperCase(), num = digits_(q);
   if (!num) throw new Error('Enter a purchase order number');
-  const list = shopifyAt_(RECEIVE_API, 'query { inventoryPurchaseOrders(first: 250, query: "status:ORDERED") { nodes { id name } } }')
+  const list = shopifyAt_(RECEIVE_API, 'query { inventoryPurchaseOrders(last: 250, query: "status:ORDERED") { nodes { id name } } }')
     .inventoryPurchaseOrders.nodes;
   const found = list.filter(function (po) { return po.name.toUpperCase() === q; })[0] ||
                 list.filter(function (po) { return digits_(po.name) === num; })[0];

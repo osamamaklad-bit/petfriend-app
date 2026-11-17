@@ -71,6 +71,8 @@
     'Receive': 'استلام',
     'Purchase orders': 'أوامر الشراء',
     'PO number': 'رقم أمر الشراء',
+    'Item barcode or SKU': 'باركود المنتج أو SKU',
+    'Add': 'إضافة',
     'Variant bin:': 'موقع المتغيّر:',
     'Product bin:': 'موقع المنتج:',
     'Expiry:': 'تاريخ الانتهاء:',
