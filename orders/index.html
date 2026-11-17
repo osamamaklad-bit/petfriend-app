@@ -92,6 +92,9 @@
   .item img, .item .noimg { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--soft); }
   .item .t { font-weight: 600; font-size: 15px; line-height: 1.25; }
   .item .m { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-all; }
+  .item .bin { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font-size: 13px; }
+  .item .bin span { color: var(--muted); }
+  .item .bin b { color: var(--rcv); font-size: 14px; }
   .count { text-align: center; }
   .count .n { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .item.done .n { color: var(--ok); }
@@ -470,12 +473,23 @@
       el.className = 'item ' + cls;
       const img = it.image ? '<img src="' + it.image.replace(/"/g, '') + '" alt="">' : '<div class="noimg"></div>';
       el.innerHTML = img +
-        '<div><div class="t"></div><div class="m"></div></div>' +
+        '<div><div class="t"></div><div class="m"></div><div class="bin"></div></div>' +
         '<div class="count"><div class="n">' + it.got + '/' + it.need + '</div>' +
         '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one">&minus;</button>' +
         '<button data-i="' + idx + '" data-d="1" aria-label="Add one">+</button></div></div>';
       el.querySelector('.t').textContent = it.title;
       el.querySelector('.m').textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
+      // Receive: bin locations from the variant and product metafields
+      const bins = [];
+      if (it.binVariant) bins.push(['Variant bin:', it.binVariant]);
+      if (it.binProduct && it.binProduct !== it.binVariant) bins.push(['Product bin:', it.binProduct]);
+      const binBox = el.querySelector('.bin');
+      if (!bins.length) binBox.remove();
+      bins.forEach(function (b) {
+        const w = document.createElement('div'), lab = document.createElement('span'), val = document.createElement('b');
+        lab.textContent = b[0] + ' '; val.textContent = b[1]; val.setAttribute('data-no-i18n', '');
+        w.appendChild(lab); w.appendChild(val); binBox.appendChild(w);
+      });
       list.appendChild(el);
     });
     $('fulfillBtn').disabled = (isRet() || isRcv()) ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
@@ -579,7 +593,7 @@
     document.body.classList.toggle('ret', m === 'return');
     document.body.classList.toggle('rcv', m === 'receive');
     $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : 'Fulfill';
-    $('orderInput').placeholder = m === 'receive' ? 'Purchase order number' : 'Order number';
+    $('orderInput').placeholder = m === 'receive' ? 'PO number' : 'Order number';
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
     state.order = null; state.items = [];
     render();

@@ -24,6 +24,8 @@
  *   Orders
  *     APP_KEY                the Orders app key
  *     SHOPIFY_LOCATION_ID    (optional) where returns are restocked if the original location is unknown
+ *     BIN_VARIANT_METAFIELD  (optional) variant bin-location metafield shown in Receive, default custom.bin_location
+ *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
  *   Shipments
  *     APP_PIN                the Shipments PIN
  *     SHEET_ID               the Google Sheet's ID (only if this script is NOT opened from that sheet)
@@ -480,11 +482,33 @@ function defaultLocation_() {
  * ===================================================================================== */
 
 const RECEIVE_API = '2026-10';
-const PO_ITEM_FIELDS = 'inventoryItem { id sku variants(first: 1) { nodes { displayName barcode sku } } }';
+// Bin locations shown on each item: a variant metafield and a product metafield ("namespace.key").
+// Defaults to custom.bin_location for both; change with the Script Properties
+// BIN_VARIANT_METAFIELD / BIN_PRODUCT_METAFIELD if your definitions use another key.
+function binField_(prop) {
+  const m = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(P.getProperty(prop) || 'custom.bin_location');
+  if (!m) throw new Error(prop + ' must look like custom.bin_location');
+  return 'metafield(namespace: "' + m[1] + '", key: "' + m[2] + '") { value }';
+}
+function poItemFields_() {
+  return 'inventoryItem { id sku variants(first: 1) { nodes { displayName barcode sku' +
+    ' vBin: ' + binField_('BIN_VARIANT_METAFIELD') +
+    ' product { pBin: ' + binField_('BIN_PRODUCT_METAFIELD') + ' } } } }';
+}
 
 function poItem_(inv, extra) {
   const v = (inv && inv.variants && inv.variants.nodes[0]) || {};
-  return Object.assign({ title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: '' }, extra);
+  return Object.assign({
+    title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: '',
+    binVariant: binValue_(v.vBin), binProduct: binValue_(v.product && v.product.pBin)
+  }, extra);
+}
+// Metafield values come as text; list-type metafields come as JSON arrays: show them comma-separated
+function binValue_(mf) {
+  if (!mf || mf.value == null) return '';
+  const v = String(mf.value);
+  try { const j = JSON.parse(v); if (Array.isArray(j)) return j.join(', '); } catch (e) {}
+  return v;
 }
 function digits_(s) { return String(s || '').replace(/\D/g, ''); }
 
@@ -529,7 +553,7 @@ function getPO_(body) {
     const open = t.shipments.nodes.filter(function (sh) { return sh.status === 'IN_TRANSIT' || sh.status === 'PARTIALLY_RECEIVED'; });
     open.forEach(function (sh) {
       const lines = shopifyAt_(RECEIVE_API,
-        'query($id: ID!) { inventoryShipment(id: $id) { lineItems(first: 250) { nodes { id unreceivedQuantity ' + PO_ITEM_FIELDS + ' } } } }',
+        'query($id: ID!) { inventoryShipment(id: $id) { lineItems(first: 250) { nodes { id unreceivedQuantity ' + poItemFields_() + ' } } } }',
         { id: sh.id }).inventoryShipment.lineItems.nodes;
       lines.forEach(function (l) {
         if (l.unreceivedQuantity > 0) items.push(poItem_(l.inventoryItem, { shipmentId: sh.id, sliId: l.id, need: l.unreceivedQuantity }));
@@ -538,7 +562,7 @@ function getPO_(body) {
     if (!open.length && t.status !== 'TRANSFERRED' && t.status !== 'CANCELED') {
       // No incoming shipment yet: offer what has not been shipped; a shipment is created when receiving
       const lines = shopifyAt_(RECEIVE_API,
-        'query($id: ID!) { inventoryTransfer(id: $id) { lineItems(first: 250) { nodes { shippableQuantity ' + PO_ITEM_FIELDS + ' } } } }',
+        'query($id: ID!) { inventoryTransfer(id: $id) { lineItems(first: 250) { nodes { shippableQuantity ' + poItemFields_() + ' } } } }',
         { id: t.id }).inventoryTransfer.lineItems.nodes;
       lines.forEach(function (l) {
         if (l.shippableQuantity > 0 && l.inventoryItem) items.push(poItem_(l.inventoryItem, { transferId: t.id, inventoryItemId: l.inventoryItem.id, need: l.shippableQuantity }));

@@ -5,7 +5,7 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 | Tab | What it does | Came from |
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
-| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory | `scan-fulfill` |
+| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory, with each item's variant and product bin location (`custom.bin_location` metafields; other keys can be set with the `BIN_VARIANT_METAFIELD` / `BIN_PRODUCT_METAFIELD` Script Properties) | `scan-fulfill` |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
