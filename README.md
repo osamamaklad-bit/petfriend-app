@@ -5,12 +5,14 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 | Tab | What it does | Came from |
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
-| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory (barcode only: camera or barcode scanner; no + button, − only undoes a scan; items without a barcode are flagged), showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). All three can be edited from the item's **Edit** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
+| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory, showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). All three can be edited from the item's **Edit** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
 
 **Language:** English by default. The globe button in the tab bar switches every tab between English and Arabic (right-to-left), and the phone remembers the choice. The translations are in `i18n.js`: add new on-screen text to `EXACT`, or to `PATTERNS` if it contains a name or number.
+
+**Scanning rule (Fulfill, Returns, Receive):** each item's + / − buttons stay locked until that item's own barcode is scanned (camera or barcode scanner). A wrong barcode unlocks nothing, and only scanned items can be fulfilled, returned or received. Items without a barcode are flagged and have to get one in Shopify first.
 
 A tab you leave keeps its state (for example, a POS cart survives while you check a shipment), and its camera switches off.
 

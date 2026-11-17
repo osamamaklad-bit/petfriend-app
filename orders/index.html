@@ -104,6 +104,8 @@
   .item.part .n { color: var(--warn); }
   .adj { display: flex; gap: 6px; margin-top: 4px; }
   .adj button { width: 34px; height: 30px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-size: 18px; line-height: 1; color: var(--ink); }
+  .adj button.locked { opacity: .35; }
+  .item .lockhint { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
   footer {
     position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
@@ -310,7 +312,7 @@
         return;
       }
       state.order = data.order;
-      state.items = data.items.map((i) => Object.assign({ got: 0 }, i));
+      state.items = data.items.map((i) => Object.assign({ got: 0, verified: false }, i)); // verified = its barcode was scanned
       state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
       $('orderInput').value = '';
       render();
@@ -395,14 +397,16 @@
     if (!state.order) { loadOrder(code); return; }
 
     const c = norm(code);
-    // Receive counts by barcode only; Fulfill and Returns also accept the SKU
-    const matches = state.items.filter((i) => (i.barcode && norm(i.barcode) === c) || (!isRcv() && i.sku && norm(i.sku) === c));
+    // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
+    const matches = state.items.filter((i) => i.barcode && norm(i.barcode) === c);
     if (!matches.length) {
       say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code, 'bad'); feedback('bad'); return;
     }
     // The same product can be on more than one line (e.g. shipped in two parcels): fill the first line with room left
+    matches.forEach((i) => { i.verified = true; });
     const item = matches.find((i) => i.got < i.need);
     if (!item) {
+      render();
       const need = matches.reduce((s, i) => s + i.need, 0);
       say(isRcv() ? 'Too many: only ' + need + ' ' + matches[0].title + ' expected'
         : isRet()
@@ -455,7 +459,7 @@
   function render() {
     const list = $('list');
     $('orderTitle').hidden = !state.order;
-    $('orderInput').placeholder = state.order ? (isRcv() ? 'Item barcode' : 'Item barcode or SKU') : isRcv() ? 'PO number' : 'Order number';
+    $('orderInput').placeholder = state.order ? 'Item barcode' : isRcv() ? 'PO number' : 'Order number';
     $('loadBtn').textContent = state.order ? 'Add' : 'Load';
     $('orderInput').inputMode = state.order ? 'text' : 'numeric'; // SKUs can contain letters
     $('openOrders').hidden = !!state.order || isRet();
@@ -483,16 +487,20 @@
       el.innerHTML = img +
         '<div><div class="t"></div><div class="m"></div><div class="bin"></div></div>' +
         '<div class="count"><div class="n">' + it.got + '/' + it.need + '</div>' +
-        '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one">&minus;</button>' +
-        (isRcv() ? '' : '<button data-i="' + idx + '" data-d="1" aria-label="Add one">+</button>') + '</div></div>'; // Receive: scan to add, − only to undo
+        '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one"' + (it.verified ? '' : ' class="locked"') + '>&minus;</button>' +
+        '<button data-i="' + idx + '" data-d="1" aria-label="Add one"' + (it.verified ? '' : ' class="locked"') + '>+</button></div></div>'; // locked until the barcode is scanned
       el.querySelector('.t').textContent = it.title;
       const codes = document.createElement('span');
       codes.dir = 'ltr'; // keep SKU / barcode as written, also in Arabic
       codes.textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
       el.querySelector('.m').appendChild(codes);
-      if (isRcv() && !it.barcode) {
+      if (!it.barcode) {
         const w = document.createElement('div');
-        w.className = 'nobc'; w.textContent = 'No barcode: add one in Shopify to receive this item';
+        w.className = 'nobc'; w.textContent = 'No barcode: add one in Shopify to scan this item';
+        el.querySelector('.m').after(w);
+      } else if (!it.verified) {
+        const w = document.createElement('div');
+        w.className = 'lockhint'; w.textContent = 'Scan the barcode to unlock + / −';
         el.querySelector('.m').after(w);
       }
       // Receive: bin locations (variant + product) and the product's expiry date, editable
@@ -561,7 +569,7 @@
     const b = e.target.closest('button[data-i]');
     if (!b) return;
     const it = state.items[+b.dataset.i], d = +b.dataset.d;
-    if (isRcv() && d > 0) return; // Receive: items are added by scanning their barcode only
+    if (!it.verified) { say('Scan the barcode of ' + it.title + ' first', 'bad'); feedback('bad'); return; }
     it.got = Math.max(0, Math.min(it.need, it.got + d));
     render();
   });
@@ -580,7 +588,7 @@
       const data = await api({
         action: 'receivePO',
         requestId: state.requestId,
-        items: state.items.filter((i) => i.got > 0).map((i) => ({
+        items: state.items.filter((i) => i.verified && i.got > 0).map((i) => ({
           shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '', qty: i.got
         }))
       });
@@ -608,7 +616,7 @@
         notify: $('notify').checked,
         restock: restock,
         reason: $('reason').value,
-        items: state.items.filter((i) => i.got > 0).map((i) => ({ fliId: i.fliId, qty: i.got, locationId: i.locationId || '' }))
+        items: state.items.filter((i) => i.verified && i.got > 0).map((i) => ({ fliId: i.fliId, qty: i.got, locationId: i.locationId || '' }))
       });
       feedback('ok');
       state.order = null; state.items = []; render();
@@ -621,6 +629,7 @@
 
   async function submitFulfill() {
     if (state.busy) return;
+    if (state.items.some((i) => !i.verified)) { say('Scan the barcode of every item first', 'bad'); feedback('bad'); return; }
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Fulfilling ' + state.order.name + '...');
     try {

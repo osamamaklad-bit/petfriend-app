@@ -73,7 +73,9 @@
     'PO number': 'رقم أمر الشراء',
     'Item barcode or SKU': 'باركود المنتج أو SKU',
     'Item barcode': 'باركود المنتج',
-    'No barcode: add one in Shopify to receive this item': 'بدون باركود: أضف باركود في Shopify لاستلام هذا المنتج',
+    'No barcode: add one in Shopify to scan this item': 'بدون باركود: أضف باركود في Shopify لمسح هذا المنتج',
+    'Scan the barcode to unlock + / −': 'امسح الباركود لتفعيل + / −',
+    'Scan the barcode of every item first': 'امسح باركود كل منتج أولاً',
     'Add': 'إضافة',
     'Variant bin:': 'موقع المتغيّر:',
     'Product bin:': 'موقع المنتج:',
@@ -186,6 +188,7 @@
     // Receiving from suppliers
     [/^Loading purchase order (.+)\.\.\.$/, 'جارٍ تحميل أمر الشراء $1...'],
     [/^Saved bin location and expiry date for (.+)$/, 'تم حفظ موقع التخزين وتاريخ الانتهاء لـ $1'],
+    [/^Scan the barcode of (.+) first$/, 'امسح باركود $1 أولاً'],
     [/^(.+) from (.+): scan each item that arrived\.$/, '$1 من $2: امسح كل منتج وصل.'],
     [/^(.+): scan each item that arrived\.$/, '$1: امسح كل منتج وصل.'],
     [/^(\d+) purchase orders?$/, '$1 أمر شراء'],
