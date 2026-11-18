@@ -6,7 +6,7 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
 | **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory; per item you can also set **Rejected** (damaged or wrong units; needs the item scanned) and **Cancelled** (not coming), and receive **more** than ordered (the extra is added to stock at the PO's location), showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). All three can be edited from the item's **Edit** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
-| **Pick list** | Products of the orders ready to pick (unfulfilled and paid, or tagged `confirmed` without `not confirmed yet`), combined per variant, sorted by bin location, with picture, SKU, quantity, bins and order numbers. Tick lines as they are picked, print it, or email it as a PDF | the pick list Apps Script project |
+| **Pick list** | Products of the orders ready to pick (unfulfilled and paid, or tagged `confirmed` without `not confirmed yet`), combined per variant, sorted by bin location, with picture, SKU, quantity, bins and order numbers. Lists are published automatically from 10:00 to 14:00 when new orders qualify, or with **Create pick list now**. Tick lines as they are picked, or print a list | the pick list Apps Script project |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
@@ -53,12 +53,12 @@ The easiest home for it is the **existing Shipments project**, because it's alre
 
 The old POS and Orders scripts can stay as a backup until everything works, and then be deleted.
 
-### Pick list email (moved from the separate pick list project)
+### Pick list (moved from the separate pick list project, no email any more)
 
-- Script Properties: `PICKLIST_EMAILS` = the recipients, comma-separated (kept out of the code because this repository is public). `SPREADSHEET_ID` is only needed if the script is not opened from the sheet; the list is written to a sheet named `Picklist`.
-- Run `createPicklistTrigger` once: every 10 minutes, 10:00 to 14:00, not on Fridays, new eligible orders are emailed as a PDF (orders already sent are skipped; that memory is kept for 30 days).
-- `sendPicklistManually` emails all eligible open orders; the app's **Email PDF** button does the same.
-- After switching over, remove the trigger from the old pick list project so the email isn't sent twice.
+- Pick lists are published **in the app only**. Each one holds the qualifying orders that were not on an earlier pick list, and is saved in the `PickLists` sheet of the script's spreadsheet (or `SHEET_ID`). Lists older than 30 days are removed.
+- Run `createPicklistTrigger` once. From 10:00 to 14:00, not on Fridays, a check runs every 10 minutes. The 10:00 check collects every order waiting since the last list, and later checks make a new list whenever new orders qualify.
+- The app's **Create pick list now** button, or `createPickListNow` in the editor, makes one at any time.
+- Remove the trigger from the old pick list project, which still emails.
 
 ## Hosting
 

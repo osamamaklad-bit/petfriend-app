@@ -60,6 +60,20 @@
   .row .qty b { display: block; font-size: 30px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
   .row .qty small { color: var(--muted); font-size: 11px; }
   .empty { color: var(--muted); text-align: center; padding: 30px 8px; }
+  .pl { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: start; font: inherit; color: var(--ink);
+    background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; cursor: pointer; }
+  .pl.new { border-color: var(--accent); }
+  .pl .a { font-weight: 800; font-size: 17px; }
+  .pl .b { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .pl .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); margin-inline-start: 6px; }
+  .pl .tag.m { background: #fef3c7; color: #9a4a00; }
+  .pl .q { text-align: end; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .pl .q b { display: block; font-size: 18px; color: var(--ink); }
+  .pl.done { opacity: .6; }
+  .backrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .backrow button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px 12px; font: inherit; font-weight: 600; }
+  .backrow strong { font-size: 18px; }
+  [hidden] { display: none !important; }
   #printHead { display: none; }
 
   @media (min-width: 900px) {
@@ -71,7 +85,7 @@
   @media print {
     @page { size: A4; margin: 10mm; }
     body { background: #fff; color: #000; font-size: 11px; }
-    header, .bar, #banner, .progress { display: none !important; }
+    header, .bar, #banner, .progress, .backrow, #lists { display: none !important; }
     #printHead { display: block; text-align: center; margin-bottom: 6px; }
     #printHead h2 { margin: 0; font-size: 18px; }
     main { max-width: none; padding: 0; }
@@ -92,16 +106,26 @@
 </header>
 <main>
   <div class="bar">
-    <button class="primary" id="refreshBtn">↻ Refresh</button>
-    <button id="printBtn">Print</button>
-    <button id="emailBtn">Email PDF</button>
-    <label><input type="checkbox" id="hidePicked"> Hide picked</label>
+    <button class="primary" id="createBtn">＋ Create pick list now</button>
+    <button id="refreshBtn">↻ Refresh</button>
   </div>
-  <div id="banner">Orders that are paid, or tagged "confirmed", and not yet fulfilled.</div>
-  <div id="printHead"><h2>PetFriend Pick List</h2><div id="printSub"></div></div>
-  <div class="sum"><strong id="sumText"></strong><span id="pickedText"></span></div>
-  <div class="progress"><div id="bar"></div></div>
-  <div id="list"></div>
+  <div id="banner">Pick lists are made automatically from 10:00 to 14:00 when new orders qualify (paid, or tagged "confirmed").</div>
+
+  <!-- the pick lists of the last days -->
+  <div id="lists"></div>
+
+  <!-- one pick list -->
+  <div id="detail" hidden>
+    <div class="backrow"><button id="backBtn">‹ Back</button><strong id="plName" data-no-i18n></strong></div>
+    <div class="bar">
+      <button id="printBtn">Print</button>
+      <label><input type="checkbox" id="hidePicked"> Hide picked</label>
+    </div>
+    <div id="printHead"><h2>PetFriend Pick List</h2><div id="printSub"></div></div>
+    <div class="sum"><strong id="sumText"></strong><span id="pickedText"></span></div>
+    <div class="progress"><div id="bar"></div></div>
+    <div id="list"></div>
+  </div>
 </main>
 <script>
 (function () {
@@ -113,11 +137,13 @@
     get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   };
-  const state = { products: [], orders: 0, generatedAt: '', busy: false };
-  // picked lines are remembered on this phone; a line whose quantity changes (new orders) is un-ticked
+  const state = { lists: [], current: null, busy: false, known: null };
+  // picked lines are remembered on this phone, per pick list
   let picked = {};
-  try { picked = JSON.parse(store.get('pf_picked') || '{}'); } catch (e) { picked = {}; }
-  const pickKey = (p) => p.key + '|' + p.quantity;
+  try { picked = JSON.parse(store.get('pf_picked2') || '{}'); } catch (e) { picked = {}; }
+  const pickKey = (p) => state.current.id + '|' + p.key;
+  const savePicked = () => store.set('pf_picked2', JSON.stringify(picked));
+  const doneCount = (id, n) => Object.keys(picked).filter((k) => k.indexOf(id + '|') === 0).length;
 
   function say(msg, kind) { const b = $('banner'); b.className = kind || ''; b.textContent = msg; }
 
@@ -130,39 +156,101 @@
     return data;
   }
 
-  async function load() {
-    if (state.busy) return;
-    state.busy = true; $('refreshBtn').disabled = true;
-    say('Loading pick list...');
-    try {
-      const d = await api({ action: 'pickList' });
-      state.products = d.products; state.orders = d.orders; state.generatedAt = d.generatedAt;
-      // forget ticks of lines that are no longer on the list
-      const keep = {}; state.products.forEach((p) => { if (picked[pickKey(p)]) keep[pickKey(p)] = 1; });
-      picked = keep; store.set('pf_picked', JSON.stringify(picked));
-      say(d.orders ? 'Sorted by bin location. Tap a line when it is picked.' : 'No orders to pick right now.', 'ok');
-      render();
-    } catch (e) { say(e.message, 'bad'); }
-    finally { state.busy = false; $('refreshBtn').disabled = false; }
-  }
-
-  function fmt(iso) {
+  function fmt(iso, withDay) {
     if (!iso) return '';
     const loc = window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : [];
-    return new Date(iso).toLocaleString(loc, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString(loc, withDay === false ? { hour: '2-digit', minute: '2-digit' } : { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
 
+  // ---------- the pick lists ----------
+  async function loadLists(quiet) {
+    try {
+      const d = await api({ action: 'listPickLists' });
+      const fresh = state.known ? d.pickLists.filter((x) => !state.known[x.id]) : [];
+      state.lists = d.pickLists;
+      state.known = {}; d.pickLists.forEach((x) => { state.known[x.id] = 1; });
+      if (fresh.length) { say('New pick list: ' + fresh[0].orders + (fresh[0].orders === 1 ? ' order' : ' orders') + ', ' + fresh[0].products + (fresh[0].products === 1 ? ' product' : ' products') + '.', 'ok'); beep(); }
+      else if (!quiet) say(d.pickLists.length ? 'Tap a pick list to open it.' : 'No pick lists in the last 7 days.', d.pickLists.length ? 'ok' : '');
+      renderLists(fresh);
+    } catch (e) { if (!quiet) say(e.message, 'bad'); }
+  }
+
+  function renderLists(fresh) {
+    const box = $('lists'); box.innerHTML = '';
+    const isNew = {}; (fresh || []).forEach((x) => { isNew[x.id] = 1; });
+    state.lists.forEach(function (x) {
+      const done = doneCount(x.id);
+      const b = document.createElement('button');
+      b.className = 'pl' + (isNew[x.id] ? ' new' : '') + (done && done >= x.products ? ' done' : '');
+      b.innerHTML = '<div><div class="a"></div><div class="b"></div></div><div class="q"><b></b><span></span></div>';
+      b.querySelector('.a').textContent = fmt(x.createdAt);
+      const tag = document.createElement('span'); tag.className = 'tag' + (x.kind === 'manual' ? ' m' : ''); tag.textContent = x.kind === 'manual' ? 'Manual' : 'Automatic';
+      b.querySelector('.a').appendChild(tag);
+      b.querySelector('.b').textContent = x.orders + (x.orders === 1 ? ' order' : ' orders') + ' · ' + x.products + (x.products === 1 ? ' product' : ' products');
+      b.querySelector('.q b').textContent = done + '/' + x.products;
+      b.querySelector('.q span').textContent = 'picked';
+      b.addEventListener('click', function () { openList(x.id); });
+      box.appendChild(b);
+    });
+  }
+
+  async function openList(id) {
+    if (state.busy) return;
+    state.busy = true;
+    say('Loading pick list...');
+    try {
+      const d = await api({ action: 'getPickList', id: id });
+      state.current = d.pickList;
+      $('lists').hidden = true; $('detail').hidden = false; $('createBtn').parentNode.hidden = true;
+      say('Sorted by bin location. Tap a line when it is picked.', 'ok');
+      render();
+      window.scrollTo(0, 0);
+    } catch (e) { say(e.message, 'bad'); }
+    finally { state.busy = false; }
+  }
+  function closeList() {
+    state.current = null;
+    $('detail').hidden = true; $('lists').hidden = false; $('createBtn').parentNode.hidden = false;
+    renderLists(); say('Tap a pick list to open it.');
+  }
+
+  async function createNow() {
+    if (state.busy) return;
+    if (!confirm(T('Create a pick list now with the new orders that qualify?'))) return;
+    state.busy = true; $('createBtn').disabled = true;
+    say('Creating pick list...');
+    let made = null;
+    try {
+      const d = await api({ action: 'createPickList' });
+      if (!d.created) say('No new orders to pick: every qualifying order is already on a pick list.', '');
+      else { made = d.pickList; state.known = state.known || {}; state.known[made.id] = 1; }
+    } catch (e) { say(e.message, 'bad'); }
+    finally { state.busy = false; $('createBtn').disabled = false; }
+    if (made) {   // open the new list once the create step is finished
+      await loadLists(true);
+      await openList(made.id);
+      say('Pick list created: ' + made.orders + (made.orders === 1 ? ' order' : ' orders') + ', ' + made.products + (made.products === 1 ? ' product' : ' products') + '.', 'ok');
+    }
+  }
+
+  let actx;
+  function beep() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.value = 0.15; o.start(); o.stop(actx.currentTime + 0.25); } catch (e) {}
+    if (navigator.vibrate) try { navigator.vibrate([80, 60, 80]); } catch (e) {} }
+
+  // ---------- one pick list ----------
   function render() {
-    const ps = state.products, units = ps.reduce((s, p) => s + p.quantity, 0);
+    if (!state.current) return;
+    const c = state.current, ps = c.items, units = ps.reduce((s, p) => s + p.quantity, 0);
     const done = ps.filter((p) => picked[pickKey(p)]).length;
-    $('genAt').textContent = state.generatedAt ? fmt(state.generatedAt) : '';
-    $('sumText').textContent = state.orders + (state.orders === 1 ? ' order' : ' orders') + ' · ' + ps.length + (ps.length === 1 ? ' product' : ' products') + ' · ' + units + ' units';
+    $('plName').textContent = fmt(c.createdAt);
+    $('genAt').textContent = '';
+    $('sumText').textContent = c.orders + (c.orders === 1 ? ' order' : ' orders') + ' · ' + ps.length + (ps.length === 1 ? ' product' : ' products') + ' · ' + units + ' units';
     $('pickedText').textContent = ps.length ? 'Picked ' + done + ' of ' + ps.length : '';
     $('bar').style.width = ps.length ? Math.round(done / ps.length * 100) + '%' : '0';
-    $('printSub').textContent = $('sumText').textContent + ' · ' + fmt(state.generatedAt);
+    $('printSub').textContent = $('sumText').textContent + ' · ' + fmt(c.createdAt);
     const list = $('list');
     list.innerHTML = '';
-    if (!ps.length) { list.innerHTML = '<div class="empty">' + (state.generatedAt ? 'No orders to pick right now.' : '') + '</div>'; return; }
     const hide = $('hidePicked').checked;
     ps.forEach(function (p, idx) {
       const isPicked = !!picked[pickKey(p)];
@@ -193,37 +281,29 @@
   $('list').addEventListener('click', function (e) {
     const row = e.target.closest('.row');
     if (!row) return;
-    const p = state.products[+row.dataset.i], k = pickKey(p);
+    const p = state.current.items[+row.dataset.i], k = pickKey(p);
     if (picked[k]) delete picked[k]; else picked[k] = 1;
-    store.set('pf_picked', JSON.stringify(picked));
+    savePicked();
     render();
   });
   $('hidePicked').addEventListener('change', render);
-  $('refreshBtn').addEventListener('click', load);
+  $('refreshBtn').addEventListener('click', function () { loadLists(); });
+  $('createBtn').addEventListener('click', createNow);
+  $('backBtn').addEventListener('click', closeList);
   $('printBtn').addEventListener('click', function () { window.print(); });
-  $('emailBtn').addEventListener('click', async function () {
-    if (state.busy) return;
-    if (!confirm(T('Email the pick list PDF now?'))) return;
-    state.busy = true; $('emailBtn').disabled = true;
-    say('Sending the pick list...');
-    try {
-      const d = await api({ action: 'emailPickList' });
-      say(d.sent ? 'Pick list emailed: ' + d.orders + ' orders, ' + d.products + ' products.' : 'No orders to pick right now.', 'ok');
-    } catch (e) { say(e.message, 'bad'); }
-    finally { state.busy = false; $('emailBtn').disabled = false; }
-  });
-  document.addEventListener('pf-lang', render);
+  document.addEventListener('pf-lang', function () { if (state.current) render(); else renderLists(); });
+  // while this screen is open, look for new pick lists every minute
+  setInterval(function () { if (store.get('appKey') && !document.hidden) loadLists(true); }, 60000);
 
   async function openSettings() {
     const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });
     if (!v) return;
     store.set('appKey', v.appKey);
-    if (v.appKey) load();
+    if (v.appKey) loadLists();
   }
   $('settingsBtn').addEventListener('click', openSettings);
 
-  render();
-  if (store.get('appKey')) load(); else say('Open Settings and enter the app key.', 'bad');
+  if (store.get('appKey')) loadLists(); else say('Open Settings and enter the app key.', 'bad');
 })();
 </script>
 </body>

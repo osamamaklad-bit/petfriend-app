@@ -6,7 +6,7 @@
  *              getReturnable, processReturn,
  *              listPOs, getPO, receivePO (receiving supplier purchase orders),
  *              setItemMeta (edit an item's bin locations / expiry dates),
- *              pickList, emailPickList (pick list of the orders ready to pick)
+ *              listPickLists, getPickList, createPickList (pick lists of the orders ready to pick)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -54,7 +54,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-18.4';
+const SERVER_VERSION = '2026-11-18.5';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -244,8 +244,9 @@ const ORDER_ACTIONS = {
   getPO: function (r) { return getPO_(r); },
   receivePO: function (r) { return receivePO_(r); },
   setItemMeta: function (r) { return setItemMeta_(r); },
-  pickList: function () { return pickList_(); },
-  emailPickList: function () { return emailPickList_(); }
+  listPickLists: function () { return listPickLists_(); },
+  getPickList: function (r) { return getPickList_(r.id); },
+  createPickList: function () { return createPickList_('manual'); }
 };
 
 function ordersApi_(r) {
@@ -776,10 +777,12 @@ function receivePO_(body) {
  * without "not confirmed yet". Same variant in several orders = one line with the total
  * quantity and the order numbers. Sorted by variant bin, else product bin (numeric order).
  *
- * The app shows it (pickList) and can email it as a PDF (emailPickList). The automatic email
- * (scheduledPicklistCheck, every 10 min 10:00-14:00, not Fridays) sends only orders not sent before.
- * Script Properties: PICKLIST_EMAILS (comma-separated recipients), SPREADSHEET_ID (optional when
- * this script is opened from the sheet). Run createPicklistTrigger() once for the automatic email.
+ * Pick lists are published IN THE APP only (no email). Each one is a snapshot of the eligible
+ * orders that were not on an earlier pick list, saved in the "PickLists" sheet:
+ *   - automatic (scheduledPicklistCheck, every 10 min): from 10:00 (the 10:00 one collects everything
+ *     waiting since the last list) until 14:00, not on Fridays, a new list whenever new orders qualify;
+ *   - manual: the app's "Create pick list now" button (any time), or createPickListNow() in the editor.
+ * Run createPicklistTrigger() once. The sheet is this script's spreadsheet (or SHEET_ID).
  * ===================================================================================== */
 
 const PICK_API = RECEIVE_API;   // 2026-10
@@ -846,94 +849,77 @@ function buildPickList_(q, sort, skip) {
   return { orderIds: orderIds, products: list };
 }
 
-/** For the app: every eligible open order (like the manual pick list). */
-function pickList_() {
-  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
-  return { ok: true, generatedAt: new Date().toISOString(), orders: pl.orderIds.length, products: pl.products };
+const PL_SHEET = 'PickLists';
+const PL_HEAD = ['Id', 'CreatedAt', 'Kind', 'Orders', 'Products', 'OrderIds', 'Data'];
+const PL_KEEP_DAYS = 30;          // older pick lists are removed from the sheet
+const PL_CHUNK = 45000;           // a sheet cell holds at most 50,000 characters: long lists use several cells
+
+function plSheet_() {
+  const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+  let s = ss.getSheetByName(PL_SHEET);
+  if (!s) { s = ss.insertSheet(PL_SHEET); s.appendRow(PL_HEAD); s.setFrozenRows(1); }
+  return s;
+}
+function plRows_() {
+  const s = plSheet_(), n = s.getLastRow();
+  if (n < 2) return [];
+  return s.getRange(2, 1, n - 1, s.getLastColumn()).getValues();
+}
+function plSummary_(row) {
+  return { id: String(row[0]), createdAt: new Date(row[1]).toISOString(), kind: String(row[2]), orders: Number(row[3]), products: Number(row[4]) };
 }
 
-/** Writes the pick list to the "Picklist" sheet, makes a PDF of it and emails it. */
-function sendPickListEmail_(pl, label) {
-  const to = String(P.getProperty('PICKLIST_EMAILS') || '').trim();
-  if (!to) throw new Error('Set PICKLIST_EMAILS in Script Properties (who receives the pick list)');
-  const ss = P.getProperty('SPREADSHEET_ID') ? SpreadsheetApp.openById(P.getProperty('SPREADSHEET_ID')) : SpreadsheetApp.getActive();
-  if (!ss) throw new Error('Set SPREADSHEET_ID in Script Properties');
-  const sheet = ss.getSheetByName('Picklist') || ss.insertSheet('Picklist');
-  const products = pl.products, n = pl.orderIds.length;
-
-  sheet.clear();
-  sheet.getRange(1, 1, 1, 7).merge();
-  sheet.getRange('A1').setValue('PetFriend Pick List').setFontSize(18).setFontWeight('bold').setHorizontalAlignment('center');
-  sheet.getRange(2, 1, 1, 7).merge();
-  sheet.getRange('A2').setValue('Generated' + (label ? ' (' + label + ')' : '') + ': ' +
-    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')).setHorizontalAlignment('center');
-  const headers = ['Image', 'Product Title', 'SKU', 'Quantity', 'Bin Location', 'Variant Bin Location', 'Order Numbers'];
-  sheet.getRange(4, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setHorizontalAlignment('center');
-  const rows = products.map(function (p) {
-    return ['', p.variantName ? p.title + ' - ' + p.variantName : p.title, p.sku, p.quantity, p.productBin, p.variantBin, p.orders.join(', ')];
-  });
-  if (rows.length) sheet.getRange(5, 1, rows.length, headers.length).setValues(rows);
-  products.forEach(function (p, i) {
-    if (!p.image) return;
-    try {
-      const alt = p.variantName ? p.title + ' - ' + p.variantName : p.title;
-      sheet.getRange(i + 5, 1).setValue(SpreadsheetApp.newCellImage().setSourceUrl(p.image).setAltTextDescription(alt).setAltTextTitle(alt).build());
-    } catch (e) { Logger.log('Could not insert image for ' + p.title + ': ' + e.message); }
-  });
-  if (rows.length) sheet.setRowHeights(5, rows.length, 85);
-  [90, 300, 150, 80, 150, 180, 250].forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
-  sheet.setFrozenRows(4);
-  const table = sheet.getRange(4, 1, rows.length + 1, headers.length);
-  table.setBorder(true, true, true, true, true, true); table.setVerticalAlignment('middle'); table.setWrap(true);
-  SpreadsheetApp.flush();
-
-  const pdf = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&gid=' + sheet.getSheetId() +
-    '&size=A4&portrait=true&fitw=true&sheetnames=false&printtitle=false&pagenumbers=true&gridlines=false&fzr=true',
-    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
-  if (pdf.getResponseCode() !== 200) throw new Error('Could not create the pick list PDF (HTTP ' + pdf.getResponseCode() + ')');
-
-  MailApp.sendEmail({
-    to: to,
-    subject: 'PetFriend Pick List' + (label ? ' (' + label + ')' : '') + ' - ' + n + ' Order(s)',
-    body: 'PetFriend Pick List' + (label ? ' (' + label + ')' : '') + '\n\nEligible orders: ' + n + '\nProducts: ' + products.length +
-      '\n\nGenerated from Shopify.\n\nPlease find the Pick List PDF attached.',
-    attachments: [pdf.getBlob().setName('PetFriend Pick List.pdf')]
-  });
+/** Eligible open orders that are not on an earlier pick list. */
+function newPickOrders_() {
+  const done = {};
+  plRows_().forEach(function (row) { String(row[5] || '').split(',').forEach(function (id) { if (id) done[id] = 1; }); });
+  return buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT', function (id) { return !!done[id]; });
 }
 
-/** From the app: email the current pick list (all eligible open orders). */
-function emailPickList_() {
-  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
-  if (!pl.orderIds.length) return { ok: true, sent: false, orders: 0 };
-  sendPickListEmail_(pl, 'App');
-  return { ok: true, sent: true, orders: pl.orderIds.length, products: pl.products.length };
+/** Makes a new pick list of the eligible orders not listed before. kind: 'auto' | 'manual'. */
+function createPickList_(kind) {
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    plPrune_();                                   // drop pick lists older than PL_KEEP_DAYS
+    const pl = newPickOrders_();
+    if (!pl.orderIds.length) return { ok: true, created: false };
+    const now = new Date(), tz = Session.getScriptTimeZone();
+    const s = plSheet_();
+    let id = 'PL-' + Utilities.formatDate(now, tz, 'yyyyMMdd-HHmm');
+    const ids = {}; plRows_().forEach(function (row) { ids[String(row[0])] = 1; });
+    for (let k = 2; ids[id]; k++) id = 'PL-' + Utilities.formatDate(now, tz, 'yyyyMMdd-HHmm') + '-' + k;
+    const data = JSON.stringify(pl.products), chunks = [];
+    for (let i = 0; i < data.length; i += PL_CHUNK) chunks.push(data.slice(i, i + PL_CHUNK));
+    s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, pl.orderIds.join(',')].concat(chunks));
+    return { ok: true, created: true, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
+  } finally { lock.releaseLock(); }
 }
 
-/** Manual run from the editor: all eligible open orders. */
-function sendPicklistManually() {
-  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
-  if (!pl.orderIds.length) { Logger.log('Manual picklist: no eligible orders found.'); return; }
-  sendPickListEmail_(pl, 'Manual');
-  Logger.log('Manual picklist sent. Orders: ' + pl.orderIds.length + ', products: ' + pl.products.length);
+function plPrune_() {
+  const s = plSheet_(), rows = plRows_(), cutoff = Date.now() - PL_KEEP_DAYS * 864e5;
+  for (let i = rows.length - 1; i >= 0; i--) if (new Date(rows[i][1]).getTime() < cutoff) s.deleteRow(i + 2);
 }
 
-/** Automatic: orders updated since the last run and not sent before. */
-function checkNewOrdersAndEmailPicklist() {
-  const lastRun = P.getProperty('PICKLIST_LAST_RUN') || new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  let sent = {};
-  try { sent = JSON.parse(P.getProperty('PICKLIST_EXPORTED_ORDERS') || '{}'); } catch (e) { sent = {}; }
-  const startedAt = new Date().toISOString();
-  const pl = buildPickList_('updated_at:>' + lastRun, 'UPDATED_AT', function (id) { return !!sent[id]; });
-  if (pl.orderIds.length) {
-    sendPickListEmail_(pl, '');
-    pl.orderIds.forEach(function (id) { sent[id] = { exportedAt: startedAt }; });
-  }
-  // keep the "already sent" list small (a Script Property holds at most 9 KB): forget entries older than 30 days
-  const cutoff = Date.now() - 30 * 864e5;
-  Object.keys(sent).forEach(function (id) { if (new Date(sent[id].exportedAt).getTime() < cutoff) delete sent[id]; });
-  P.setProperty('PICKLIST_EXPORTED_ORDERS', JSON.stringify(sent));
-  P.setProperty('PICKLIST_LAST_RUN', startedAt);
-  Logger.log(pl.orderIds.length ? 'Picklist sent: ' + pl.orderIds.length + ' order(s), ' + pl.products.length + ' product(s)' : 'No eligible new orders.');
+/** For the app: the pick lists of the last 7 days, newest first (summaries only). */
+function listPickLists_() {
+  const cutoff = Date.now() - 7 * 864e5;
+  const lists = plRows_().map(plSummary_).filter(function (x) { return new Date(x.createdAt).getTime() >= cutoff; })
+    .sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); }).slice(0, 50);
+  return { ok: true, pickLists: lists };
+}
+
+/** For the app: one pick list with its products. */
+function getPickList_(id) {
+  const row = plRows_().filter(function (r) { return String(r[0]) === String(id); })[0];
+  if (!row) throw new Error('Pick list not found');
+  const data = row.slice(6).filter(function (c) { return c !== '' && c != null; }).join('');
+  return { ok: true, pickList: Object.assign(plSummary_(row), { items: data ? JSON.parse(data) : [] }) };
+}
+
+/** Editor: make a pick list now (same as the app's button). */
+function createPickListNow() {
+  const r = createPickList_('manual');
+  Logger.log(r.created ? 'Pick list ' + r.pickList.id + ': ' + r.pickList.orders + ' order(s), ' + r.pickList.products + ' product(s)' : 'No new eligible orders.');
 }
 
 /** Time trigger: every 10 minutes, 10:00 to before 14:00, not on Fridays (script time zone). */
@@ -942,10 +928,11 @@ function scheduledPicklistCheck() {
   const day = Number(Utilities.formatDate(now, tz, 'u')), hour = Number(Utilities.formatDate(now, tz, 'H'));
   if (day === 5) { Logger.log('Friday - Picklist is disabled.'); return; }
   if (hour < 10 || hour >= 14) { Logger.log('Outside Picklist working hours.'); return; }
-  checkNewOrdersAndEmailPicklist();
+  const r = createPickList_('auto');
+  Logger.log(r.created ? 'Pick list ' + r.pickList.id + ' published: ' + r.pickList.orders + ' order(s)' : 'No new eligible orders.');
 }
 
-/** Run once: installs the 10-minute trigger for the automatic pick list email. */
+/** Run once: installs the 10-minute trigger (and removes the old email triggers). */
 function createPicklistTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'scheduledPicklistCheck' || t.getHandlerFunction() === 'checkNewOrdersAndEmailPicklist') ScriptApp.deleteTrigger(t);
