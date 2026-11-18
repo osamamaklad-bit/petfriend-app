@@ -182,7 +182,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.4</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.5</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -445,13 +445,14 @@
 
     const c = codeKey(code);
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
-    const matches = state.items.filter((i) => i.barcode && codeKey(i.barcode) === c);
+    // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
+    const matches = state.items.filter((i) => (i.barcode && codeKey(i.barcode) === c) || (i.sku && codeKey(i.sku) === c));
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
-      const expected = state.items.filter((i) => i.barcode && !i.verified).map((i) => i.barcode)
+      const expected = state.items.filter((i) => (i.barcode || i.sku) && !i.verified).map((i) => i.sku ? (i.barcode ? i.barcode + ' / ' + i.sku : i.sku) : i.barcode)
         .filter((b, k, a) => a.indexOf(b) === k);
       say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code +
-        (expected.length ? '\nShopify barcodes: ' + expected.slice(0, 4).join(', ') + (expected.length > 4 ? ' (+' + (expected.length - 4) + ')' : '') : ''), 'bad');
+        (expected.length ? '\nShopify barcode / SKU: ' + expected.slice(0, 4).join(', ') + (expected.length > 4 ? ' (+' + (expected.length - 4) + ')' : '') : ''), 'bad');
       feedback('bad'); return;
     }
     // The same product can be on more than one line (e.g. shipped in two parcels): fill the first line with room left
@@ -516,7 +517,7 @@
   function render() {
     const list = $('list');
     $('orderTitle').hidden = !state.order;
-    $('orderInput').placeholder = state.order ? 'Item barcode' : isRcv() ? 'PO number' : 'Order number';
+    $('orderInput').placeholder = state.order ? 'Item barcode or SKU' : isRcv() ? 'PO number' : 'Order number';
     $('loadBtn').textContent = state.order ? 'Add' : 'Load';
     $('orderInput').inputMode = state.order ? 'text' : 'numeric'; // SKUs can contain letters
     $('openOrders').hidden = !!state.order || isRet();
@@ -551,9 +552,9 @@
       codes.dir = 'ltr'; // keep SKU / barcode as written, also in Arabic
       codes.textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
       el.querySelector('.m').appendChild(codes);
-      if (!it.barcode) {
+      if (!it.barcode && !it.sku) {
         const w = document.createElement('div');
-        w.className = 'nobc'; w.textContent = 'No barcode: add one in Shopify to scan this item';
+        w.className = 'nobc'; w.textContent = 'No barcode or SKU: add one in Shopify to scan this item';
         el.querySelector('.m').after(w);
       } else if (!it.verified) {
         const w = document.createElement('div');

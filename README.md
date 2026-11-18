@@ -12,7 +12,7 @@ Each tool keeps **its own login**, entered with the **Settings** button in that 
 
 **Language:** English by default. The globe button in the tab bar switches every tab between English and Arabic (right-to-left), and the phone remembers the choice. The translations are in `i18n.js`: add new on-screen text to `EXACT`, or to `PATTERNS` if it contains a name or number.
 
-**Scanning rule (Fulfill, Returns, Receive):** each item's + / − buttons stay locked until that item's own barcode is scanned (camera or barcode scanner). A wrong barcode unlocks nothing, and only scanned items can be fulfilled, returned or received. Items without a barcode are flagged and have to get one in Shopify first.
+**Scanning rule (Fulfill, Returns, Receive):** each item's + / − buttons stay locked until that item's own code is scanned (camera or barcode scanner): its barcode or its SKU, since many labels carry the SKU. A wrong code unlocks nothing, and only scanned items can be fulfilled, returned or received. Items with neither a barcode nor a SKU are flagged.
 
 A tab you leave keeps its state (for example, a POS cart survives while you check a shipment), and its camera switches off.
 

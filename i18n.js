@@ -74,8 +74,8 @@
     'Item barcode or SKU': 'باركود المنتج أو SKU',
     'Item barcode': 'باركود المنتج',
     'Point the camera at an item barcode': 'وجّه الكاميرا نحو باركود المنتج',
-    'No barcode: add one in Shopify to scan this item': 'بدون باركود: أضف باركود في Shopify لمسح هذا المنتج',
-    'Scan the barcode to unlock + / −': 'امسح الباركود لتفعيل + / −',
+    'No barcode or SKU: add one in Shopify to scan this item': 'بدون باركود أو SKU: أضف واحدًا في Shopify لمسح هذا المنتج',
+    'Scan the barcode to unlock + / −': 'امسح كود المنتج لتفعيل + / −',
     'Scan the barcode of every item first': 'امسح باركود كل منتج أولاً',
     'Add': 'إضافة',
     'Variant bin:': 'موقع المتغيّر:',
@@ -189,7 +189,7 @@
     // camera strip: "✓ message" / "✗ message"
     [/^([✓✗]) ([\s\S]+)$/, function (m, mark, rest) { return mark + ' ' + toArabic(rest); }],
     [/^Error: (.+)$/, 'خطأ: $1'],
-    [/^Shopify barcodes: (.+)$/, 'باركود Shopify: $1'],
+    [/^Shopify barcode \/ SKU: (.+)$/, 'باركود / SKU في Shopify: $1'],
     // Receiving from suppliers
     [/^Loading purchase order (.+)\.\.\.$/, 'جارٍ تحميل أمر الشراء $1...'],
     [/^Saved bin location and expiry date for (.+)$/, 'تم حفظ موقع التخزين وتاريخ الانتهاء لـ $1'],
