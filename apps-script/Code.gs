@@ -39,7 +39,7 @@
  *   read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders,
  *   read_returns, write_returns (and read_locations for restocking),
  *   and for receiving from suppliers: read_inventory_purchase_orders, read_inventory_transfers,
- *   read_inventory, write_inventory_shipments_received_items, write_inventory_shipments,
+ *   read_inventory, write_inventory (extra units beyond the PO), write_inventory_shipments_received_items, write_inventory_shipments,
  *   and write_products to edit bin locations / expiry dates.
  *
  * Deploy: Deploy > Manage deployments (or New deployment) > Web app, Execute as: Me, Who has access: Anyone.
@@ -53,7 +53,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-18.1';
+const SERVER_VERSION = '2026-11-18.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -529,7 +529,7 @@ function poItem_(inv, extra) {
   const v = (inv && inv.variants && inv.variants.nodes[0]) || {};
   return Object.assign({
     title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: mediaUrl_(v),
-    variantId: v.id || '', productId: (v.product && v.product.id) || ''
+    variantId: v.id || '', productId: (v.product && v.product.id) || '', inventoryItemId: (inv && inv.id) || ''
   }, metaValues_(v), extra);
 }
 function mediaUrl_(v) {
@@ -631,7 +631,7 @@ function getPO_(body) {
   if (!found) throw new Error('Purchase order ' + q + ' not found (or not marked as ordered)');
 
   const po = shopifyAt_(RECEIVE_API,
-    'query($id: ID!) { inventoryPurchaseOrder(id: $id) { id name origin { supplierName } destination { name }' +
+    'query($id: ID!) { inventoryPurchaseOrder(id: $id) { id name origin { supplierName } destination { name location { id } }' +
     '  transfers(first: 5) { nodes { id status shipments(first: 10) { nodes { id status } } } }' +
     '} }', { id: found.id }).inventoryPurchaseOrder;
 
@@ -659,37 +659,66 @@ function getPO_(body) {
   if (!items.length) throw new Error('Purchase order ' + po.name + ' has nothing left to receive');
   return {
     ok: true,
-    order: { id: po.id, name: po.name, supplier: po.origin && po.origin.supplierName || '', location: po.destination && po.destination.name || '' },
+    order: { id: po.id, name: po.name, supplier: po.origin && po.origin.supplierName || '', location: po.destination && po.destination.name || '',
+      locationId: po.destination && po.destination.location && po.destination.location.id || '' },
     items: items
   };
 }
 
-/** Receives the scanned quantities (ACCEPTED) into stock. requestId makes a repeated tap safe. */
+/** Receives a purchase order's items. Per item: qty = units accepted into stock (may be MORE than expected),
+ *  rejected / canceled = units refused or not coming, need = units expected on that line.
+ *  Up to `need`: accepted / rejected / canceled are recorded on the shipment (inventoryShipmentReceive).
+ *  Above `need`: the extra accepted units are added to stock at the PO's location (inventoryAdjustQuantities,
+ *  reason "received"). requestId makes a repeated tap safe (Shopify idempotency keys). */
 function receivePO_(body) {
-  const items = (body.items || []).filter(function (i) { return Number(i.qty) > 0; });
+  const items = (body.items || []).map(function (i) {
+    const need = Math.max(0, Number(i.need) || 0), qty = Math.max(0, Number(i.qty) || 0);
+    const rej = Math.max(0, Number(i.rejected) || 0), can = Math.max(0, Number(i.canceled) || 0);
+    if (rej + can > need) throw new Error('Too many rejected / cancelled for one item (more than expected)');
+    const acc = Math.min(qty, need - rej - can);     // what fits on the purchase order line; the rest is extra
+    return { i: i, acc: acc, rej: rej, can: can, extra: qty - acc };
+  }).filter(function (x) { return x.acc + x.rej + x.can + x.extra > 0; });
   if (!items.length) throw new Error('Nothing to receive');
   const rid = String(body.requestId || Utilities.getUuid());
-  const byShip = {}, byTransfer = {};
-  items.forEach(function (i) {
-    if (i.shipmentId && i.sliId) (byShip[i.shipmentId] = byShip[i.shipmentId] || []).push({ shipmentLineItemId: i.sliId, quantity: Number(i.qty), reason: 'ACCEPTED' });
-    else if (i.transferId && i.inventoryItemId) (byTransfer[i.transferId] = byTransfer[i.transferId] || []).push({ inventoryItemId: i.inventoryItemId, quantity: Number(i.qty) });
+  const lines = function (id, x) {   // receive entries for one shipment line
+    const out = [];
+    if (x.acc) out.push({ shipmentLineItemId: id, quantity: x.acc, reason: 'ACCEPTED' });
+    if (x.rej) out.push({ shipmentLineItemId: id, quantity: x.rej, reason: 'REJECTED' });
+    if (x.can) out.push({ shipmentLineItemId: id, quantity: x.can, reason: 'CANCELED' });
+    return out;
+  };
+  const byShip = {}, byTransfer = {}, extras = [];
+  items.forEach(function (x) {
+    const i = x.i;
+    if (x.extra) {
+      if (!body.locationId || !i.inventoryItemId) throw new Error('Cannot add extra units: the purchase order has no location');
+      extras.push({ inventoryItemId: i.inventoryItemId, delta: x.extra });
+    }
+    if (!(x.acc + x.rej + x.can)) return;
+    if (i.shipmentId && i.sliId) byShip[i.shipmentId] = (byShip[i.shipmentId] || []).concat(lines(i.sliId, x));
+    else if (i.transferId && i.inventoryItemId) (byTransfer[i.transferId] = byTransfer[i.transferId] || []).push(x);
   });
 
-  let step = 0, done = 0;
+  let step = 0;
+  const done = { accepted: 0, rejected: 0, canceled: 0, extra: 0 };
   try {
+    // Transfers without a shipment yet: create one for exactly what is handled now, then receive it
     Object.keys(byTransfer).forEach(function (tid) {
+      const xs = byTransfer[tid];
       const c = shopifyAt_(RECEIVE_API,
         'mutation($input: InventoryShipmentCreateInput!, $key: String!) {' +
         '  inventoryShipmentCreateInTransit(input: $input) @idempotent(key: $key) {' +
-        '    inventoryShipment { id lineItems(first: 250) { nodes { id quantity } } }' +
+        '    inventoryShipment { id lineItems(first: 250) { nodes { id quantity inventoryItem { id } } } }' +
         '    userErrors { field message }' +
         '  }' +
-        '}', { input: { movementId: tid, lineItems: byTransfer[tid] }, key: rid + '-t' + (step++) });
+        '}', { input: { movementId: tid, lineItems: xs.map(function (x) { return { inventoryItemId: x.i.inventoryItemId, quantity: x.acc + x.rej + x.can }; }) },
+               key: rid + '-t' + (step++) });
       userErrors_(c.inventoryShipmentCreateInTransit.userErrors);
       const sh = c.inventoryShipmentCreateInTransit.inventoryShipment;
-      byShip[sh.id] = (byShip[sh.id] || []).concat(sh.lineItems.nodes.map(function (l) {
-        return { shipmentLineItemId: l.id, quantity: l.quantity, reason: 'ACCEPTED' };
-      }));
+      xs.forEach(function (x) {
+        const l = sh.lineItems.nodes.filter(function (n) { return n.inventoryItem && n.inventoryItem.id === x.i.inventoryItemId; })[0];
+        if (l) byShip[sh.id] = (byShip[sh.id] || []).concat(lines(l.id, x));
+      });
     });
     Object.keys(byShip).forEach(function (sid) {
       const res = shopifyAt_(RECEIVE_API,
@@ -700,13 +729,33 @@ function receivePO_(body) {
         '  }' +
         '}', { id: sid, li: byShip[sid], key: rid + '-s' + (step++) });
       userErrors_(res.inventoryShipmentReceive.userErrors);
-      done += byShip[sid].reduce(function (s, l) { return s + l.quantity; }, 0);
+      byShip[sid].forEach(function (l) {
+        if (l.reason === 'ACCEPTED') done.accepted += l.quantity;
+        else if (l.reason === 'REJECTED') done.rejected += l.quantity;
+        else done.canceled += l.quantity;
+      });
     });
+    // Units beyond what the purchase order expected: add them to stock at the PO's location
+    if (extras.length) {
+      const a = shopifyAt_(RECEIVE_API,
+        'mutation($input: InventoryAdjustQuantitiesInput!, $key: String!) {' +
+        '  inventoryAdjustQuantities(input: $input) @idempotent(key: $key) {' +
+        '    inventoryAdjustmentGroup { id }' +
+        '    userErrors { field message }' +
+        '  }' +
+        '}', { input: { name: 'available', reason: 'received',
+                 referenceDocumentUri: 'petfriend://purchase-order/' + encodeURIComponent(String(body.poName || 'PO')),
+                 changes: extras.map(function (e) { return { inventoryItemId: e.inventoryItemId, locationId: body.locationId, delta: e.delta, changeFromQuantity: null }; }) },
+               key: rid + '-x' });
+      userErrors_(a.inventoryAdjustQuantities.userErrors);
+      done.extra = extras.reduce(function (t, e) { return t + e.delta; }, 0);
+    }
   } catch (e) {
-    if (done) throw new Error(done + ' items were received, then it stopped: ' + e.message + '. Load the purchase order again to see what is left.');
+    const got = done.accepted + done.rejected + done.canceled;
+    if (got) throw new Error(got + ' items were recorded, then it stopped: ' + e.message + '. Load the purchase order again to see what is left.');
     throw e;
   }
-  return { ok: true, received: done };
+  return { ok: true, received: done.accepted + done.extra, accepted: done.accepted, extra: done.extra, rejected: done.rejected, canceled: done.canceled };
 }
 
 /* =====================================================================================

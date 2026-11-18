@@ -106,6 +106,15 @@
   .item .bin span { color: var(--muted); }
   .item .bin b { color: var(--rcv); font-size: 14px; }
   .item .bin b.expired { color: var(--bad); }
+  .item.over { border-color: var(--warn); }
+  .item.over .n { color: var(--warn); }
+  .count .xtra { color: var(--warn); font-size: 11px; font-weight: 700; }
+  .item .rc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .item .rc > div { display: flex; align-items: center; gap: 5px; }
+  .item .rc button { width: 26px; height: 24px; border: 1px solid var(--line); background: var(--card); border-radius: 6px; font-size: 15px; line-height: 1; color: var(--ink); padding: 0; }
+  .item .rc button.locked { opacity: .35; }
+  .item .rc b { min-width: 14px; text-align: center; color: var(--ink); }
+  .item .rc b.on { color: var(--bad); }
   .item .nobc { color: var(--bad); font-weight: 700; font-size: 12px; margin-top: 3px; }
   .item .bin .edit { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .count { text-align: center; }
@@ -182,7 +191,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.5</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.6</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -328,7 +337,7 @@
         return;
       }
       state.order = data.order;
-      state.items = data.items.map((i) => Object.assign({ got: 0, verified: false }, i)); // verified = its barcode was scanned
+      state.items = data.items.map((i) => Object.assign({ got: 0, rej: 0, can: 0, verified: false }, i)); // verified = its code was scanned; rej / can = rejected / cancelled (Receive)
       state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
       $('orderInput').value = '';
       render();
@@ -457,7 +466,7 @@
     }
     // The same product can be on more than one line (e.g. shipped in two parcels): fill the first line with room left
     matches.forEach((i) => { i.verified = true; });
-    const item = matches.find((i) => i.got < i.need);
+    const item = matches.find((i) => i.got + (i.rej || 0) + (i.can || 0) < i.need) || (isRcv() ? matches[matches.length - 1] : null);
     if (!item) {
       render();
       const need = matches.reduce((s, i) => s + i.need, 0);
@@ -473,8 +482,9 @@
     if (row) { row.classList.add('flash'); try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} }
     const left = totalNeed() - totalGot();
     if (isRcv()) {
-      say(item.title + ': received ' + item.got + ' of ' + item.need + (left === 0 ? '. Everything on this purchase order scanned.' : ''), 'ok');
-      feedback('ok');
+      const x = extraOf(item);
+      if (x > 0) { say(item.title + ': received ' + item.got + ' of ' + item.need + ' (' + x + ' extra)', 'warn'); feedback('warn'); }
+      else { say(item.title + ': received ' + item.got + ' of ' + item.need + (sumOf(openOf) === 0 ? '. Everything on this purchase order scanned.' : ''), 'ok'); feedback('ok'); }
     } else if (isRet()) {
       say(item.title + ': returning ' + item.got + ' of ' + item.need + (left === 0 ? '. Every returnable item scanned.' : ''), 'ok');
       feedback('ok');
@@ -513,6 +523,11 @@
   // ---------- render ----------
   const totalNeed = () => state.items.reduce((s, i) => s + i.need, 0);
   const totalGot = () => state.items.reduce((s, i) => s + i.got, 0);
+  // Receive: rejected / cancelled take their share of the expected quantity first; scanned units beyond that are extra
+  const onLine = (i) => Math.min(i.got, Math.max(0, i.need - (i.rej || 0) - (i.can || 0)));
+  const extraOf = (i) => i.got - onLine(i);
+  const openOf = (i) => Math.max(0, i.need - onLine(i) - (i.rej || 0) - (i.can || 0));
+  const sumOf = (f) => state.items.reduce((s, i) => s + f(i), 0);
 
   function render() {
     const list = $('list');
@@ -532,19 +547,20 @@
     }
     $('orderName').textContent = state.order.name;
     $('orderSummary').textContent = isRcv()
-      ? totalGot() + ' received · ' + totalNeed() + ' expected'
+      ? [totalGot() + ' received', sumOf((i) => i.rej) && sumOf((i) => i.rej) + ' rejected', sumOf((i) => i.can) && sumOf((i) => i.can) + ' cancelled', totalNeed() + ' expected'].filter(Boolean).join(' · ')
       : isRet()
       ? totalGot() + ' to return · ' + totalNeed() + ' returnable'
       : totalGot() + ' of ' + totalNeed() + ' items';
     list.innerHTML = '';
     state.items.forEach(function (it, idx) {
-      const cls = it.got >= it.need ? 'done' : it.got > 0 ? 'part' : '';
+      const cls = isRcv() && extraOf(it) > 0 ? 'over' : (isRcv() ? openOf(it) === 0 : it.got >= it.need) ? 'done' : (it.got > 0 || it.rej || it.can) ? 'part' : '';
       const el = document.createElement('div');
       el.className = 'item ' + cls;
       const img = it.image ? '<img src="' + it.image.replace(/"/g, '') + '" alt="">' : '<div class="noimg"></div>';
       el.innerHTML = img +
         '<div><div class="t"></div><div class="m"></div><div class="bin"></div></div>' +
         '<div class="count"><div class="n">' + it.got + '/' + it.need + '</div>' +
+        (isRcv() && extraOf(it) > 0 ? '<div class="xtra">+' + extraOf(it) + ' extra</div>' : '') +
         '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one"' + (it.verified ? '' : ' class="locked"') + '>&minus;</button>' +
         '<button data-i="' + idx + '" data-d="1" aria-label="Add one"' + (it.verified ? '' : ' class="locked"') + '>+</button></div></div>'; // locked until the barcode is scanned
       el.querySelector('.t').textContent = it.title;
@@ -552,6 +568,25 @@
       codes.dir = 'ltr'; // keep SKU / barcode as written, also in Arabic
       codes.textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
       el.querySelector('.m').appendChild(codes);
+      if (isRcv()) {   // Rejected (needs the item scanned: it is physically here) and Cancelled (not coming)
+        const rc = document.createElement('div');
+        rc.className = 'rc';
+        [['rej', 'Rejected', !it.verified], ['can', 'Cancelled', false]].forEach(function (f) {
+          const w = document.createElement('div'), lab = document.createElement('span'), v = document.createElement('b');
+          lab.textContent = f[1];
+          v.textContent = it[f[0]]; if (it[f[0]]) v.className = 'on';
+          w.appendChild(lab);
+          [-1, 1].forEach(function (d) {
+            const bt = document.createElement('button');
+            bt.dataset.i = idx; bt.dataset.k = f[0]; bt.dataset.d = d; bt.textContent = d < 0 ? '−' : '+';
+            bt.setAttribute('aria-label', (d < 0 ? 'Less ' : 'More ') + f[1].toLowerCase());
+            if (f[2]) bt.className = 'locked';
+            if (d < 0) { w.appendChild(bt); w.appendChild(v); } else w.appendChild(bt);
+          });
+          rc.appendChild(w);
+        });
+        el.querySelector('.m').after(rc);
+      }
       if (!it.barcode && !it.sku) {
         const w = document.createElement('div');
         w.className = 'nobc'; w.textContent = 'No barcode or SKU: add one in Shopify to scan this item';
@@ -583,7 +618,7 @@
       if (!binBox.childNodes.length) binBox.remove();
       list.appendChild(el);
     });
-    $('fulfillBtn').disabled = (isRet() || isRcv()) ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
+    $('fulfillBtn').disabled = isRcv() ? totalGot() + sumOf((i) => i.rej + i.can) === 0 : isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
   }
 
   // ---------- bin locations / expiry date (Receive) ----------
@@ -626,9 +661,15 @@
     if (ed) { editMeta(+ed.dataset.edit); return; }
     const b = e.target.closest('button[data-i]');
     if (!b) return;
-    const it = state.items[+b.dataset.i], d = +b.dataset.d;
+    const it = state.items[+b.dataset.i], d = +b.dataset.d, k = b.dataset.k;
+    if (k) {          // Receive: rejected / cancelled
+      if (k === 'rej' && !it.verified) { say('Scan the barcode of ' + it.title + ' first', 'bad'); feedback('bad'); return; }
+      if (d > 0 && it.rej + it.can >= it.need) { say('Rejected + cancelled cannot be more than expected (' + it.need + ')', 'bad'); feedback('bad'); return; }
+      it[k] = Math.max(0, it[k] + d);
+      render(); return;
+    }
     if (!it.verified) { say('Scan the barcode of ' + it.title + ' first', 'bad'); feedback('bad'); return; }
-    it.got = Math.max(0, Math.min(it.need, it.got + d));
+    it.got = isRcv() ? Math.max(0, it.got + d) : Math.max(0, Math.min(it.need, it.got + d)); // Receive may go above the PO
     render();
   });
 
@@ -637,22 +678,28 @@
 
   async function submitReceive() {
     if (state.busy) return;
-    const n = totalGot(), name = state.order.name, missing = totalNeed() - n;
-    if (!confirm(T('Receive ' + n + (n === 1 ? ' item' : ' items') + ' from ' + name + ' into stock?' +
-      (missing > 0 ? '\n' + missing + ' not scanned will stay open on the purchase order.' : '')))) return;
+    const n = totalGot(), name = state.order.name, missing = sumOf(openOf);
+    const xtra = sumOf(extraOf), rej = sumOf((i) => i.rej), can = sumOf((i) => i.can);
+    if (!confirm(T('Receive ' + n + (n === 1 ? ' item' : ' items') + ' from ' + name + ' into stock?') +
+      (xtra ? '\n' + T(xtra + ' of them are extra (more than ordered).') : '') +
+      (rej ? '\n' + T(rej + ' rejected.') : '') + (can ? '\n' + T(can + ' cancelled.') : '') +
+      (missing > 0 ? '\n' + T(missing + ' not scanned will stay open on the purchase order.') : ''))) return;
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Receiving ' + name + '...');
     try {
       const data = await api({
         action: 'receivePO',
         requestId: state.requestId,
-        items: state.items.filter((i) => i.verified && i.got > 0).map((i) => ({
-          shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '', qty: i.got
+        locationId: state.order.locationId || '', poName: name,
+        items: state.items.filter((i) => (i.verified && i.got > 0) || i.rej > 0 || i.can > 0).map((i) => ({
+          shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '',
+          need: i.need, qty: i.verified ? i.got : 0, rejected: i.rej, canceled: i.can
         }))
       });
       feedback('ok');
       state.order = null; state.items = []; render();
-      say('Received ' + data.received + (data.received === 1 ? ' item' : ' items') + ' from ' + name + ' into stock.', 'ok');
+      say('Received ' + data.received + (data.received === 1 ? ' item' : ' items') + ' from ' + name + ' into stock.' +
+        (data.extra ? '\n' + data.extra + ' extra' : '') + (data.rejected ? '\n' + data.rejected + ' rejected.' : '') + (data.canceled ? '\n' + data.canceled + ' cancelled.' : ''), 'ok');
       loadList();
     } catch (e) {
       say(e.message, 'bad'); feedback('bad'); $('fulfillBtn').disabled = false;
