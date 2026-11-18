@@ -181,7 +181,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.2</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.3</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -401,8 +401,37 @@
   $('orderInput').addEventListener('input', renderOrders);
 
   // ---------- scanning ----------
-  // Same barcode read as UPC-A (12 digits) or EAN-13 (13 digits, leading 0): compare numbers without leading zeros
-  function norm(s) { const v = String(s || '').trim().toLowerCase(); return /^\d+$/.test(v) ? v.replace(/^0+(?=\d)/, '') : v; }
+  // Barcode matching: the same product matches whether its barcode is read or stored as EAN-13, UPC-A (12),
+  // UPC-E (8), a supplier carton code (ITF-14 / GS1-128 with (01)), with spaces or dashes, or with a wrong check digit.
+  // Canonical key for a barcode, so the same product matches however its barcode is written.
+  function codeKey(s) {
+    let v = String(s || '').trim();
+    if (!v) return '';
+    // GS1 element strings: "(01)06221000001116(17)..." or "0106221000001116..." (GS1-128 / DataMatrix), FNC1 prefix
+    v = v.replace(/^\]([A-Za-z]\d)/, '').replace(/\u001d/g, '');
+    const ai = /\(01\)\s*(\d{14})/.exec(v) || (/^01(\d{14})/.test(v) && v.length >= 16 ? /^01(\d{14})/.exec(v) : null);
+    if (ai) v = ai[1];
+    const digits = v.replace(/[\s\-.]/g, '');
+    if (!/^\d+$/.test(digits)) return 'x:' + v.toLowerCase();
+    let d = digits;
+    if (d.length === 8 && /^[01]/.test(d)) d = upcEtoA(d) || d;          // UPC-E -> UPC-A
+    if (d.length === 8) return 'e8:' + d.slice(0, 7);                    // EAN-8 (no check digit)
+    if (d.length >= 12 && d.length <= 14) {
+      let body = d.slice(0, -1);                                          // drop the check digit
+      if (d.length === 14) body = body.slice(1);                          // GTIN-14: drop the packaging digit
+      return 'g:' + body.padStart(12, '0');
+    }
+    return 'n:' + d.replace(/^0+(?=\d)/, '');                            // other numbers: ignore leading zeros
+  }
+  function upcEtoA(e) {                                                   // 8-digit UPC-E (with number system + check)
+    const ns = e[0], m = e.slice(1, 7), c = e[7], l = m[5];
+    let a;
+    if ('012'.includes(l)) a = m.slice(0, 2) + l + '0000' + m.slice(2, 5);
+    else if (l === '3') a = m.slice(0, 3) + '00000' + m.slice(3, 5);
+    else if (l === '4') a = m.slice(0, 4) + '00000' + m[4];
+    else a = m.slice(0, 5) + '0000' + l;
+    return ns + a + c;
+  }
 
   function onScan(code, typed) {
     const now = Date.now();
@@ -413,9 +442,9 @@
 
     if (!state.order) { loadOrder(code); return; }
 
-    const c = norm(code);
+    const c = codeKey(code);
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
-    const matches = state.items.filter((i) => i.barcode && norm(i.barcode) === c);
+    const matches = state.items.filter((i) => i.barcode && codeKey(i.barcode) === c);
     if (!matches.length) {
       say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code, 'bad'); feedback('bad'); return;
     }
@@ -452,7 +481,7 @@
     try {
       const F = Html5QrcodeSupportedFormats;
       state.scanner = new Html5Qrcode('reader', {
-        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF, F.QR_CODE],
+        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF, F.QR_CODE, F.DATA_MATRIX],
         experimentalFeatures: { useBarCodeDetectorIfSupported: true }
       });
       await state.scanner.start(
