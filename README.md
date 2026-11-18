@@ -6,6 +6,7 @@ One installable phone app for the store, with three tools in a bottom tab bar:
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
 | **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory; per item you can also set **Rejected** (damaged or wrong units; needs the item scanned) and **Cancelled** (not coming), and receive **more** than ordered (the extra is added to stock at the PO's location), showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). All three can be edited from the item's **Edit** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
+| **Pick list** | Products of the orders ready to pick (unfulfilled and paid, or tagged `confirmed` without `not confirmed yet`), combined per variant, sorted by bin location, with picture, SKU, quantity, bins and order numbers. Tick lines as they are picked, print it, or email it as a PDF | the pick list Apps Script project |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
@@ -24,6 +25,7 @@ manifest.webmanifest     install info (name, icons, shortcuts to each tab)
 settings.js              the Settings window (PIN / key) used by every tab
 i18n.js                  English / Arabic translations (shared by all tabs)
 sw.js                    offline cache for all tools (bump CACHE on each release)
+picklist/index.html      Pick list
 pos/index.html           POS
 orders/index.html        Fulfill + Returns
 shipments/index.html     Shipment photos
@@ -50,6 +52,13 @@ The easiest home for it is the **existing Shipments project**, because it's alre
 8. Point the POS and Orders tabs to that URL (`API_URL` in `pos/index.html` and `orders/index.html`). **Done**: all three tabs use the Shipments project's URL.
 
 The old POS and Orders scripts can stay as a backup until everything works, and then be deleted.
+
+### Pick list email (moved from the separate pick list project)
+
+- Script Properties: `PICKLIST_EMAILS` = the recipients, comma-separated (kept out of the code because this repository is public). `SPREADSHEET_ID` is only needed if the script is not opened from the sheet; the list is written to a sheet named `Picklist`.
+- Run `createPicklistTrigger` once: every 10 minutes, 10:00 to 14:00, not on Fridays, new eligible orders are emailed as a PDF (orders already sent are skipped; that memory is kept for 30 days).
+- `sendPicklistManually` emails all eligible open orders; the app's **Email PDF** button does the same.
+- After switching over, remove the trigger from the old pick list project so the email isn't sent twice.
 
 ## Hosting
 

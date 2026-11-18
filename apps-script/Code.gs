@@ -5,7 +5,8 @@
  *   Orders     listOrders, getOrder, fulfill,            body {action, key, ...}       -> {ok, ...}  / {ok:false, error}
  *              getReturnable, processReturn,
  *              listPOs, getPO, receivePO (receiving supplier purchase orders),
- *              setItemMeta (edit an item's bin locations / expiry dates)
+ *              setItemMeta (edit an item's bin locations / expiry dates),
+ *              pickList, emailPickList (pick list of the orders ready to pick)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -53,7 +54,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-18.2';
+const SERVER_VERSION = '2026-11-18.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -234,7 +235,9 @@ const ORDER_ACTIONS = {
   listPOs: function () { return listPOs_(); },
   getPO: function (r) { return getPO_(r); },
   receivePO: function (r) { return receivePO_(r); },
-  setItemMeta: function (r) { return setItemMeta_(r); }
+  setItemMeta: function (r) { return setItemMeta_(r); },
+  pickList: function () { return pickList_(); },
+  emailPickList: function () { return emailPickList_(); }
 };
 
 function ordersApi_(r) {
@@ -756,6 +759,190 @@ function receivePO_(body) {
     throw e;
   }
   return { ok: true, received: done.accepted + done.extra, accepted: done.accepted, extra: done.extra, rejected: done.rejected, canceled: done.canceled };
+}
+
+/* =====================================================================================
+ * Pick list: products of the orders ready to pick, combined per variant and sorted by bin
+ *
+ * Eligible order: open, not cancelled, UNFULFILLED, and either PAID, or tagged "confirmed"
+ * without "not confirmed yet". Same variant in several orders = one line with the total
+ * quantity and the order numbers. Sorted by variant bin, else product bin (numeric order).
+ *
+ * The app shows it (pickList) and can email it as a PDF (emailPickList). The automatic email
+ * (scheduledPicklistCheck, every 10 min 10:00-14:00, not Fridays) sends only orders not sent before.
+ * Script Properties: PICKLIST_EMAILS (comma-separated recipients), SPREADSHEET_ID (optional when
+ * this script is opened from the sheet). Run createPicklistTrigger() once for the automatic email.
+ * ===================================================================================== */
+
+const PICK_API = RECEIVE_API;   // 2026-10
+
+function pickOrdersQuery_() {
+  const img = 'preview { image { url(transform: { maxWidth: 200, maxHeight: 200 }) } }';
+  const bv = metaKey_('binVariant'), bp = metaKey_('binProduct');
+  // small pages keep each request under Shopify's query-cost limit (1000)
+  return 'query($cursor: String, $q: String, $sort: OrderSortKeys) { orders(first: 10, after: $cursor, query: $q, sortKey: $sort) {' +
+    ' pageInfo { hasNextPage endCursor }' +
+    ' nodes { id name cancelledAt displayFulfillmentStatus displayFinancialStatus tags' +
+    '  lineItems(first: 40) { nodes { quantity title variantTitle' +
+    '   variant { id sku title media(first: 1) { nodes { ' + img + ' } }' +
+    '    metafield(namespace: "' + bv.namespace + '", key: "' + bv.key + '") { value }' +
+    '    product { id title featuredMedia { ' + img + ' } metafield(namespace: "' + bp.namespace + '", key: "' + bp.key + '") { value } } } } } } } }';
+}
+
+function pickEligible_(order) {
+  if (order.cancelledAt || order.displayFulfillmentStatus !== 'UNFULFILLED') return false;
+  const tags = (order.tags || []).map(function (t) { return String(t).trim().toLowerCase(); });
+  const confirmed = tags.indexOf('confirmed') !== -1 && tags.indexOf('not confirmed yet') === -1;
+  return confirmed || order.displayFinancialStatus === 'PAID';
+}
+
+/** Collects eligible orders matching `q` and combines their products. skip(orderId) -> true leaves an order out. */
+function buildPickList_(q, sort, skip) {
+  const products = {}, orderIds = [];
+  let cursor = null, pages = 0;
+  do {
+    const d = shopifyAt_(PICK_API, pickOrdersQuery_(), { cursor: cursor, q: q, sort: sort }).orders;
+    d.nodes.forEach(function (order) {
+      if (!pickEligible_(order) || (skip && skip(order.id))) return;
+      orderIds.push(order.id);
+      (order.lineItems.nodes || []).forEach(function (li) {
+        const v = li.variant;
+        if (!v) return;
+        const prod = v.product || {};
+        const title = li.title || prod.title || v.title || 'Unknown Product';
+        const rawVar = li.variantTitle || v.title || '';
+        const variantName = rawVar && rawVar !== 'Default Title' ? rawVar : '';
+        const pick = function (m) { return m && m.preview && m.preview.image && m.preview.image.url || ''; };
+        const image = pick(v.media && v.media.nodes && v.media.nodes[0]) || pick(prod.featuredMedia);
+        const productBin = binValue_(prod.metafield), variantBin = binValue_(v.metafield);
+        const qty = Number(li.quantity) || 0;
+        const e = products[v.id];
+        if (!e) products[v.id] = { key: v.id, image: image, title: title, variantName: variantName, sku: v.sku || '', quantity: qty,
+          productBin: productBin, variantBin: variantBin, orders: [order.name || ''] };
+        else {
+          e.quantity += qty;
+          if (e.orders.indexOf(order.name) === -1) e.orders.push(order.name);
+          if (!e.image && image) e.image = image;
+          if (!e.productBin && productBin) e.productBin = productBin;
+          if (!e.variantBin && variantBin) e.variantBin = variantBin;
+          if (!e.variantName && variantName) e.variantName = variantName;
+        }
+      });
+    });
+    cursor = d.pageInfo.hasNextPage ? d.pageInfo.endCursor : null;
+  } while (cursor && ++pages < 100);
+  const list = Object.keys(products).map(function (k) { return products[k]; });
+  list.sort(function (a, b) {
+    return String(a.variantBin || a.productBin || '').localeCompare(String(b.variantBin || b.productBin || ''), undefined, { numeric: true, sensitivity: 'base' });
+  });
+  return { orderIds: orderIds, products: list };
+}
+
+/** For the app: every eligible open order (like the manual pick list). */
+function pickList_() {
+  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
+  return { ok: true, generatedAt: new Date().toISOString(), orders: pl.orderIds.length, products: pl.products };
+}
+
+/** Writes the pick list to the "Picklist" sheet, makes a PDF of it and emails it. */
+function sendPickListEmail_(pl, label) {
+  const to = String(P.getProperty('PICKLIST_EMAILS') || '').trim();
+  if (!to) throw new Error('Set PICKLIST_EMAILS in Script Properties (who receives the pick list)');
+  const ss = P.getProperty('SPREADSHEET_ID') ? SpreadsheetApp.openById(P.getProperty('SPREADSHEET_ID')) : SpreadsheetApp.getActive();
+  if (!ss) throw new Error('Set SPREADSHEET_ID in Script Properties');
+  const sheet = ss.getSheetByName('Picklist') || ss.insertSheet('Picklist');
+  const products = pl.products, n = pl.orderIds.length;
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, 7).merge();
+  sheet.getRange('A1').setValue('PetFriend Pick List').setFontSize(18).setFontWeight('bold').setHorizontalAlignment('center');
+  sheet.getRange(2, 1, 1, 7).merge();
+  sheet.getRange('A2').setValue('Generated' + (label ? ' (' + label + ')' : '') + ': ' +
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')).setHorizontalAlignment('center');
+  const headers = ['Image', 'Product Title', 'SKU', 'Quantity', 'Bin Location', 'Variant Bin Location', 'Order Numbers'];
+  sheet.getRange(4, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setHorizontalAlignment('center');
+  const rows = products.map(function (p) {
+    return ['', p.variantName ? p.title + ' - ' + p.variantName : p.title, p.sku, p.quantity, p.productBin, p.variantBin, p.orders.join(', ')];
+  });
+  if (rows.length) sheet.getRange(5, 1, rows.length, headers.length).setValues(rows);
+  products.forEach(function (p, i) {
+    if (!p.image) return;
+    try {
+      const alt = p.variantName ? p.title + ' - ' + p.variantName : p.title;
+      sheet.getRange(i + 5, 1).setValue(SpreadsheetApp.newCellImage().setSourceUrl(p.image).setAltTextDescription(alt).setAltTextTitle(alt).build());
+    } catch (e) { Logger.log('Could not insert image for ' + p.title + ': ' + e.message); }
+  });
+  if (rows.length) sheet.setRowHeights(5, rows.length, 85);
+  [90, 300, 150, 80, 150, 180, 250].forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
+  sheet.setFrozenRows(4);
+  const table = sheet.getRange(4, 1, rows.length + 1, headers.length);
+  table.setBorder(true, true, true, true, true, true); table.setVerticalAlignment('middle'); table.setWrap(true);
+  SpreadsheetApp.flush();
+
+  const pdf = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&gid=' + sheet.getSheetId() +
+    '&size=A4&portrait=true&fitw=true&sheetnames=false&printtitle=false&pagenumbers=true&gridlines=false&fzr=true',
+    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  if (pdf.getResponseCode() !== 200) throw new Error('Could not create the pick list PDF (HTTP ' + pdf.getResponseCode() + ')');
+
+  MailApp.sendEmail({
+    to: to,
+    subject: 'PetFriend Pick List' + (label ? ' (' + label + ')' : '') + ' - ' + n + ' Order(s)',
+    body: 'PetFriend Pick List' + (label ? ' (' + label + ')' : '') + '\n\nEligible orders: ' + n + '\nProducts: ' + products.length +
+      '\n\nGenerated from Shopify.\n\nPlease find the Pick List PDF attached.',
+    attachments: [pdf.getBlob().setName('PetFriend Pick List.pdf')]
+  });
+}
+
+/** From the app: email the current pick list (all eligible open orders). */
+function emailPickList_() {
+  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
+  if (!pl.orderIds.length) return { ok: true, sent: false, orders: 0 };
+  sendPickListEmail_(pl, 'App');
+  return { ok: true, sent: true, orders: pl.orderIds.length, products: pl.products.length };
+}
+
+/** Manual run from the editor: all eligible open orders. */
+function sendPicklistManually() {
+  const pl = buildPickList_('status:open fulfillment_status:unfulfilled', 'CREATED_AT');
+  if (!pl.orderIds.length) { Logger.log('Manual picklist: no eligible orders found.'); return; }
+  sendPickListEmail_(pl, 'Manual');
+  Logger.log('Manual picklist sent. Orders: ' + pl.orderIds.length + ', products: ' + pl.products.length);
+}
+
+/** Automatic: orders updated since the last run and not sent before. */
+function checkNewOrdersAndEmailPicklist() {
+  const lastRun = P.getProperty('PICKLIST_LAST_RUN') || new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  let sent = {};
+  try { sent = JSON.parse(P.getProperty('PICKLIST_EXPORTED_ORDERS') || '{}'); } catch (e) { sent = {}; }
+  const startedAt = new Date().toISOString();
+  const pl = buildPickList_('updated_at:>' + lastRun, 'UPDATED_AT', function (id) { return !!sent[id]; });
+  if (pl.orderIds.length) {
+    sendPickListEmail_(pl, '');
+    pl.orderIds.forEach(function (id) { sent[id] = { exportedAt: startedAt }; });
+  }
+  // keep the "already sent" list small (a Script Property holds at most 9 KB): forget entries older than 30 days
+  const cutoff = Date.now() - 30 * 864e5;
+  Object.keys(sent).forEach(function (id) { if (new Date(sent[id].exportedAt).getTime() < cutoff) delete sent[id]; });
+  P.setProperty('PICKLIST_EXPORTED_ORDERS', JSON.stringify(sent));
+  P.setProperty('PICKLIST_LAST_RUN', startedAt);
+  Logger.log(pl.orderIds.length ? 'Picklist sent: ' + pl.orderIds.length + ' order(s), ' + pl.products.length + ' product(s)' : 'No eligible new orders.');
+}
+
+/** Time trigger: every 10 minutes, 10:00 to before 14:00, not on Fridays (script time zone). */
+function scheduledPicklistCheck() {
+  const tz = Session.getScriptTimeZone(), now = new Date();
+  const day = Number(Utilities.formatDate(now, tz, 'u')), hour = Number(Utilities.formatDate(now, tz, 'H'));
+  if (day === 5) { Logger.log('Friday - Picklist is disabled.'); return; }
+  if (hour < 10 || hour >= 14) { Logger.log('Outside Picklist working hours.'); return; }
+  checkNewOrdersAndEmailPicklist();
+}
+
+/** Run once: installs the 10-minute trigger for the automatic pick list email. */
+function createPicklistTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'scheduledPicklistCheck' || t.getHandlerFunction() === 'checkNewOrdersAndEmailPicklist') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('scheduledPicklistCheck').timeBased().everyMinutes(10).create();
 }
 
 /* =====================================================================================

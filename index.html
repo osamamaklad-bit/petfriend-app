@@ -64,6 +64,9 @@
   <button data-t="orders" aria-label="Fulfill and returns">
     <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></svg>Orders
   </button>
+  <button data-t="picklist" aria-label="Pick list">
+    <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10l1.5 1.5L13 9M9 16l1.5 1.5L13 15M15 11h1M15 17h1"/></svg>Pick list
+  </button>
   <button data-t="shipments" aria-label="Shipment photos">
     <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Shipments
   </button>
@@ -75,7 +78,7 @@
 (function () {
   // Each tool is its own page with its own login (PIN / key); loaded on first use and kept alive after that,
   // so e.g. a POS cart survives while you check a shipment.
-  const PAGES = { pos: 'pos/index.html', orders: 'orders/index.html', shipments: 'shipments/index.html' };
+  const PAGES = { pos: 'pos/index.html', orders: 'orders/index.html', picklist: 'picklist/index.html', shipments: 'shipments/index.html' };
   const frames = {};
   let current = null;
 

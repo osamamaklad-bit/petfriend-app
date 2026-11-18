@@ -11,6 +11,7 @@
   "shortcuts": [
     { "name": "POS", "url": "./#pos" },
     { "name": "Orders", "url": "./#orders" },
+    { "name": "Pick list", "url": "./#picklist" },
     { "name": "Shipments", "url": "./#shipments" }
   ],
   "icons": [
