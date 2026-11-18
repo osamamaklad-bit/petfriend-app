@@ -50,7 +50,8 @@
   header .logo { width: 44px; height: 44px; border-radius: 12px; }
   header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; }
   header h1 small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
-  body.ret header h1 small { color: var(--ret); }
+  header h1 small .ver { font-weight: 400; color: var(--muted); }
+  body.ret header h1 #modeLabel { color: var(--ret); }
   header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; font: inherit; font-size: 13px; }
   main { padding: 12px 12px 140px; max-width: 640px; margin: 0 auto; }
 
@@ -145,7 +146,7 @@
   /* receive (from suppliers) */
   :root { --rcv: #0f766e; }
   @media (prefers-color-scheme: dark) { :root { --rcv: #5eead4; } }
-  body.rcv header h1 small { color: var(--rcv); }
+  body.rcv header h1 #modeLabel { color: var(--rcv); }
   body.rcv .modes button.on { background: var(--rcv); color: var(--on); }
   body.rcv #fulfillBtn { background: var(--rcv); color: var(--on); }
   body.rcv #fulfillBtn:disabled { background: var(--muted); }
@@ -172,7 +173,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small id="modeLabel">Fulfill</small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
