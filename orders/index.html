@@ -69,6 +69,14 @@
 
   #camwrap { background: #000; border-radius: 12px; overflow: hidden; margin: 0 auto 10px; display: none; max-width: 480px; }
   #camwrap.on { display: block; }
+  #camwrap { position: relative; }
+  #camMsg { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 10px 12px; border-radius: 10px; font-weight: 700; font-size: 16px;
+    background: rgba(0,0,0,.72); color: #fff; z-index: 5; text-align: center; }
+  #camMsg.ok { background: rgba(21,128,61,.92); }
+  #camMsg.warn { background: rgba(180,83,9,.92); }
+  #camMsg.bad { background: rgba(185,28,28,.92); }
+  .item.flash { animation: flash 1s ease-out; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 4px var(--ok); } 100% { box-shadow: 0 0 0 0 transparent; } }
   #reader { width: 100%; }
   #reader video { object-fit: cover; }
 
@@ -173,7 +181,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.1</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -190,7 +198,7 @@
     <button class="ghost" id="camBtn">Camera</button>
   </div>
 
-  <div id="camwrap"><div id="reader"></div></div>
+  <div id="camwrap"><div id="reader"></div><div id="camMsg" hidden></div></div>
   <div id="banner">Pick an order, scan its barcode, or type the number.</div>
 
   <div id="openOrders">
@@ -280,7 +288,13 @@
     const b = $('banner');
     b.className = kind || '';
     b.textContent = msg;
+    // while the camera is open, show the same message on the camera view, where staff are looking
+    const c = $('camMsg');
+    if (c) { c.className = kind || ''; c.textContent = (kind === 'ok' ? '✓ ' : kind === 'bad' ? '✗ ' : '') + msg; c.hidden = !state.camOn; }
   }
+  // Any unexpected error is shown instead of failing silently
+  window.addEventListener('error', function (e) { try { say('Error: ' + (e.message || e), 'bad'); } catch (x) {} });
+  window.addEventListener('unhandledrejection', function (e) { try { say('Error: ' + ((e.reason && e.reason.message) || e.reason), 'bad'); } catch (x) {} });
 
   // ---------- API ----------
   async function api(payload) {
@@ -419,6 +433,8 @@
     }
     item.got++;
     render();
+    const row = $('list').children[state.items.indexOf(item)];
+    if (row) { row.classList.add('flash'); try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} }
     const left = totalNeed() - totalGot();
     if (isRcv()) {
       say(item.title + ': received ' + item.got + ' of ' + item.need + (left === 0 ? '. Everything on this purchase order scanned.' : ''), 'ok');
@@ -447,6 +463,7 @@
         function () {}
       );
       state.camOn = true; $('camBtn').textContent = 'Stop';
+      say(state.order ? 'Point the camera at an item barcode' : idleMsg());
     } catch (e) {
       $('camwrap').classList.remove('on');
       say('Camera blocked. Allow camera access and use an https page.', 'bad');
@@ -454,7 +471,7 @@
   }
   async function stopCamera() {
     try { if (state.scanner) { await state.scanner.stop(); state.scanner.clear(); } } catch (e) {}
-    state.camOn = false; $('camBtn').textContent = 'Camera'; $('camwrap').classList.remove('on');
+    state.camOn = false; $('camBtn').textContent = 'Camera'; $('camwrap').classList.remove('on'); $('camMsg').hidden = true;
   }
 
   // ---------- render ----------
