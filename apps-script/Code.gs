@@ -15,7 +15,7 @@
  *
  * Script Properties (Project Settings > Script properties). Values are never in this file.
  *   Shared
- *     SHOPIFY_STORE          xxx.myshopify.com
+ *     SHOPIFY_STORE          xxx.myshopify.com (or just xxx, or the full https:// link)
  *     SHOPIFY_CLIENT_ID      Orders' Shopify app (Dev Dashboard): client ID   } used for Orders, Returns and
  *     SHOPIFY_CLIENT_SECRET  Orders' Shopify app: client secret               } Shipments' item lists
  *     SHOPIFY_TOKEN          (optional) permanent shpat_ token, used only if the two above are not set
@@ -54,7 +54,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-18.3';
+const SERVER_VERSION = '2026-11-18.4';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -79,6 +79,14 @@ function json_(obj) {
 
 const SHOPIFY_API = '2025-01';
 
+// SHOPIFY_STORE may be written as "petfriendstores", "petfriendstores.myshopify.com" or a full https:// link
+function storeHost_() {
+  const raw = String(P.getProperty('SHOPIFY_STORE') || '').trim()
+    .replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/\.myshopify\.com$/i, '');
+  if (!raw) throw new Error('Set SHOPIFY_STORE in Script Properties');
+  return raw + '.myshopify.com';
+}
+
 // Admin API token. Client credentials (tokens last 24h, cached); a fixed SHOPIFY_TOKEN only if no client ID is set.
 function getToken_() {
   const id = P.getProperty('SHOPIFY_CLIENT_ID'), secret = P.getProperty('SHOPIFY_CLIENT_SECRET');
@@ -90,7 +98,7 @@ function getToken_() {
   const cache = CacheService.getScriptCache();
   const cached = cache.get('shopify_token');
   if (cached) return cached;
-  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOPIFY_STORE') + '/admin/oauth/access_token', {
+  const res = UrlFetchApp.fetch('https://' + storeHost_() + '/admin/oauth/access_token', {
     method: 'post',
     payload: { grant_type: 'client_credentials', client_id: id, client_secret: secret },
     muteHttpExceptions: true
@@ -104,7 +112,7 @@ function getToken_() {
 function shopify_(query, variables) { return shopifyAt_(SHOPIFY_API, query, variables); }
 
 function shopifyAt_(version, query, variables, retried) {
-  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOPIFY_STORE') + '/admin/api/' + version + '/graphql.json', {
+  const res = UrlFetchApp.fetch('https://' + storeHost_() + '/admin/api/' + version + '/graphql.json', {
     method: 'post',
     contentType: 'application/json',
     headers: { 'X-Shopify-Access-Token': getToken_() },
@@ -1087,7 +1095,7 @@ function pricing_(d) {
 }
 /** Item list for the Bulky sheet: from Shopify (same Shopify login as Orders), else from Bosta's package details. */
 function items_(d) {
-  const store = P.getProperty('SHOPIFY_STORE');
+  const store = P.getProperty('SHOPIFY_STORE') ? storeHost_() : '';
   if (store && d.shopifyOrderId) try {
     const r = UrlFetchApp.fetch('https://' + store + '/admin/api/' + SHOPIFY_API + '/orders/' + d.shopifyOrderId + '.json?fields=name,line_items',
       { headers: { 'X-Shopify-Access-Token': getToken_() }, muteHttpExceptions: true });
