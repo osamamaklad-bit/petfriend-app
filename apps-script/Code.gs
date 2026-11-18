@@ -53,7 +53,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-17.2';
+const SERVER_VERSION = '2026-11-18.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -510,8 +510,11 @@ function metaQuery_(owner) {   // "vBin: metafield(...) { value type } vExp: ...
   }).join(' ');
 }
 function poItemFields_() {
+  // image: the variant's own picture, else the product's main picture
+  const img = 'preview { image { url(transform: { maxWidth: 160, maxHeight: 160 }) } }';
   return 'inventoryItem { id sku variants(first: 1) { nodes { id displayName barcode sku ' + metaQuery_('variant') +
-    ' product { id ' + metaQuery_('product') + ' } } } }';
+    ' media(first: 1) { nodes { ' + img + ' } }' +
+    ' product { id ' + metaQuery_('product') + ' featuredMedia { ' + img + ' } } } } }';
 }
 function metaValues_(variant) {
   const out = {};
@@ -525,9 +528,13 @@ function metaValues_(variant) {
 function poItem_(inv, extra) {
   const v = (inv && inv.variants && inv.variants.nodes[0]) || {};
   return Object.assign({
-    title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: '',
+    title: v.displayName || 'Item', sku: v.sku || (inv && inv.sku) || '', barcode: v.barcode || '', image: mediaUrl_(v),
     variantId: v.id || '', productId: (v.product && v.product.id) || ''
   }, metaValues_(v), extra);
+}
+function mediaUrl_(v) {
+  const pick = function (m) { return m && m.preview && m.preview.image && m.preview.image.url || ''; };
+  return pick(v.media && v.media.nodes && v.media.nodes[0]) || pick(v.product && v.product.featuredMedia);
 }
 // Metafield values come as text; list-type metafields come as JSON arrays: show them comma-separated
 function binValue_(mf) {
