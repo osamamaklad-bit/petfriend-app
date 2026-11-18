@@ -189,6 +189,7 @@
     // camera strip: "✓ message" / "✗ message"
     [/^([✓✗]) ([\s\S]+)$/, function (m, mark, rest) { return mark + ' ' + toArabic(rest); }],
     [/^Error: (.+)$/, 'خطأ: $1'],
+    [/^Shopify barcodes: (.+)$/, 'باركود Shopify: $1'],
     // Receiving from suppliers
     [/^Loading purchase order (.+)\.\.\.$/, 'جارٍ تحميل أمر الشراء $1...'],
     [/^Saved bin location and expiry date for (.+)$/, 'تم حفظ موقع التخزين وتاريخ الانتهاء لـ $1'],
