@@ -1,0 +1,98 @@
+# Deploys apps-script/Code.gs to the live Google Apps Script project whenever it changes on main.
+#
+#  1. runs tests/server-test.js: nothing is deployed if a check fails
+#  2. pulls the live project (keeps its other files, e.g. Index, and its appsscript.json settings)
+#     and replaces only Code with the file from GitHub
+#  3. publishes a new version on the EXISTING web-app deployment (the URL stays the same)
+#  4. opens the web-app URL and checks it reports the new SERVER_VERSION
+#
+# One-time setup (see README, "Linking GitHub to the Apps Script project"):
+#   secret   CLASPRC_JSON   contents of ~/.clasprc.json after `npx @google/clasp@2.4.2 login`
+#   variable SCRIPT_ID      Apps Script > Project Settings > IDs > Script ID
+#   variable DEPLOYMENT_ID  Apps Script > Deploy > Manage deployments > Deployment ID
+# Until these exist, only the tests run.
+
+name: Deploy Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - 'tests/**'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Test Code.gs
+        run: node tests/server-test.js apps-script/Code.gs
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ vars.SCRIPT_ID != '' && vars.DEPLOYMENT_ID != '' }}
+    env:
+      SCRIPT_ID: ${{ vars.SCRIPT_ID }}
+      DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@2.4.2
+
+      - name: Google login (from the CLASPRC_JSON secret)
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then echo "::error::Add the CLASPRC_JSON secret (see README)"; exit 1; fi
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+
+      - name: Pull the live project
+        run: |
+          mkdir live
+          printf '{"scriptId":"%s"}' "$SCRIPT_ID" > live/.clasp.json
+          cd live
+          clasp pull
+          echo "Files in the live project:"; ls -1
+
+      - name: Replace Code with apps-script/Code.gs and push
+        run: |
+          cd live
+          cp ../apps-script/Code.gs Code.js
+          clasp push --force
+
+      - name: Publish a new version on the existing web app (same URL)
+        run: |
+          cd live
+          clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "GitHub ${GITHUB_SHA::7}"
+
+      - name: Check the web app now runs the new version
+        run: |
+          want=$(grep -oP "SERVER_VERSION = '\K[^']+" apps-script/Code.gs)
+          url=$(grep -oP "API_URL = '\Khttps://script\.google\.com/[^']+" pos/index.html | head -1)
+          echo "Expecting version $want at $url"
+          for i in 1 2 3 4 5 6; do
+            got=$(curl -sL "$url" | grep -oP '"version":"\K[^"]+' || true)
+            echo "Live version: ${got:-?}"
+            if [ "$got" = "$want" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::The web app does not report version $want. Check DEPLOYMENT_ID is the deployment the app uses."
+          exit 1

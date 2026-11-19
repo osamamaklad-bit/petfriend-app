@@ -60,6 +60,29 @@ The old POS and Orders scripts can stay as a backup until everything works, and 
 - The app's **Create pick list now** button, or `createPickListNow` in the editor, makes one at any time.
 - Remove the trigger from the old pick list project, which still emails.
 
+## Linking GitHub to the Apps Script project (automatic deploy)
+
+`.github/workflows/deploy-apps-script.yml` deploys `apps-script/Code.gs` whenever it changes on `main`, or from **Actions → Deploy Apps Script → Run workflow**:
+
+1. It runs `tests/server-test.js`. If any check fails, nothing is deployed.
+2. It pulls the live project and replaces only `Code`. Other files (like `Index`) and the project settings stay as they are.
+3. It publishes a new version on the **existing** web app, so the URL doesn't change.
+4. It opens the web-app URL and checks it shows the new `SERVER_VERSION`.
+
+One-time setup:
+
+1. **Turn on the Apps Script API:** https://script.google.com/home/usersettings → *Google Apps Script API* → On.
+2. **Log clasp in with your Google account.** On a computer with Node.js, or in Google Cloud Shell (shell.cloud.google.com, nothing to install), run:
+   `npx @google/clasp@2.4.2 login` (in Cloud Shell add `--no-localhost`).
+   This creates the file `~/.clasprc.json`. Show it with `cat ~/.clasprc.json` and copy all of it.
+3. In GitHub, go to the repo's **Settings → Secrets and variables → Actions**:
+   - **Secrets → New repository secret:** `CLASPRC_JSON` = the copied contents. Treat it like a password: it lets the workflow edit your Apps Script projects.
+   - **Variables → New repository variable:** `SCRIPT_ID` = Apps Script → ⚙ Project Settings → IDs → *Script ID*.
+   - **Variables → New repository variable:** `DEPLOYMENT_ID` = Apps Script → Deploy → Manage deployments → the web app's *Deployment ID*. Use the one the app's URL belongs to, not a new deployment.
+4. Go to **Actions → Deploy Apps Script → Run workflow** and check that it ends green.
+
+Until the secret and variables exist, the workflow only runs the tests.
+
 ## Hosting
 
 The app is static files, so any https host works (GitHub Pages included). Camera scanning needs https.
