@@ -191,7 +191,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-19.1</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-19.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -630,7 +630,7 @@
       });
       if (isRcv() && it.variantId) {
         const e = document.createElement('button');
-        e.className = 'edit'; e.dataset.edit = idx; e.textContent = 'Edit';
+        e.className = 'edit'; e.dataset.edit = idx; e.textContent = 'Edit expiry';
         binBox.appendChild(e);
       }
       if (!binBox.childNodes.length) binBox.remove();
@@ -651,8 +651,7 @@
     if (!it || state.busy) return;
     const exp = it.expProduct || '';
     const v = await pfSettings({ title: it.title, fields: [
-      { key: 'binVariant', label: 'Variant bin location', value: it.binVariant || '' },
-      { key: 'binProduct', label: 'Product bin location', value: it.binProduct || '' },
+      // only the expiry date can be changed; bin locations are shown but not editable
       // date picker when the stored value is a plain date (or empty); otherwise keep it as text
       { key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }
     ] });
@@ -663,11 +662,10 @@
       const data = await api({ action: 'setItemMeta', variantId: it.variantId, values: v });
       // the same variant / product can be on several lines: update them all
       state.items.forEach(function (x) {
-        if (x.variantId === it.variantId) x.binVariant = data.values.binVariant;
-        if (x.productId && x.productId === it.productId) { x.binProduct = data.values.binProduct; x.expProduct = data.values.expProduct; }
+        if (x.productId && x.productId === it.productId) x.expProduct = data.values.expProduct;
       });
       render();
-      say(data.changed ? 'Saved bin location and expiry date for ' + it.title : 'No changes', 'ok');
+      say(data.changed ? 'Saved expiry date for ' + it.title : 'No changes', 'ok');
       feedback('ok');
     } catch (e) {
       say(e.message, 'bad'); feedback('bad');

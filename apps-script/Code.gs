@@ -54,7 +54,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-19.1';
+const SERVER_VERSION = '2026-11-19.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -523,9 +523,10 @@ const RECEIVE_API = '2026-10';
 // expiry date on the product. Each is "namespace.key"; defaults below (they match the store's
 // definitions), change with the Script Properties named here.
 const ITEM_META = {
-  binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field' },
-  binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field' },
-  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date' }
+  // bin locations are shown only (not editable from the app); the expiry date can be edited
+  binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field', editable: false },
+  binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field', editable: false },
+  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date', editable: true }
 };
 function metaKey_(name) {
   const f = ITEM_META[name];
@@ -574,7 +575,7 @@ function binValue_(mf) {
   return v;
 }
 
-/** Saves bin locations / expiry date for one item. body.values: any of binVariant, binProduct, expProduct.
+/** Saves the expiry date for one item (body.values.expProduct). Bin locations sent here are ignored: read-only.
  *  An empty value removes the metafield. Uses the type of the store's metafield definition when there is one. */
 function setItemMeta_(body) {
   if (!body.variantId) throw new Error('Missing item');
@@ -585,6 +586,7 @@ function setItemMeta_(body) {
   const sets = [], dels = [];
   Object.keys(ITEM_META).forEach(function (n) {
     if (!Object.prototype.hasOwnProperty.call(vals, n)) return;
+    if (!ITEM_META[n].editable) return;                       // bin locations are read-only in the app
     const f = ITEM_META[n], k = metaKey_(n), host = f.owner === 'variant' ? cur : cur.product;
     const existing = host[f.alias], v = String(vals[n] == null ? '' : vals[n]).trim();
     if (v === binValue_(existing)) return;                        // unchanged

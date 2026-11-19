@@ -108,6 +108,7 @@
     'Expiry:': 'تاريخ الانتهاء:',
     '(expired)': '(منتهي الصلاحية)',
     'Edit': 'تعديل',
+    'Edit expiry': 'تعديل تاريخ الانتهاء',
     'Variant bin location': 'موقع تخزين المتغيّر',
     'Product bin location': 'موقع تخزين المنتج',
     'Expiry date': 'تاريخ الانتهاء',
@@ -223,7 +224,7 @@
     [/^Pick list created: (\d+) orders?, (\d+) products?\.$/, 'تم إنشاء قائمة التجميع: $1 طلب، $2 منتج.'],
     // Receiving from suppliers
     [/^Loading purchase order (.+)\.\.\.$/, 'جارٍ تحميل أمر الشراء $1...'],
-    [/^Saved bin location and expiry date for (.+)$/, 'تم حفظ موقع التخزين وتاريخ الانتهاء لـ $1'],
+    [/^Saved expiry date for (.+)$/, 'تم حفظ تاريخ الانتهاء لـ $1'],
     [/^Scan the barcode of (.+) first$/, 'امسح باركود $1 أولاً'],
     [/^(.+) from (.+): scan each item that arrived\.$/, '$1 من $2: امسح كل منتج وصل.'],
     [/^(.+): scan each item that arrived\.$/, '$1: امسح كل منتج وصل.'],
