@@ -169,6 +169,9 @@
       const fresh = state.known ? d.pickLists.filter((x) => !state.known[x.id]) : [];
       state.lists = d.pickLists;
       state.known = {}; d.pickLists.forEach((x) => { state.known[x.id] = 1; });
+      // forget ticks of pick lists that are no longer shown (older than 7 days)
+      Object.keys(picked).forEach((k) => { if (!state.known[k.split('|')[0]]) delete picked[k]; });
+      savePicked();
       if (fresh.length) { say('New pick list: ' + fresh[0].orders + (fresh[0].orders === 1 ? ' order' : ' orders') + ', ' + fresh[0].products + (fresh[0].products === 1 ? ' product' : ' products') + '.', 'ok'); beep(); }
       else if (!quiet) say(d.pickLists.length ? 'Tap a pick list to open it.' : 'No pick lists in the last 7 days.', d.pickLists.length ? 'ok' : '');
       renderLists(fresh);
@@ -223,13 +226,14 @@
     try {
       const d = await api({ action: 'createPickList' });
       if (!d.created) say('No new orders to pick: every qualifying order is already on a pick list.', '');
-      else { made = d.pickList; state.known = state.known || {}; state.known[made.id] = 1; }
+      else { made = d.pickList; made.truncated = d.truncated; state.known = state.known || {}; state.known[made.id] = 1; }
     } catch (e) { say(e.message, 'bad'); }
     finally { state.busy = false; $('createBtn').disabled = false; }
     if (made) {   // open the new list once the create step is finished
       await loadLists(true);
       await openList(made.id);
-      say('Pick list created: ' + made.orders + (made.orders === 1 ? ' order' : ' orders') + ', ' + made.products + (made.products === 1 ? ' product' : ' products') + '.', 'ok');
+      say('Pick list created: ' + made.orders + (made.orders === 1 ? ' order' : ' orders') + ', ' + made.products + (made.products === 1 ? ' product' : ' products') + '.' +
+        (made.truncated ? '\nMore than 1000 orders are waiting: create another pick list for the rest.' : ''), 'ok');
     }
   }
 

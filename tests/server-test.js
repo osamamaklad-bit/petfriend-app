@@ -9,7 +9,7 @@ const props = { POS_PIN: '1111', APP_KEY: 'kkk', APP_PIN: '2222', SHOP: 'pf', CL
 const fetches = [];
 const sheets = {};
 function sheet(name) { return sheets[name] || (sheets[name] = { rows: [], name,
-  appendRow(r) { this.rows.push(r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { return this.rows.length; }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { this.rows.splice(i - 1, 1); },
+  appendRow(r) { (ctx.__rawAppends = ctx.__rawAppends || []).push(r); this.rows.push(r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { return this.rows.length; }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { this.rows.splice(i - 1, 1); },
   getDataRange() { const s = this; return { getValues: () => s.rows.map(r => r.slice()) }; },
   getRange(r, c, nr = 1, nc = 1) { const s = this; return {
     getValue: () => (s.rows[r - 1] || [])[c - 1], setValue: v => { s.rows[r - 1][c - 1] = v; },
@@ -29,7 +29,7 @@ function shopifyAnswer(url, body, headers) {
   if (/inventoryPurchaseOrders\(first: 250, after: \$after/.test(q)) { const p2 = body.variables.after === 'd1';
     return { data: { inventoryPurchaseOrders: { nodes: p2 ? [{ id: 'PO5', name: 'PO-1005' }] : [{ id: 'PO1', name: 'PO-1003' }], pageInfo: { hasNextPage: !p2, endCursor: p2 ? null : 'd1' } } } }; }
   if (/inventoryPurchaseOrder\(id/.test(q)) return { data: { inventoryPurchaseOrder: body.variables.id === 'PO1'
-    ? { id: 'PO1', name: 'PO-1003', origin: { supplierName: 'Royal Canin' }, destination: { name: 'Main store', location: { id: 'LOC1' } }, transfers: { nodes: [{ id: 'T1', status: 'IN_PROGRESS', shipments: { nodes: [{ id: 'S1', status: 'IN_TRANSIT' }, { id: 'S0', status: 'RECEIVED' }] } }] } }
+    ? { id: 'PO1', name: 'PO-1003', origin: { supplierName: 'Royal Canin' }, destination: { name: 'Main store', location: { id: 'LOC1' } }, transfers: { nodes: [{ id: 'T1', status: 'IN_PROGRESS', shipments: { nodes: [{ id: 'S1', status: (ctx.__s1draft ? 'DRAFT' : 'IN_TRANSIT') }, { id: 'S0', status: 'RECEIVED' }] } }] } }
     : { id: 'PO5', name: 'PO-1005', origin: { supplierName: 'Whiskas' }, destination: { name: 'Main store' }, transfers: { nodes: [{ id: 'T5', status: 'READY_TO_SHIP', shipments: { nodes: [] } }] } } } };
   if (/inventoryShipment\(id/.test(q)) return { data: { inventoryShipment: { lineItems: { nodes: [
     { id: 'SL1', unreceivedQuantity: 4, inventoryItem: { id: 'I1', sku: 'RC2', variants: { nodes: [{ displayName: 'Royal Canin Kitten 2kg', barcode: '111', sku: 'RC2', vBin: { value: 'A-12' }, media: { nodes: [] }, product: { pBin: { value: 'A-10' }, featuredMedia: { preview: { image: { url: 'https://cdn.shopify.com/p.jpg' } } } } }] } } },
@@ -39,6 +39,11 @@ function shopifyAnswer(url, body, headers) {
     { shippableQuantity: 5, inventoryItem: { id: 'I9', sku: 'WK1', variants: { nodes: [{ displayName: 'Whiskas Tuna', barcode: '999', sku: 'WK1' }] } } } ] } } } };
   if (/inventoryShipmentCreateInTransit/.test(q)) return { data: { inventoryShipmentCreateInTransit: { inventoryShipment: { id: 'SNEW', lineItems: { nodes: body.variables.input.lineItems.map((l, i) => ({ id: 'SNL' + i, quantity: l.quantity, inventoryItem: { id: l.inventoryItemId } })) } }, userErrors: [] } } };
   if (/inventoryAdjustQuantities/.test(q)) { ctx.__adjust = body.variables; return { data: { inventoryAdjustQuantities: { inventoryAdjustmentGroup: { id: 'G1' }, userErrors: [] } } }; }
+  if (/inventoryShipmentMarkInTransit/.test(q)) { ctx.__marked = (ctx.__marked || []).concat([body.variables.id]); return { data: { inventoryShipmentMarkInTransit: { inventoryShipment: { id: body.variables.id, status: 'IN_TRANSIT' }, userErrors: [] } } }; }
+  if (/draftOrderCreate/.test(q)) { ctx.__posOrders = (ctx.__posOrders || 0) + 1; return { data: { draftOrderCreate: { draftOrder: { id: 'D' + ctx.__posOrders }, userErrors: [] } } }; }
+  if (/draftOrderComplete/.test(q)) return { data: { draftOrderComplete: { draftOrder: { order: { id: 'O', name: '#P' + ctx.__posOrders, totalPriceSet: { shopMoney: { amount: '100.0' } }, fulfillmentOrders: { nodes: [{ id: 'FO' }] } } }, userErrors: [] } } };
+  if (/fulfillmentCreate\(fulfillment: \$f\)\{userErrors/.test(q) || /fulfillmentCreate\(fulfillment:\$f\)/.test(q)) return { data: { fulfillmentCreate: { userErrors: [] } } };
+  if (/shop\{currencyCode\}/.test(q)) return { data: { shop: { currencyCode: 'EGP' }, nodes: body.variables.ids.map(id => ({ id, price: '100.00' })) } };
   if (/inventoryShipmentReceive/.test(q)) { ctx.__received = (ctx.__received || []).concat([{ id: body.variables.id, li: body.variables.li, key: body.variables.key, idem: /@idempotent\(key: \$key\)/.test(q) }]); return { data: { inventoryShipmentReceive: { inventoryShipment: { id: body.variables.id, status: 'PARTIALLY_RECEIVED' }, userErrors: [] } } }; }
   if (/productVariant\(id/.test(q)) { const st = ctx.__meta || (ctx.__meta = { vBin: { value: 'A-12', type: 'single_line_text_field' }, pBin: { value: '["B-3"]', type: 'list.single_line_text_field' }, pExp: null });
     return { data: { productVariant: { id: 'V1', vBin: st.vBin, product: { id: 'P1', pBin: st.pBin, pExp: st.pExp } } } }; }
@@ -251,13 +256,39 @@ for (const form of ['pf', 'pf.myshopify.com', 'https://pf.myshopify.com/admin', 
 }
 props.SHOPIFY_STORE = 'pf.myshopify.com';
 
+
+// ---- fixes from the code review
+r = post({ action: 'listOrders', key: 'kkk' });
+check('Orders use a supported API version (2026-10)', fetches.filter(f => /graphql/.test(f.url)).at(-1).ver, fetches.filter(f => /graphql/.test(f.url)).at(-1).ver === '2026-10');
+ctx.__posOrders = 0;
+const sale = { action: 'sale', pin: '1111', items: [{ id: 'gid://shopify/ProductVariant/1', qty: 1, price: 100 }], discountType: 'pct', discountValue: 0, saleId: 'abc12345-xyz' };
+const s1 = post(sale), s2 = post(sale);
+check('POS: same saleId sent twice -> one order, same answer', [s1, s2, ctx.__posOrders], s1.ok && s2.ok && ctx.__posOrders === 1 && s1.data.name === s2.data.name);
+post(Object.assign({}, sale, { saleId: 'other-sale-123' }));
+check('POS: a new saleId makes a new order', ctx.__posOrders, ctx.__posOrders === 2);
+ctx.__s1draft = true; ctx.__marked = []; ctx.__received = [];
+r = post({ action: 'getPO', key: 'kkk', query: '1003' });
+check('Receive: DRAFT shipment lines are offered (no second shipment)', r.items && r.items[0], r.ok && r.items[0].shipmentId === 'S1' && r.items[0].draft === true);
+r = post({ action: 'receivePO', key: 'kkk', requestId: 'r9', locationId: 'LOC1', items: [{ shipmentId: 'S1', sliId: 'SL1', inventoryItemId: 'I1', need: 4, qty: 2, draft: true }] });
+check('Receive: draft shipment marked in transit, then received', [ctx.__marked, ctx.__received.length], r.ok && ctx.__marked.join() === 'S1' && ctx.__received[0].id === 'S1');
+ctx.__s1draft = false;
+ctx.__rawAppends = [];
+sheets.PickLists && (sheets.PickLists.rows.length = 1);
+post({ action: 'createPickList', key: 'kkk' });
+const app = ctx.__rawAppends.find(x => String(x[0]).indexOf('PL-') === 0);
+check('Pick list: data cells written as text (leading apostrophe)', app && app.slice(5).map(c => String(c)[0]), app && app.slice(5).every(c => String(c)[0] === "'"));
+r = post({ action: 'getPickList', key: 'kkk', id: app && app[0] });
+check('Pick list: reads back after the text marker', r.ok && r.pickList.items.length, r.ok && r.pickList.items.length === 3);
+const bp = ctx.buildPickList_('status:open', 'CREATED_AT');
+check('Pick list: tells when the 1000-order limit was not reached', bp.truncated, bp.truncated === false);
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;
-ctx.UrlFetchApp.fetch = (url, o) => { if (denied && url.includes('/graphql.json') && !url.includes('pf.myshopify.com/admin/api/2026')) { denied--; return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) }; } return orig(url, o); };
+ctx.UrlFetchApp.fetch = (url, o) => { if (denied && url.includes('/graphql.json') && /returnableFulfillments/.test((o && o.payload) || '')) { denied--; return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) }; } return orig(url, o); };
 ctx.__cache.shopify_token = 'old';
 r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Access denied -> fresh token + retry', r, r.ok && ctx.__cache.shopify_token !== 'old');
-ctx.UrlFetchApp.fetch = (url, o) => (url.includes('/graphql.json') && !url.includes('/2026')) ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) } : orig(url, o);
+ctx.UrlFetchApp.fetch = (url, o) => (url.includes('/graphql.json') && /returnableFulfillments/.test((o && o.payload) || '')) ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) } : orig(url, o);
 r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Still denied -> clear error, no endless retry', r, r.ok === false && /Access denied/.test(r.error));
 ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache.shopify_token && !ctx.__cache.tok);
 

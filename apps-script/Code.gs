@@ -54,7 +54,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-18.5';
+const SERVER_VERSION = '2026-11-19.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -77,7 +77,7 @@ function json_(obj) {
  * Shopify (Orders, Returns, Shipments)
  * ===================================================================================== */
 
-const SHOPIFY_API = '2025-01';
+const SHOPIFY_API = '2026-10';   // keep on a supported Admin API version (2025-01 was retired)
 
 // SHOPIFY_STORE may be written as "petfriendstores", "petfriendstores.myshopify.com" or a full https:// link
 function storeHost_() {
@@ -145,6 +145,7 @@ const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100; // Shopify
 function posApi_(r) {
   try {
     if (r.pin !== P.getProperty('POS_PIN')) throw new Error('Wrong PIN');
+    if (r.action === 'sale') return { ok: true, data: posSaleOnce_(r) };
     return { ok: true, data: POS_ACTIONS[r.action](r) };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
@@ -183,6 +184,22 @@ function posSearch_(r) {
   const q = String(r.q).trim();
   const query = /^\d+$/.test(q) ? `barcode:${q} OR sku:${q}` : q;
   return posGql_(`query($q:String!){productVariants(first:8,query:$q){nodes{id displayName sku barcode price inventoryQuantity}}}`, { q: query }).productVariants.nodes;
+}
+
+// A repeated "Complete cash sale" (e.g. the answer was lost on a weak connection) returns the sale
+// already made for that saleId instead of creating a second order.
+function posSaleOnce_(r) {
+  const id = String(r.saleId || '');
+  if (!/^[\w-]{8,80}$/.test(id)) return posSale_(r);          // older app without saleId
+  const cache = CacheService.getScriptCache(), key = 'pos_sale_' + id;
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const done = cache.get(key);
+    if (done) return JSON.parse(done);
+    const res = posSale_(r);
+    cache.put(key, JSON.stringify(res), 6 * 60 * 60);
+    return res;
+  } finally { lock.releaseLock(); }
 }
 
 function posSale_(r) {
@@ -441,7 +458,8 @@ function processReturn_(body) {
         orderId: body.orderId,
         notifyCustomer: !!body.notify,
         returnLineItems: items.map(function (i) {
-          return { fulfillmentLineItemId: i.fliId, quantity: Number(i.qty), returnReason: reason };
+          // returnReason still works in 2026-10 (deprecated); the note keeps the reason readable if it is removed later
+          return { fulfillmentLineItemId: i.fliId, quantity: Number(i.qty), returnReason: reason, returnReasonNote: 'Reason: ' + reason };
         })
       }
     }
@@ -649,13 +667,14 @@ function getPO_(body) {
 
   const items = [];
   po.transfers.nodes.forEach(function (t) {
-    const open = t.shipments.nodes.filter(function (sh) { return sh.status === 'IN_TRANSIT' || sh.status === 'PARTIALLY_RECEIVED'; });
+    // DRAFT shipments count too: they are marked in transit when received (no second shipment is created)
+    const open = t.shipments.nodes.filter(function (sh) { return sh.status === 'IN_TRANSIT' || sh.status === 'PARTIALLY_RECEIVED' || sh.status === 'DRAFT'; });
     open.forEach(function (sh) {
       const lines = shopifyAt_(RECEIVE_API,
         'query($id: ID!) { inventoryShipment(id: $id) { lineItems(first: 250) { nodes { id unreceivedQuantity ' + poItemFields_() + ' } } } }',
         { id: sh.id }).inventoryShipment.lineItems.nodes;
       lines.forEach(function (l) {
-        if (l.unreceivedQuantity > 0) items.push(poItem_(l.inventoryItem, { shipmentId: sh.id, sliId: l.id, need: l.unreceivedQuantity }));
+        if (l.unreceivedQuantity > 0) items.push(poItem_(l.inventoryItem, { shipmentId: sh.id, sliId: l.id, need: l.unreceivedQuantity, draft: sh.status === 'DRAFT' }));
       });
     });
     if (!open.length && t.status !== 'TRANSFERRED' && t.status !== 'CANCELED') {
@@ -731,6 +750,15 @@ function receivePO_(body) {
         const l = sh.lineItems.nodes.filter(function (n) { return n.inventoryItem && n.inventoryItem.id === x.i.inventoryItemId; })[0];
         if (l) byShip[sh.id] = (byShip[sh.id] || []).concat(lines(l.id, x));
       });
+    });
+    // Draft shipments must be in transit before they can be received
+    const drafts = {};
+    items.forEach(function (x) { if (x.i.draft && x.i.shipmentId) drafts[x.i.shipmentId] = 1; });
+    Object.keys(drafts).forEach(function (sid) {
+      const m = shopifyAt_(RECEIVE_API,
+        'mutation($id: ID!, $key: String!) { inventoryShipmentMarkInTransit(id: $id) @idempotent(key: $key) {' +
+        ' inventoryShipment { id status } userErrors { field message } } }', { id: sid, key: rid + '-m' + sid.split('/').pop() });
+      userErrors_(m.inventoryShipmentMarkInTransit.userErrors);
     });
     Object.keys(byShip).forEach(function (sid) {
       const res = shopifyAt_(RECEIVE_API,
@@ -842,11 +870,13 @@ function buildPickList_(q, sort, skip) {
     });
     cursor = d.pageInfo.hasNextPage ? d.pageInfo.endCursor : null;
   } while (cursor && ++pages < 100);
+  const truncated = !!cursor;   // more than 1000 open orders: the rest is left for the next pick list
+  if (truncated) console.warn('Pick list: stopped after 1000 orders; the rest goes on the next list');
   const list = Object.keys(products).map(function (k) { return products[k]; });
   list.sort(function (a, b) {
     return String(a.variantBin || a.productBin || '').localeCompare(String(b.variantBin || b.productBin || ''), undefined, { numeric: true, sensitivity: 'base' });
   });
-  return { orderIds: orderIds, products: list };
+  return { orderIds: orderIds, products: list, truncated: truncated };
 }
 
 const PL_SHEET = 'PickLists';
@@ -890,8 +920,9 @@ function createPickList_(kind) {
     for (let k = 2; ids[id]; k++) id = 'PL-' + Utilities.formatDate(now, tz, 'yyyyMMdd-HHmm') + '-' + k;
     const data = JSON.stringify(pl.products), chunks = [];
     for (let i = 0; i < data.length; i += PL_CHUNK) chunks.push(data.slice(i, i + PL_CHUNK));
-    s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, pl.orderIds.join(',')].concat(chunks));
-    return { ok: true, created: true, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
+    // the leading apostrophe makes Sheets keep each chunk as plain text (it is not part of the stored value)
+    s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, "'" + pl.orderIds.join(',')].concat(chunks.map(function (c) { return "'" + c; })));
+    return { ok: true, created: true, truncated: pl.truncated, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
   } finally { lock.releaseLock(); }
 }
 

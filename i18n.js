@@ -36,6 +36,7 @@
     'Creating pick list...': 'جارٍ إنشاء قائمة التجميع...',
     'No new orders to pick: every qualifying order is already on a pick list.': 'لا توجد طلبات جديدة للتجميع: كل الطلبات المستوفية للشروط موجودة في قوائم سابقة.',
     'Pick list not found': 'قائمة التجميع غير موجودة',
+    'More than 1000 orders are waiting: create another pick list for the rest.': 'يوجد أكثر من 1000 طلب في الانتظار: أنشئ قائمة أخرى للباقي.',
     'Loading pick list...': 'جارٍ تحميل قائمة التجميع...',
     'Sorted by bin location. Tap a line when it is picked.': 'مرتبة حسب موقع التخزين. اضغط على السطر عند تجميعه.',
     'No orders to pick right now.': 'لا توجد طلبات للتجميع الآن.',

@@ -123,6 +123,11 @@ $('q').addEventListener('keydown', e => { if (e.key === 'Enter') find(); }); // 
 $('disc').oninput = $('cash').oninput = $('dtype').onchange = render;
 $('clr').onclick = () => { cart = []; $('cash').value = $('disc').value = ''; render(); };
 
+// A sale that failed (e.g. lost connection) and is tapped again with the same cart keeps its saleId,
+// so the server returns the order it may already have made instead of creating a second one.
+let pendingSale = null;
+const newSaleId = () => Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+
 $('pay').onclick = async () => {
   if (!cart.length) return say('Cart is empty');
   const dv = Number($('disc').value) || 0;
@@ -133,7 +138,10 @@ $('pay').onclick = async () => {
   $('pay').disabled = true; say('Saving sale…');
   try {
     const items = cart.map(i => ({ id: i.id, qty: i.qty, price: i.price })), disc = Number($('disc').value) || 0;
-    const o = await api('sale', { items, discountType: $('dtype').value, discountValue: disc });
+    const sig = JSON.stringify([items, $('dtype').value, disc]);
+    if (!pendingSale || pendingSale.sig !== sig) pendingSale = { sig, id: newSaleId() };
+    const o = await api('sale', { items, discountType: $('dtype').value, discountValue: disc, saleId: pendingSale.id });
+    pendingSale = null;
     receipt(o, cash); say('Sale ' + o.name + ' saved');
     cart = []; $('cash').value = $('disc').value = ''; render(); window.print();
   } catch (e) { say(e.message); }

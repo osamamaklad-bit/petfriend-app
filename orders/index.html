@@ -191,7 +191,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-18.6</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-19.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -274,6 +274,13 @@
     return isRet()
       ? 'Returns: scan the order barcode on the packing slip, or type the number.'
       : 'Pick an order, scan its barcode, or type the number.';
+  }
+  // Short fingerprint of what is being sent: a retry with the same counts reuses the same Shopify
+  // idempotency key (never received twice); changed counts get a new key (Shopify refuses a reused key).
+  function hashOf(x) {
+    const str = JSON.stringify(x); let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(36);
   }
   function newRequestId() {
     try { return crypto.randomUUID(); } catch (e) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -389,7 +396,7 @@
       b.className = 'ord';
       const pillCls = o.status === 'UNFULFILLED' ? 'u' : o.status === 'PARTIALLY_FULFILLED' ? 'p' : 'o';
       const pillTxt = isRcv() ? 'Ordered' : o.status === 'UNFULFILLED' ? 'Unfulfilled' : o.status === 'PARTIALLY_FULFILLED' ? 'Partial' : o.status.replace(/_/g, ' ').toLowerCase();
-      b.innerHTML = '<div><div class="a"></div><div class="b"></div><div style="margin-top:6px"><span class="pill ' + pillCls + '">' + pillTxt + '</span></div></div>' +
+      b.innerHTML = '<div><div class="a" data-no-i18n></div><div class="b" data-no-i18n></div><div style="margin-top:6px"><span class="pill ' + pillCls + '">' + pillTxt + '</span></div></div>' +
         '<div class="q"><b></b>items</div>';
       b.querySelector('.a').textContent = o.name;
       b.querySelector('.b').textContent = [o.customer, o.city, o.createdAt && fmtDate(o.createdAt)].filter(Boolean).join(' · ');
@@ -411,29 +418,20 @@
   $('orderInput').addEventListener('input', renderOrders);
 
   // ---------- scanning ----------
-  // Barcode matching: the same product matches whether its barcode is read or stored as EAN-13, UPC-A (12),
-  // UPC-E (8), a supplier carton code (ITF-14 / GS1-128 with (01)), with spaces or dashes, or with a wrong check digit.
-  // Canonical key for a barcode, so the same product matches however its barcode is written.
-  function codeKey(s) {
-    let v = String(s || '').trim();
-    if (!v) return '';
-    // GS1 element strings: "(01)06221000001116(17)..." or "0106221000001116..." (GS1-128 / DataMatrix), FNC1 prefix
-    v = v.replace(/^\]([A-Za-z]\d)/, '').replace(/\u001d/g, '');
-    const ai = /\(01\)\s*(\d{14})/.exec(v) || (/^01(\d{14})/.test(v) && v.length >= 16 ? /^01(\d{14})/.exec(v) : null);
-    if (ai) v = ai[1];
-    const digits = v.replace(/[\s\-.]/g, '');
-    if (!/^\d+$/.test(digits)) return 'x:' + v.toLowerCase();
-    let d = digits;
-    if (d.length === 8 && /^[01]/.test(d)) d = upcEtoA(d) || d;          // UPC-E -> UPC-A
-    if (d.length === 8) return 'e8:' + d.slice(0, 7);                    // EAN-8 (no check digit)
-    if (d.length >= 12 && d.length <= 14) {
-      let body = d.slice(0, -1);                                          // drop the check digit
-      if (d.length === 14) body = body.slice(1);                          // GTIN-14: drop the packaging digit
-      return 'g:' + body.padStart(12, '0');
-    }
-    return 'n:' + d.replace(/^0+(?=\d)/, '');                            // other numbers: ignore leading zeros
+  // Code matching (barcode or SKU): exact match first (ignoring spaces, dashes, case and leading zeros);
+  // a real barcode (valid check digit) also matches the same product written as EAN-13, UPC-A, UPC-E,
+  // or a supplier carton code (ITF-14 / GS1 (01)). Different codes never match.
+  // Same product? Exact match first; "same barcode written differently" only for real GTINs (valid check digit).
+  function codeNorm(s) {
+    const v = String(s || '').trim(), d = v.replace(/[\s\-.]/g, '');
+    return /^\d+$/.test(d) ? 'n:' + d.replace(/^0+(?=\d)/, '') : 'x:' + v.toLowerCase();
   }
-  function upcEtoA(e) {                                                   // 8-digit UPC-E (with number system + check)
+  function gtinValid(d) {
+    let sum = 0;
+    for (let i = 0; i < d.length - 1; i++) { const n = +d[d.length - 2 - i]; sum += i % 2 === 0 ? n * 3 : n; }
+    return (10 - sum % 10) % 10 === +d[d.length - 1];
+  }
+  function upcEtoA(e) {
     const ns = e[0], m = e.slice(1, 7), c = e[7], l = m[5];
     let a;
     if ('012'.includes(l)) a = m.slice(0, 2) + l + '0000' + m.slice(2, 5);
@@ -441,6 +439,27 @@
     else if (l === '4') a = m.slice(0, 4) + '00000' + m[4];
     else a = m.slice(0, 5) + '0000' + l;
     return ns + a + c;
+  }
+  function gtinKey(s) {
+    let v = String(s || '').trim().replace(/^\]([A-Za-z]\d)/, '').replace(/\u001d/g, '');
+    const ai = /\(01\)\s*(\d{14})/.exec(v) || (/^01\d{14}/.test(v) && v.length >= 16 ? /^01(\d{14})/.exec(v) : null);
+    if (ai) v = ai[1];
+    let d = v.replace(/[\s\-.]/g, '');
+    if (!/^\d+$/.test(d)) return '';
+    if (d.length === 8) {
+      if (/^[01]/.test(d) && gtinValid(upcEtoA(d))) d = upcEtoA(d);      // UPC-E -> UPC-A
+      else return gtinValid(d) ? 'e8:' + d : '';                         // EAN-8
+    }
+    if ([12, 13, 14].indexOf(d.length) === -1 || !gtinValid(d)) return '';
+    let body = d.slice(0, -1);                                            // without the check digit
+    if (d.length === 14) body = body.slice(1);                            // carton code: without the packaging digit
+    return 'g:' + body.padStart(12, '0');
+  }
+  function sameCode(a, b) {
+    if (!a || !b) return false;
+    if (codeNorm(a) === codeNorm(b)) return true;
+    const ka = gtinKey(a), kb = gtinKey(b);
+    return !!ka && ka === kb;
   }
 
   function onScan(code, typed) {
@@ -452,10 +471,9 @@
 
     if (!state.order) { loadOrder(code); return; }
 
-    const c = codeKey(code);
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
     // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
-    const matches = state.items.filter((i) => (i.barcode && codeKey(i.barcode) === c) || (i.sku && codeKey(i.sku) === c));
+    const matches = state.items.filter((i) => (i.barcode && sameCode(code, i.barcode)) || (i.sku && sameCode(code, i.sku)));
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
       const expected = state.items.filter((i) => (i.barcode || i.sku) && !i.verified).map((i) => i.sku ? (i.barcode ? i.barcode + ' / ' + i.sku : i.sku) : i.barcode)
@@ -558,7 +576,7 @@
       el.className = 'item ' + cls;
       const img = it.image ? '<img src="' + it.image.replace(/"/g, '') + '" alt="">' : '<div class="noimg"></div>';
       el.innerHTML = img +
-        '<div><div class="t"></div><div class="m"></div><div class="bin"></div></div>' +
+        '<div><div class="t" data-no-i18n></div><div class="m"></div><div class="bin"></div></div>' +
         '<div class="count"><div class="n">' + it.got + '/' + it.need + '</div>' +
         (isRcv() && extraOf(it) > 0 ? '<div class="xtra">+' + extraOf(it) + ' extra</div>' : '') +
         '<div class="adj"><button data-i="' + idx + '" data-d="-1" aria-label="Remove one"' + (it.verified ? '' : ' class="locked"') + '>&minus;</button>' +
@@ -686,15 +704,16 @@
       (missing > 0 ? '\n' + T(missing + ' not scanned will stay open on the purchase order.') : ''))) return;
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Receiving ' + name + '...');
+    const rcvItems = state.items.filter((i) => (i.verified && i.got > 0) || i.rej > 0 || i.can > 0).map((i) => ({
+      shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '',
+      need: i.need, qty: i.verified ? i.got : 0, rejected: i.rej, canceled: i.can, draft: !!i.draft
+    }));
     try {
       const data = await api({
         action: 'receivePO',
-        requestId: state.requestId,
+        requestId: state.requestId + '-' + hashOf(rcvItems),
         locationId: state.order.locationId || '', poName: name,
-        items: state.items.filter((i) => (i.verified && i.got > 0) || i.rej > 0 || i.can > 0).map((i) => ({
-          shipmentId: i.shipmentId || '', sliId: i.sliId || '', transferId: i.transferId || '', inventoryItemId: i.inventoryItemId || '',
-          need: i.need, qty: i.verified ? i.got : 0, rejected: i.rej, canceled: i.can
-        }))
+        items: rcvItems
       });
       feedback('ok');
       state.order = null; state.items = []; render();
