@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#e3031b">
 <link rel="icon" href="../icon-192.png">
 <title>Pet Friend Pick List</title>
-<script src="../i18n.js"></script>
+<script src="../config.js"></script><script src="../i18n.js"></script>
 <script src="../settings.js"></script>
 <style>
   /* Pet Friend brand: same palette as the other tabs */
@@ -136,7 +136,7 @@
 <script>
 (function () {
   // Same server as the Orders tab (one Apps Script for the whole app); the app key is the one entered in Orders.
-  const API_URL = 'https://script.google.com/macros/s/AKfycbxCt3AtTpBYGvVmicXQqvrPXNKkVCU82GdjSPIo5SWBfdD5N9b7wbByvUmCwR_fF6rv/exec';
+  const API_URL = window.PF_API_URL;
   const $ = (id) => document.getElementById(id);
   const T = (s) => (window.pfT ? window.pfT(s) : s);
   const store = {

@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#e3031b">
 <link rel="icon" href="../icon-192.png">
 <title>Pet Friend Today</title>
-<script src="../i18n.js"></script>
+<script src="../config.js"></script><script src="../i18n.js"></script>
 <script src="../settings.js"></script>
 <script src="../labels.js"></script>
 <style>
@@ -89,7 +89,7 @@
 <script>
 (function () {
   // Same server and app key as the Orders tab
-  const API_URL = 'https://script.google.com/macros/s/AKfycbxCt3AtTpBYGvVmicXQqvrPXNKkVCU82GdjSPIo5SWBfdD5N9b7wbByvUmCwR_fF6rv/exec';
+  const API_URL = window.PF_API_URL;
   const $ = (id) => document.getElementById(id);
   const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
   let last = null, busy = false;
@@ -203,6 +203,7 @@
       const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: 'expiryReport', refresh: !!refresh }) });
       const d = await res.json();
       if (!d.ok) throw new Error(d.error || 'Request failed');
+      if (!Array.isArray(d.items)) throw new Error('Could not read expiry dates');
       exp = d; renderExp();
     } catch (e) { $('expList').innerHTML = ''; const m = document.createElement('div'); m.className = 'empty'; m.textContent = e.message; $('expList').appendChild(m); }
     finally { expBusy = false; }

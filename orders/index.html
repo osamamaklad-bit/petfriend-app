@@ -9,7 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PF Orders">
 <title>Pet Friend Orders</title>
-<script src="../i18n.js"></script>
+<script src="../config.js"></script><script src="../i18n.js"></script>
 <script src="../settings.js"></script>
 <script src="../labels.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
@@ -193,7 +193,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.2</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.3</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -259,7 +259,7 @@
   // ---------- server ----------
   // The Orders Apps Script web app (same idea as API_URL in the POS and Shipments tabs).
   // The app key is NOT kept here: each phone enters it once in Settings.
-  const API_URL = 'https://script.google.com/macros/s/AKfycbxCt3AtTpBYGvVmicXQqvrPXNKkVCU82GdjSPIo5SWBfdD5N9b7wbByvUmCwR_fF6rv/exec';
+  const API_URL = window.PF_API_URL;
 
   // ---------- storage (the app key stays on this phone, not in the code) ----------
   const store = {

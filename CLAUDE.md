@@ -11,6 +11,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   (from the Pick list, opens an order in Fulfill).
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
   live. Data (product names, customers, codes, bins, dates) must carry `data-no-i18n` and `dir="ltr"`.
+- `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
 - `settings.js`: the Settings window (PIN / app key), shared by every tab.
 - `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
   Printed barcodes are checked by decoding them with html5-qrcode in a test.

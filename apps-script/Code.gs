@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-20.2';
+const SERVER_VERSION = '2026-11-20.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1406,19 +1406,4 @@ function testOrders() {
   });
   const list = listOrders_();
   Logger.log('Open orders list: ' + (list.ok ? list.orders.length + ' order(s)' : 'FAILED'));
-}
-
-/** Shipments: uses a known Light Bulky shipment, then check the Tracking and Bulky sheets. */
-function testBulky() {
-  const tn = '9022895919', T = sh_('Tracking'), r = findRow_('Tracking', tn);
-  if (r) T.getRange(r, 6).setValue(false); else T.appendRow(["'" + tn, new Date(), 0, '', '', false]);
-  syncBosta(tn);
-  const b = rows_('Bulky').find(x => String(x[0]) === tn);
-  console.log(b ? 'BULKY ROW: ' + JSON.stringify(b.slice(0, 9)) : 'No Bulky row. Check the log above for the Bosta error.');
-}
-function debugFees() {
-  const h = {}; h[P.getProperty('BOSTA_AUTH_HEADER_NAME') || 'Authorization'] = P.getProperty('BOSTA_API_KEY');
-  console.log('Header:', Object.keys(h)[0], '| key length:', (h[Object.keys(h)[0]] || '').length);
-  const r = UrlFetchApp.fetch(P.getProperty('BOSTA_FEES_URL'), { headers: h, muteHttpExceptions: true });
-  console.log(r.getResponseCode(), r.getContentText().slice(0, 1500));
 }

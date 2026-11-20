@@ -40,6 +40,7 @@
     'In stock only': 'الموجود بالمخزون فقط',
     'Print labels': 'طباعة ملصقات',
     '↻ Check again': '↻ فحص من جديد',
+    'Could not read expiry dates': 'تعذر قراءة تواريخ الصلاحية',
     'Checking expiry dates...': 'جارٍ فحص تواريخ الصلاحية...',
     'Nothing expired.': 'لا يوجد منتج منتهي الصلاحية.',
     'Nothing expires in this period.': 'لا توجد منتجات تنتهي صلاحيتها في هذه الفترة.',
