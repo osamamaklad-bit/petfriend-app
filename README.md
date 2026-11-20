@@ -1,12 +1,13 @@
 # PetFriend
 
-One installable phone app for the store, with three tools in a bottom tab bar:
+One installable phone app for the store, with its tools in a bottom tab bar (a side bar on a computer):
 
 | Tab | What it does | Came from |
 |---|---|---|
 | **POS** | Scan or search products, cash sales, discount, printed receipt, today's sales | `POS-002` |
-| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory; per item you can also set **Rejected** (damaged or wrong units; needs the item scanned) and **Cancelled** (not coming), and receive **more** than ordered (the extra is added to stock at the PO's location), showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). The bin locations are shown only (read-only); the expiry date can be edited from the item's **Edit expiry** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
-| **Pick list** | Products of the orders ready to pick (unfulfilled and paid, or tagged `confirmed` without `not confirmed yet`), combined per variant, sorted by bin location, with picture, SKU, quantity, bins and order numbers. Lists are published automatically from 10:00 to 14:00 when new orders qualify, or with **Create pick list now**. Tick lines as they are picked, or print a list | the pick list Apps Script project |
+| **Orders** | **Fulfill**: scan an order's items, then fulfill it in Shopify; items are sorted by bin location and show the variant / product bin · **Returns**: scan returned items, create the Shopify return, restock · **Receive**: scan stock arriving from a supplier against its Shopify purchase order and add it to inventory; per item you can also set **Rejected** (damaged or wrong units; needs the item scanned) and **Cancelled** (not coming), and receive **more** than ordered (the extra is added to stock at the PO's location), showing each item's variant and product bin location (`custom.bin_location`) and the product's expiry date (`custom.expiry_date`, red when past). The bin locations are shown only (read-only); the expiry date can be edited from the item's **Edit expiry** button (other keys: `BIN_VARIANT_METAFIELD`, `BIN_PRODUCT_METAFIELD`, `EXPIRY_METAFIELD` Script Properties) | `scan-fulfill` |
+| **Pick list** | Products of the orders ready to pick (unfulfilled and paid, or tagged `confirmed` without `not confirmed yet`), combined per variant, sorted by bin location, with picture, SKU, quantity, bins and order numbers. Lists are published automatically from 10:00 to 14:00 when new orders qualify, or with **Create pick list now**. Tick lines as they are picked, or print a list. Each order number is a button: tap it to open that order in **Fulfill**; fulfilled orders are shown green with ✓, and the line *Orders fulfilled: X of Y* shows the progress | the pick list Apps Script project |
+| **Today** | The day in one screen: POS sales, orders fulfilled, open orders, returns, stock received (extra / rejected / cancelled), pick lists, shipment photos and today's server errors. Refreshes every 2 minutes and whenever the tab is opened. Uses the Orders app key | new |
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier), search photos, Bosta bulky-fee tracking | `Shipments-Pics` |
 
 Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
@@ -26,8 +27,9 @@ settings.js              the Settings window (PIN / key) used by every tab
 i18n.js                  English / Arabic translations (shared by all tabs)
 sw.js                    offline cache for all tools (bump CACHE on each release)
 picklist/index.html      Pick list
+today/index.html         Today (daily summary)
 pos/index.html           POS
-orders/index.html        Fulfill + Returns
+orders/index.html        Fulfill + Returns + Receive
 shipments/index.html     Shipment photos
 apps-script/Code.gs      the ONE Apps Script server for POS, Orders (fulfill + returns) and Shipments
 ```
@@ -59,6 +61,12 @@ The old POS and Orders scripts can stay as a backup until everything works, and 
 - Run `createPicklistTrigger` once. From 10:00 to 14:00, not on Fridays, a check runs every 10 minutes. The 10:00 check collects every order waiting since the last list, and later checks make a new list whenever new orders qualify.
 - The app's **Create pick list now** button, or `createPickListNow` in the editor, makes one at any time.
 - Remove the trigger from the old pick list project, which still emails.
+
+### Logs (`Activity` and `Errors` sheets)
+
+- `Activity`: one row per fulfilled order, return, purchase-order receipt, pick list and shipment photo (time, tab, action, reference, quantity, details).
+- `Errors`: one row per server error (time, tab, action, message). Wrong PIN / app key attempts are not logged.
+- Both sheets are created automatically and rows older than 60 days are removed once a day by the pick list trigger. The **Today** tab sums them up.
 
 ## Linking GitHub to the Apps Script project (automatic deploy)
 

@@ -9,7 +9,7 @@ const props = { POS_PIN: '1111', APP_KEY: 'kkk', APP_PIN: '2222', SHOP: 'pf', CL
 const fetches = [];
 const sheets = {};
 function sheet(name) { return sheets[name] || (sheets[name] = { rows: [], name,
-  appendRow(r) { (ctx.__rawAppends = ctx.__rawAppends || []).push(r); this.rows.push(r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { return this.rows.length; }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { this.rows.splice(i - 1, 1); },
+  appendRow(r) { (ctx.__rawAppends = ctx.__rawAppends || []).push(r); this.rows.push(r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { return this.rows.length; }, deleteRows(i, k) { this.rows.splice(i - 1, k); }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { this.rows.splice(i - 1, 1); },
   getDataRange() { const s = this; return { getValues: () => s.rows.map(r => r.slice()) }; },
   getRange(r, c, nr = 1, nc = 1) { const s = this; return {
     getValue: () => (s.rows[r - 1] || [])[c - 1], setValue: v => { s.rows[r - 1][c - 1] = v; },
@@ -39,6 +39,15 @@ function shopifyAnswer(url, body, headers) {
     { shippableQuantity: 5, inventoryItem: { id: 'I9', sku: 'WK1', variants: { nodes: [{ displayName: 'Whiskas Tuna', barcode: '999', sku: 'WK1' }] } } } ] } } } };
   if (/inventoryShipmentCreateInTransit/.test(q)) return { data: { inventoryShipmentCreateInTransit: { inventoryShipment: { id: 'SNEW', lineItems: { nodes: body.variables.input.lineItems.map((l, i) => ({ id: 'SNL' + i, quantity: l.quantity, inventoryItem: { id: l.inventoryItemId } })) } }, userErrors: [] } } };
   if (/inventoryAdjustQuantities/.test(q)) { ctx.__adjust = body.variables; return { data: { inventoryAdjustQuantities: { inventoryAdjustmentGroup: { id: 'G1' }, userErrors: [] } } }; }
+  if (/fulfillmentOrders\(first: 10\)/.test(q)) {
+    const li = (id, title, bc, vb, pb) => ({ node: { id, remainingQuantity: 1, lineItem: { title, variantTitle: null, sku: id, image: null,
+      variant: { barcode: bc, vBin: vb ? { value: vb } : null, product: { pBin: pb ? { value: pb } : null, pExp: { value: '2027-01-01' } } } } } });
+    return { data: { orders: { edges: [{ node: { id: 'gid://Order/7', name: '#1007', cancelledAt: null, displayFulfillmentStatus: 'UNFULFILLED',
+      fulfillmentOrders: { edges: [{ node: { id: 'FO7', status: 'OPEN', assignedLocation: { name: 'Main' }, lineItems: { edges: [
+        li('L1', 'No bin', '1', '', ''), li('L2', 'Shelf B-2', '2', '', 'B-2'), li('L3', 'Shelf A-10', '3', 'A-10', 'A-1'), li('L4', 'Shelf A-2', '4', 'A-2', '') ] } } }] } } }] } } };
+  }
+  if (/fulfillment \{ id status \}/.test(q)) return { data: { fulfillmentCreate: { fulfillment: { id: 'F1', status: 'SUCCESS' }, userErrors: [] } } };
+  if (/nodes\(ids: \$ids\) \{ \.\.\. on Order/.test(q)) return { data: { nodes: body.variables.ids.map((id, i) => ({ id, name: '#100' + (i + 1), cancelledAt: null, displayFulfillmentStatus: i === 0 ? 'FULFILLED' : 'UNFULFILLED' })) } };
   if (/inventoryShipmentMarkInTransit/.test(q)) { ctx.__marked = (ctx.__marked || []).concat([body.variables.id]); return { data: { inventoryShipmentMarkInTransit: { inventoryShipment: { id: body.variables.id, status: 'IN_TRANSIT' }, userErrors: [] } } }; }
   if (/draftOrderCreate/.test(q)) { ctx.__posOrders = (ctx.__posOrders || 0) + 1; return { data: { draftOrderCreate: { draftOrder: { id: 'D' + ctx.__posOrders }, userErrors: [] } } }; }
   if (/draftOrderComplete/.test(q)) return { data: { draftOrderComplete: { draftOrder: { order: { id: 'O', name: '#P' + ctx.__posOrders, totalPriceSet: { shopMoney: { amount: '100.0' } }, fulfillmentOrders: { nodes: [{ id: 'FO' }] } } }, userErrors: [] } } };
@@ -280,6 +289,34 @@ r = post({ action: 'getPickList', key: 'kkk', id: app && app[0] });
 check('Pick list: reads back after the text marker', r.ok && r.pickList.items.length, r.ok && r.pickList.items.length === 3);
 const bp = ctx.buildPickList_('status:open', 'CREATED_AT');
 check('Pick list: tells when the 1000-order limit was not reached', bp.truncated, bp.truncated === false);
+
+
+// ---- Today summary, logs, Fulfill bins, pick list order status
+r = post({ action: 'getOrder', key: 'kkk', query: '1007' });
+check('Fulfill: items carry bins and expiry', r.items && r.items[0], r.ok && r.items.find(i => i.title === 'Shelf A-10').binVariant === 'A-10' && r.items[0].expProduct === '2027-01-01');
+check('Fulfill: items sorted by bin (A-2, A-10, B-2, no bin last)', r.items && r.items.map(i => i.title), r.items.map(i => i.title).join() === 'Shelf A-2,Shelf A-10,Shelf B-2,No bin');
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 2 }, { foId: 'FO7', foliId: 'L2', qty: 1 }] });
+const actRows = (sheets.Activity && sheets.Activity.rows) || [];
+check('Activity: fulfill logged with order and units', actRows.at(-1), r.ok && actRows.at(-1)[1] === 'Orders' && actRows.at(-1)[2] === 'fulfill' && actRows.at(-1)[3] === '#1007' && actRows.at(-1)[4] === 3);
+check('Activity: returns, receives, pick lists and photos were logged too', [...new Set(actRows.slice(1).map(x => x[1] + '/' + x[2]))],
+  ['Orders/return', 'Orders/receive', 'Pick list/manual', 'Shipments/photo'].every(k => actRows.some(x => x[1] + '/' + x[2] === k)));
+const errBefore = (sheets.Errors && sheets.Errors.rows.length) || 0;
+post({ action: 'receivePO', key: 'kkk', items: [] });
+post({ action: 'listOrders', key: 'wrong' }); post({ action: 'today', pin: 'wrong' }); post({ fn: 'checkPin', args: ['wrong'] });
+const errRows = sheets.Errors.rows;
+check('Errors: a real error is logged with part and action', errRows.at(-1), errRows.length === errBefore + 1 && errRows.at(-1)[1] === 'Orders' && errRows.at(-1)[2] === 'receivePO' && /Nothing to receive/.test(errRows.at(-1)[3]));
+check('Errors: wrong PIN / app key are not logged', errRows.length - errBefore, errRows.length - errBefore === 1);
+r = post({ action: 'dailySummary', key: 'kkk' });
+check('Today: summary has every section', r, r.ok && r.fulfilled.count >= 1 && r.fulfilled.qty >= 3 && r.returns.count >= 1 && r.received.count >= 1 && 'extra' in r.received
+  && r.pickLists.count >= 1 && r.photos.qty >= 1 && r.pos && typeof r.pos.count === 'number' && r.openOrders === 1 && r.errors.count >= 1 && r.errors.last[0].action === 'receivePO');
+r = post({ action: 'dailySummary', key: 'nope' }); check('Today: wrong key refused', r, r.ok === false);
+sheets.PickLists.rows.length = 1; post({ action: 'createPickList', key: 'kkk' });
+const plId = sheets.PickLists.rows[1][0];
+r = post({ action: 'getPickList', key: 'kkk', id: plId });
+check('Pick list: shows each order\'s current fulfillment status', r.pickList && r.pickList.orderStatus, r.ok && r.pickList.orderStatus['#1001'] === 'FULFILLED' && r.pickList.orderStatus['#1002'] === 'UNFULFILLED');
+sheets.Activity.rows.splice(1, 0, [new Date('2020-01-01'), 'Orders', 'fulfill', 'old', 1, '']);
+ctx.__cache && delete ctx.__cache.logs_pruned; ctx.pruneLogs_();
+check('Logs: rows older than 60 days removed', sheets.Activity.rows.some(x => x[3] === 'old'), !sheets.Activity.rows.some(x => x[3] === 'old') && sheets.Activity.rows.length > 2);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

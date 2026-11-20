@@ -6,7 +6,8 @@
  *              getReturnable, processReturn,
  *              listPOs, getPO, receivePO (receiving supplier purchase orders),
  *              setItemMeta (edit an item's bin locations / expiry dates),
- *              listPickLists, getPickList, createPickList (pick lists of the orders ready to pick)
+ *              listPickLists, getPickList, createPickList (pick lists of the orders ready to pick),
+ *              dailySummary (today's numbers for the Today tab)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -54,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-19.2';
+const SERVER_VERSION = '2026-11-20.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -148,6 +149,7 @@ function posApi_(r) {
     if (r.action === 'sale') return { ok: true, data: posSaleOnce_(r) };
     return { ok: true, data: POS_ACTIONS[r.action](r) };
   } catch (err) {
+    logError_('POS', r.action, err);
     return { ok: false, error: String(err.message || err) };
   }
 }
@@ -254,7 +256,7 @@ function posToday_() {
 const ORDER_ACTIONS = {
   listOrders: function () { return listOrders_(); },
   getOrder: function (r) { return getOrder_(r.query); },
-  fulfill: function (r) { return fulfill_(r.items, r.notify); },
+  fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName); },
   getReturnable: function (r) { return getReturnable_(r); },
   processReturn: function (r) { return processReturn_(r); },
   listPOs: function () { return listPOs_(); },
@@ -263,7 +265,8 @@ const ORDER_ACTIONS = {
   setItemMeta: function (r) { return setItemMeta_(r); },
   listPickLists: function () { return listPickLists_(); },
   getPickList: function (r) { return getPickList_(r.id); },
-  createPickList: function () { return createPickList_('manual'); }
+  createPickList: function () { return createPickList_('manual'); },
+  dailySummary: function () { return dailySummary_(); }
 };
 
 function ordersApi_(r) {
@@ -272,6 +275,7 @@ function ordersApi_(r) {
     if (!key || r.key !== key) return { ok: false, error: 'Wrong app key' };
     return ORDER_ACTIONS[r.action](r);
   } catch (err) {
+    logError_('Orders', r.action, err);
     return { ok: false, error: String(err.message || err) };
   }
 }
@@ -323,7 +327,7 @@ function getOrder_(raw) {
               lineItem {
                 title variantTitle sku
                 image { url }
-                variant { barcode }
+                variant { barcode ${metaQuery_('variant')} product { ${metaQuery_('product')} } }
               }
             } } }
           } } }
@@ -352,9 +356,18 @@ function getOrder_(raw) {
         title: li.lineItem.title + (li.lineItem.variantTitle ? ' - ' + li.lineItem.variantTitle : ''),
         sku: li.lineItem.sku || '',
         barcode: (li.lineItem.variant && li.lineItem.variant.barcode) || '',
-        image: li.lineItem.image ? li.lineItem.image.url : ''
+        image: li.lineItem.image ? li.lineItem.image.url : '',
+        binVariant: binValue_(li.lineItem.variant && li.lineItem.variant.vBin),
+        binProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pBin),
+        expProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pExp)
       });
     });
+  });
+  // walk the shelves in order: sort by variant bin, else product bin (items without a bin last)
+  items.sort(function (a, b) {
+    const x = a.binVariant || a.binProduct, y = b.binVariant || b.binProduct;
+    if (!x !== !y) return x ? -1 : 1;
+    return String(x || '').localeCompare(String(y || ''), undefined, { numeric: true, sensitivity: 'base' });
   });
 
   if (!items.length) {
@@ -363,7 +376,7 @@ function getOrder_(raw) {
   return { ok: true, order: { id: order.id, name: order.name }, items: items };
 }
 
-function fulfill_(items, notify) {
+function fulfill_(items, notify, orderName) {
   if (!items || !items.length) return { ok: false, error: 'No items' };
 
   const grouped = {};
@@ -388,6 +401,7 @@ function fulfill_(items, notify) {
   if (r.userErrors && r.userErrors.length) {
     return { ok: false, error: r.userErrors.map(function (u) { return u.message; }).join('; ') };
   }
+  logActivity_('Orders', 'fulfill', orderName || '', items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0));
   return { ok: true, status: r.fulfillment.status };
 }
 
@@ -497,6 +511,7 @@ function processReturn_(body) {
     }
   }
 
+  logActivity_('Orders', 'return', ret.name, items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), { restock: !!body.restock, reason: reason });
   return { ok: true, returnName: ret.name };
 }
 
@@ -797,6 +812,7 @@ function receivePO_(body) {
     if (got) throw new Error(got + ' items were recorded, then it stopped: ' + e.message + '. Load the purchase order again to see what is left.');
     throw e;
   }
+  logActivity_('Orders', 'receive', body.poName || '', done.accepted + done.extra, { extra: done.extra, rejected: done.rejected, canceled: done.canceled });
   return { ok: true, received: done.accepted + done.extra, accepted: done.accepted, extra: done.extra, rejected: done.rejected, canceled: done.canceled };
 }
 
@@ -924,6 +940,7 @@ function createPickList_(kind) {
     for (let i = 0; i < data.length; i += PL_CHUNK) chunks.push(data.slice(i, i + PL_CHUNK));
     // the leading apostrophe makes Sheets keep each chunk as plain text (it is not part of the stored value)
     s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, "'" + pl.orderIds.join(',')].concat(chunks.map(function (c) { return "'" + c; })));
+    logActivity_('Pick list', kind, id, pl.orderIds.length, { products: pl.products.length });
     return { ok: true, created: true, truncated: pl.truncated, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
   } finally { lock.releaseLock(); }
 }
@@ -946,7 +963,19 @@ function getPickList_(id) {
   const row = plRows_().filter(function (r) { return String(r[0]) === String(id); })[0];
   if (!row) throw new Error('Pick list not found');
   const data = row.slice(6).filter(function (c) { return c !== '' && c != null; }).join('');
-  return { ok: true, pickList: Object.assign(plSummary_(row), { items: data ? JSON.parse(data) : [] }) };
+  return { ok: true, pickList: Object.assign(plSummary_(row), { items: data ? JSON.parse(data) : [], orderStatus: orderStatus_(String(row[5] || '')) }) };
+}
+
+/** Current fulfillment status of a pick list's orders: { '#1001': 'FULFILLED', ... } (empty if Shopify can't be read). */
+function orderStatus_(idsCsv) {
+  const ids = idsCsv.replace(/^'/, '').split(',').filter(Boolean), out = {};
+  try {
+    for (let i = 0; i < ids.length; i += 100) {
+      shopify_('query($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id name displayFulfillmentStatus cancelledAt } } }', { ids: ids.slice(i, i + 100) })
+        .nodes.forEach(function (n) { if (n && n.name) out[n.name] = n.cancelledAt ? 'CANCELLED' : n.displayFulfillmentStatus; });
+    }
+  } catch (e) { console.warn('orderStatus_', e.message); }
+  return out;
 }
 
 /** Editor: make a pick list now (same as the app's button). */
@@ -961,7 +990,9 @@ function scheduledPicklistCheck() {
   const day = Number(Utilities.formatDate(now, tz, 'u')), hour = Number(Utilities.formatDate(now, tz, 'H'));
   if (day === 5) { Logger.log('Friday - Picklist is disabled.'); return; }
   if (hour < 10 || hour >= 14) { Logger.log('Outside Picklist working hours.'); return; }
-  const r = createPickList_('auto');
+  pruneLogs_();
+  let r;
+  try { r = createPickList_('auto'); } catch (e) { logError_('Pick list', 'auto', e); throw e; }
   Logger.log(r.created ? 'Pick list ' + r.pickList.id + ' published: ' + r.pickList.orders + ' order(s)' : 'No new eligible orders.');
 }
 
@@ -971,6 +1002,94 @@ function createPicklistTrigger() {
     if (t.getHandlerFunction() === 'scheduledPicklistCheck' || t.getHandlerFunction() === 'checkNewOrdersAndEmailPicklist') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('scheduledPicklistCheck').timeBased().everyMinutes(10).create();
+}
+
+/* =====================================================================================
+ * Activity log, error log and the Today summary
+ *
+ * Sheet "Activity": every fulfill, return, receive, pick list and shipment photo done through the app.
+ * Sheet "Errors":   every error the script hits (wrong PIN / app key are not logged), so problems show up
+ *                   in the Today tab before staff report them.
+ * Rows older than 60 days are removed once a day (by the pick list trigger).
+ * ===================================================================================== */
+
+const LOG_KEEP_DAYS = 60;
+const LOG_HEAD = { Activity: ['Time', 'Part', 'Action', 'Ref', 'Qty', 'Details'], Errors: ['Time', 'Part', 'Action', 'Message'] };
+
+function logSheet_(name) {
+  const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+  let s = ss.getSheetByName(name);
+  if (!s) { s = ss.insertSheet(name); s.appendRow(LOG_HEAD[name]); s.setFrozenRows(1); }
+  return s;
+}
+function logActivity_(part, action, ref, qty, details) {
+  try { logSheet_('Activity').appendRow([new Date(), part, action, "'" + String(ref || ''), Number(qty) || 0, details ? "'" + JSON.stringify(details) : '']); }
+  catch (e) { console.error('logActivity_', e.message); }
+}
+function logError_(part, action, err) {
+  const msg = String((err && err.message) || err || '');
+  if (/^Wrong (PIN|app key)$/.test(msg)) return;     // someone typing a wrong login is not a fault
+  try { logSheet_('Errors').appendRow([new Date(), part, action || '', "'" + msg.slice(0, 1000)]); }
+  catch (e) { console.error('logError_', e.message); }
+}
+/** The last `max` rows of a log sheet (newest last). */
+function logRows_(name, max) {
+  const s = logSheet_(name), n = s.getLastRow();
+  if (n < 2) return [];
+  const from = Math.max(2, n - (max || 3000) + 1);
+  return s.getRange(from, 1, n - from + 1, LOG_HEAD[name].length).getValues();
+}
+/** Removes log rows older than LOG_KEEP_DAYS, at most once a day. */
+function pruneLogs_() {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('logs_pruned')) return;
+  const cutoff = Date.now() - LOG_KEEP_DAYS * 864e5;
+  ['Activity', 'Errors'].forEach(function (name) {
+    try {
+      const s = logSheet_(name), n = s.getLastRow();
+      if (n < 2) return;
+      const times = s.getRange(2, 1, n - 1, 1).getValues();
+      let old = 0;
+      while (old < times.length && new Date(times[old][0]).getTime() < cutoff) old++;
+      if (old) s.deleteRows(2, old);
+    } catch (e) { console.error('pruneLogs_', name, e.message); }
+  });
+  cache.put('logs_pruned', '1', 20 * 60 * 60);
+}
+
+/** Today's numbers for the Today tab (script time zone). */
+function dailySummary_() {
+  const tz = Session.getScriptTimeZone(), day = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  const isToday = function (d) { return d && Utilities.formatDate(new Date(d), tz, 'yyyy-MM-dd') === day; };
+  const acts = logRows_('Activity').filter(function (x) { return isToday(x[0]); });
+  const pick = function (part, actions) { return acts.filter(function (x) { return x[1] === part && actions.indexOf(x[2]) !== -1; }); };
+  const tally = function (rows) { return { count: rows.length, qty: rows.reduce(function (t, x) { return t + (Number(x[4]) || 0); }, 0) }; };
+  const detail = function (x) { try { return JSON.parse(String(x[5] || '{}').replace(/^'/, '')); } catch (e) { return {}; } };
+
+  const recv = pick('Orders', ['receive']);
+  const received = tally(recv);
+  ['extra', 'rejected', 'canceled'].forEach(function (k) { received[k] = recv.reduce(function (t, x) { return t + (Number(detail(x)[k]) || 0); }, 0); });
+
+  let pos;
+  try { const t = posToday_(); pos = { count: t.length, total: Math.round(t.reduce(function (s, o) { return s + Number(o.total); }, 0) * 100) / 100 }; }
+  catch (e) { pos = { error: String(e.message || e) }; }
+  let openOrders = null;
+  try { openOrders = listOrders_().orders.length; } catch (e) { /* shown as "?" */ }
+
+  const errs = logRows_('Errors', 500).filter(function (x) { return isToday(x[0]); });
+  return {
+    ok: true, date: day, generatedAt: new Date().toISOString(),
+    pos: pos,
+    fulfilled: tally(pick('Orders', ['fulfill'])),
+    returns: tally(pick('Orders', ['return'])),
+    received: received,
+    pickLists: tally(pick('Pick list', ['auto', 'manual'])),
+    photos: tally(pick('Shipments', ['photo'])),
+    openOrders: openOrders,
+    errors: { count: errs.length, last: errs.slice(-10).reverse().map(function (x) {
+      return { time: new Date(x[0]).toISOString(), part: String(x[1]), action: String(x[2]), message: String(x[3]).replace(/^'/, '') };
+    }) }
+  };
 }
 
 /* =====================================================================================
@@ -991,7 +1110,7 @@ function shipmentsApi_(q) {
   try {
     if (!Object.prototype.hasOwnProperty.call(SHIP_FNS, q.fn)) throw new Error('Bad request');
     return { result: SHIP_FNS[q.fn].apply(null, q.args || []) };
-  } catch (err) { return { error: err.message }; }
+  } catch (err) { logError_('Shipments', q.fn, err); return { error: err.message }; }
 }
 
 function checkPin(pin) { pin_(pin); return true; }
@@ -1042,6 +1161,7 @@ function saveShipment(pin, tn, photos, note, force) {
     const r = findRow_('Tracking', tn), t = sh_('Tracking');
     if (r) t.getRange(r, 3).setValue(Number(t.getRange(r, 3).getValue()) + photos.length);
     else t.appendRow(["'" + tn, now, photos.length, '', '', false]);
+    logActivity_('Shipments', 'photo', tn, photos.length);
     return { saved: photos.length };
   } finally { lock.releaseLock(); }
 }
@@ -1061,6 +1181,7 @@ function saveOther(pin, carrier, ref, photos, note) {
         ref.replace(/[^\w-]/g, '_') + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg'));
       s.appendRow([now, "'" + ref, file.getId(), file.getUrl(), note || '', user, carrier]);
     });
+    logActivity_('Shipments', 'photo', ref, photos.length, { carrier: carrier });
     return { saved: photos.length, ref: ref };
   } finally { lock.releaseLock(); }
 }
@@ -1146,7 +1267,7 @@ function importFromFees() {
 }
 function syncBosta(only) {
   if (typeof only !== 'string') only = '';        // a time trigger passes an event object here
-  if (!only) try { importFromFees(); } catch (e) { console.error('importFromFees', e.message); }
+  if (!only) try { importFromFees(); } catch (e) { console.error('importFromFees', e.message); logError_('Shipments', 'Bosta fees import', e); }
   const t0 = Date.now(), flag = new RegExp(P.getProperty('FLAG_REGEX') || 'bulky', 'i');
   const T = sh_('Tracking'), data = T.getDataRange().getValues();
   for (let i = 1; i < data.length && Date.now() - t0 < 300000; i++) {

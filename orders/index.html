@@ -191,7 +191,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-19.2</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -365,7 +365,7 @@
     $('ordersCount').textContent = 'loading...';
     let rows = [];
     try {
-      rows = (await api({ action: mode === 'receive' ? 'listPOs' : 'listOrders' })).orders;
+      rows = (await api({ action: mode === 'receive' ? 'listPOs' : 'listOrders' })).orders || [];
     } catch (e) {
       if (mode === state.mode) say(e.message, 'bad');
     }
@@ -757,6 +757,7 @@
     try {
       await api({
         action: 'fulfill',
+        orderName: state.order.name,
         notify: $('notify').checked,
         items: state.items.map((i) => ({ foId: i.foId, foliId: i.foliId, qty: i.got }))
       });
@@ -828,6 +829,14 @@
 
   // Inside the PetFriend app: stop the camera when the user switches to another tab
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
+  // From the Pick list (through the main page): open an order in Fulfill
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
+    if (state.order && totalGot() > 0 && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
+    state.order = null; state.items = [];
+    if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
+    loadOrder(String(e.data.order || ''));
+  });
 
   setMode(['return', 'receive'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
   if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');

@@ -55,7 +55,12 @@
   .row .bins { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 13px; }
   .row .bins span { color: var(--muted); }
   .row .bins b { color: #0f766e; font-size: 15px; }
-  .row .ords { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-word; }
+  .row .ords { color: var(--muted); font-size: 12px; margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .row .ords button { font: inherit; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); cursor: pointer; }
+  .row .ords button.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  .fulfilledLine { color: var(--muted); font-size: 13px; margin: -4px 2px 10px; }
+  @media print { .row .ords button { border: 0; padding: 0 4px 0 0; background: none !important; color: #000 !important; } .fulfilledLine { display: none; } }
   .row .qty { text-align: center; min-width: 52px; }
   .row .qty b { display: block; font-size: 30px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
   .row .qty small { color: var(--muted); font-size: 11px; }
@@ -124,6 +129,7 @@
     <div id="printHead"><h2>PetFriend Pick List</h2><div id="printSub"></div></div>
     <div class="sum"><strong id="sumText"></strong><span id="pickedText"></span></div>
     <div class="progress"><div id="bar"></div></div>
+    <div class="fulfilledLine" id="fulfilledLine"></div>
     <div id="list"></div>
   </div>
 </main>
@@ -251,6 +257,9 @@
     $('genAt').textContent = '';
     $('sumText').textContent = c.orders + (c.orders === 1 ? ' order' : ' orders') + ' · ' + ps.length + (ps.length === 1 ? ' product' : ' products') + ' · ' + units + ' units';
     $('pickedText').textContent = ps.length ? 'Picked ' + done + ' of ' + ps.length : '';
+    // which of this list's orders are already fulfilled (tap an order to open it in Fulfill)
+    const st = c.orderStatus || {}, names = Object.keys(st);
+    $('fulfilledLine').textContent = names.length ? 'Orders fulfilled: ' + names.filter((n) => st[n] === 'FULFILLED').length + ' of ' + names.length + ' · tap an order to fulfill it' : '';
     $('bar').style.width = ps.length ? Math.round(done / ps.length * 100) + '%' : '0';
     $('printSub').textContent = $('sumText').textContent + ' · ' + fmt(c.createdAt);
     const list = $('list');
@@ -275,14 +284,24 @@
         l.textContent = b[0] + ' '; v.textContent = b[1]; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
         w.appendChild(l); w.appendChild(v); el.querySelector('.bins').appendChild(w);
       });
-      const o = document.createElement('span'); o.dir = 'ltr'; o.setAttribute('data-no-i18n', ''); o.textContent = p.orders.join(', ');
-      el.querySelector('.ords').appendChild(o);
+      p.orders.forEach(function (name) {
+        const b = document.createElement('button'), done = (c.orderStatus || {})[name] === 'FULFILLED';
+        b.className = done ? 'ok' : ''; b.dataset.order = name; b.dir = 'ltr'; b.setAttribute('data-no-i18n', '');
+        b.textContent = (done ? '✓ ' : '') + name;
+        el.querySelector('.ords').appendChild(b);
+      });
       el.querySelector('.qty b').textContent = p.quantity;
       list.appendChild(el);
     });
   }
 
   $('list').addEventListener('click', function (e) {
+    const ob = e.target.closest('button[data-order]');
+    if (ob) {   // open this order in the Orders tab (Fulfill); the main page switches tabs
+      e.stopPropagation();
+      if (window.parent !== window) window.parent.postMessage({ type: 'pf-open-order', order: ob.dataset.order }, location.origin);
+      return;
+    }
     const row = e.target.closest('.row');
     if (!row) return;
     const p = state.current.items[+row.dataset.i], k = pickKey(p);
@@ -296,6 +315,11 @@
   $('backBtn').addEventListener('click', closeList);
   $('printBtn').addEventListener('click', function () { window.print(); });
   document.addEventListener('pf-lang', function () { if (state.current) render(); else renderLists(); });
+  // back on this tab (e.g. after fulfilling an order): refresh the open list's order status quietly
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin || e.data !== 'pf-show' || !state.current || state.busy) return;
+    api({ action: 'getPickList', id: state.current.id }).then(function (d) { if (state.current && d.pickList.id === state.current.id) { state.current = d.pickList; render(); } }).catch(function () {});
+  });
   // while this screen is open, look for new pick lists every minute
   setInterval(function () { if (store.get('appKey') && !document.hidden) loadLists(true); }, 60000);
 

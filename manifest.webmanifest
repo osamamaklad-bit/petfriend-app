@@ -12,7 +12,8 @@
     { "name": "POS", "url": "./#pos" },
     { "name": "Orders", "url": "./#orders" },
     { "name": "Pick list", "url": "./#picklist" },
-    { "name": "Shipments", "url": "./#shipments" }
+    { "name": "Shipments", "url": "./#shipments" },
+    { "name": "Today", "url": "./#today" }
   ],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

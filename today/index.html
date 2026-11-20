@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e3031b">
+<link rel="icon" href="../icon-192.png">
+<title>Pet Friend Today</title>
+<script src="../i18n.js"></script>
+<script src="../settings.js"></script>
+<style>
+  :root {
+    --ink: #2a1417; --paper: #e9fcfd; --card: #ffffff; --line: #b9ecf1; --muted: #6b5f62;
+    --ok: #15803d; --ok-bg: #dcfce7; --bad: #c00018; --bad-bg: #ffe4e7; --warn: #9a4a00; --accent: #e3031b; --on: #ffffff; --teal: #0f766e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #eaf7f8; --paper: #0f1c1e; --card: #17282b; --line: #27403f; --muted: #8fb0b3;
+      --ok: #4ade80; --ok-bg: #12301f; --bad: #ff6b7a; --bad-bg: #3a1218; --warn: #f0a35e; --accent: #ff4a5c; --on: #1a0508; --teal: #5eead4; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 10px; max-width: 900px; margin: 0 auto; padding: 14px 12px 4px; }
+  header .logo { width: 44px; height: 44px; border-radius: 12px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; }
+  header h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+  header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; }
+  main { max-width: 900px; margin: 0 auto; padding: 8px 12px 40px; }
+  .bar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .bar button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 10px 14px; font: inherit; font-weight: 600; font-size: 15px; }
+  #banner { min-height: 40px; display: flex; align-items: center; padding: 8px 14px; border-radius: 10px; font-weight: 600; margin-bottom: 10px;
+    background: var(--card); border: 2px solid var(--line); color: var(--muted); }
+  #banner.bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; }
+  .tile .l { color: var(--muted); font-size: 13px; font-weight: 600; }
+  .tile .v { font-size: 30px; font-weight: 800; line-height: 1.1; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile.pos .v { color: var(--accent); } .tile.rcv .v { color: var(--teal); } .tile.err .v { color: var(--ok); } .tile.err.has .v { color: var(--bad); }
+  .tile.err.has { border-color: var(--bad); }
+  h2 { font-size: 16px; margin: 18px 2px 8px; }
+  .err-row { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; font-size: 13px; }
+  .err-row b { color: var(--bad); }
+  .err-row .m { color: var(--muted); word-break: break-word; margin-top: 2px; }
+  .empty { color: var(--muted); padding: 6px 2px; font-size: 14px; }
+  @media (min-width: 700px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } header, main { max-width: 1100px; } }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="../icon-192.png" alt="Pet Friend">
+  <h1>Pet Friend Today<small id="when"></small></h1>
+  <button id="settingsBtn">Settings</button>
+</header>
+<main>
+  <div class="bar"><button id="refreshBtn">↻ Refresh</button></div>
+  <div id="banner">Today's work in one place.</div>
+  <div class="tiles" id="tiles"></div>
+  <h2 id="errTitle">Errors today</h2>
+  <div id="errors"></div>
+</main>
+<script>
+(function () {
+  // Same server and app key as the Orders tab
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxCt3AtTpBYGvVmicXQqvrPXNKkVCU82GdjSPIo5SWBfdD5N9b7wbByvUmCwR_fF6rv/exec';
+  const $ = (id) => document.getElementById(id);
+  const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  let last = null, busy = false;
+
+  function say(msg, kind) { const b = $('banner'); b.className = kind || ''; b.textContent = msg; }
+  const isAr = () => window.pfLang && window.pfLang.get() === 'ar';
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString(isAr() ? 'ar-EG-u-nu-latn' : [], { hour: '2-digit', minute: '2-digit' }) : '';
+  const money = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+  async function load(quiet) {
+    if (busy) return;
+    const key = store.get('appKey');
+    if (!key) { say('Open Settings and enter the app key.', 'bad'); return; }
+    busy = true; if (!quiet) say('Loading...');
+    try {
+      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: 'dailySummary' }) });
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error || 'Request failed');
+      last = d; render(); say('Updated ' + fmtTime(d.generatedAt));
+    } catch (e) { say(e.message, 'bad'); }
+    finally { busy = false; }
+  }
+
+  function tile(cls, label, value, sub) {
+    const t = document.createElement('div'); t.className = 'tile ' + cls;
+    const l = document.createElement('div'); l.className = 'l'; l.textContent = label;
+    const v = document.createElement('div'); v.className = 'v'; v.textContent = value; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
+    t.appendChild(l); t.appendChild(v);
+    (sub || []).filter(Boolean).forEach(function (x) { const s = document.createElement('div'); s.className = 's'; s.textContent = x; t.appendChild(s); });
+    return t;
+  }
+
+  function render() {
+    const d = last; if (!d) return;
+    $('when').textContent = new Date(d.generatedAt).toLocaleDateString(isAr() ? 'ar-EG-u-nu-latn' : [], { weekday: 'long', day: 'numeric', month: 'long' });
+    const box = $('tiles'); box.innerHTML = '';
+    box.appendChild(d.pos && !d.pos.error
+      ? tile('pos', 'POS sales', money(d.pos.total) + ' EGP', [d.pos.count + (d.pos.count === 1 ? ' sale' : ' sales')])
+      : tile('pos', 'POS sales', '?', [d.pos && d.pos.error ? 'Could not read POS sales' : '']));
+    box.appendChild(tile('', 'Orders fulfilled', String(d.fulfilled.count), [d.fulfilled.qty + ' units']));
+    box.appendChild(tile('', 'Open orders', d.openOrders == null ? '?' : String(d.openOrders), ['waiting to be fulfilled']));
+    box.appendChild(tile('', 'Returns', String(d.returns.count), [d.returns.qty + ' units']));
+    const r = d.received;
+    box.appendChild(tile('rcv', 'Received', String(r.qty), [r.count + (r.count === 1 ? ' purchase order' : ' purchase orders'),
+      r.extra ? r.extra + ' extra' : '', r.rejected ? r.rejected + ' rejected' : '', r.canceled ? r.canceled + ' cancelled' : '']));
+    box.appendChild(tile('', 'Pick lists', String(d.pickLists.count), [d.pickLists.qty + (d.pickLists.qty === 1 ? ' order' : ' orders')]));
+    box.appendChild(tile('', 'Shipment photos', String(d.photos.qty), [d.photos.count + (d.photos.count === 1 ? ' shipment' : ' shipments')]));
+    box.appendChild(tile('err' + (d.errors.count ? ' has' : ''), 'Errors today', String(d.errors.count), [d.errors.count ? 'see the list below' : 'all good']));
+    const eb = $('errors'); eb.innerHTML = '';
+    if (!d.errors.last.length) { eb.innerHTML = '<div class="empty">No errors today.</div>'; return; }
+    d.errors.last.forEach(function (x) {
+      const row = document.createElement('div'); row.className = 'err-row';
+      const h = document.createElement('div'); const b = document.createElement('b');
+      b.textContent = fmtTime(x.time) + ' · '; h.appendChild(b);
+      const what = document.createElement('span'); what.textContent = x.part + (x.action ? ' / ' + x.action : ''); what.dir = 'ltr'; what.setAttribute('data-no-i18n', '');
+      h.appendChild(what);
+      const m = document.createElement('div'); m.className = 'm'; m.textContent = x.message; m.dir = 'ltr'; m.setAttribute('data-no-i18n', '');
+      row.appendChild(h); row.appendChild(m); eb.appendChild(row);
+    });
+  }
+
+  $('refreshBtn').addEventListener('click', function () { load(); });
+  $('settingsBtn').addEventListener('click', async function () {
+    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });
+    if (v) { store.set('appKey', v.appKey); load(); }
+  });
+  document.addEventListener('pf-lang', render);
+  // refresh when the tab is opened again, and every 2 minutes while it is visible
+  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show') load(true); });
+  setInterval(function () { if (!document.hidden && store.get('appKey')) load(true); }, 120000);
+  load();
+})();
+</script>
+</body>
+</html>
