@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-20.1';
+const SERVER_VERSION = '2026-11-20.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -113,14 +113,21 @@ function getToken_() {
 function shopify_(query, variables) { return shopifyAt_(SHOPIFY_API, query, variables); }
 
 function shopifyAt_(version, query, variables, retried) {
-  const res = UrlFetchApp.fetch('https://' + storeHost_() + '/admin/api/' + version + '/graphql.json', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'X-Shopify-Access-Token': getToken_() },
-    payload: JSON.stringify({ query: query, variables: variables || {} }),
-    muteHttpExceptions: true
-  });
-  const j = JSON.parse(res.getContentText());
+  let res, j;
+  for (let tries = 0; ; tries++) {
+    res = UrlFetchApp.fetch('https://' + storeHost_() + '/admin/api/' + version + '/graphql.json', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'X-Shopify-Access-Token': getToken_() },
+      payload: JSON.stringify({ query: query, variables: variables || {} }),
+      muteHttpExceptions: true
+    });
+    j = JSON.parse(res.getContentText());
+    // Too many requests at once (e.g. the expiry report reading every product): wait and try again
+    const throttled = res.getResponseCode() === 429 || /THROTTLED/.test(JSON.stringify(j.errors || ''));
+    if (!throttled || tries >= 4) break;
+    Utilities.sleep(2000 * (tries + 1));
+  }
   // A cached token keeps the permissions it was issued with: after adding scopes to the Shopify app,
   // "Access denied" means it is out of date, so get a fresh one and try once more.
   if (!retried && (res.getResponseCode() === 401 || /access denied/i.test(JSON.stringify(j.errors || '')))) {
@@ -266,7 +273,8 @@ const ORDER_ACTIONS = {
   listPickLists: function () { return listPickLists_(); },
   getPickList: function (r) { return getPickList_(r.id); },
   createPickList: function () { return createPickList_('manual'); },
-  dailySummary: function () { return dailySummary_(); }
+  dailySummary: function () { return dailySummary_(); },
+  expiryReport: function (r) { return expiryReport_(r); }
 };
 
 function ordersApi_(r) {
@@ -1090,6 +1098,54 @@ function dailySummary_() {
       return { time: new Date(x[0]).toISOString(), part: String(x[1]), action: String(x[2]), message: String(x[3]).replace(/^'/, '') };
     }) }
   };
+}
+
+/* =====================================================================================
+ * Expiry report (Today tab): active products whose expiry date (custom.expiry_date) is past
+ * or within EXPIRY_DAYS days, soonest first. Shopify cannot filter on the date, so every
+ * active product is read (100 per page); the result is cached for an hour.
+ * ===================================================================================== */
+const EXPIRY_DAYS = 90, EXPIRY_MAX_PAGES = 80, EXPIRY_MAX_ITEMS = 300;
+function expiryReport_(r) {
+  const cache = CacheService.getScriptCache(), ck = 'expiry_report_v1';
+  if (!(r && r.refresh)) {
+    const hit = cache.get(ck);
+    if (hit) { const o = JSON.parse(hit); o.cached = true; return o; }
+  }
+  const tz = Session.getScriptTimeZone(), today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  const dayNo = function (iso) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 : null; };
+  const t0 = dayNo(today);
+  const img = 'preview { image { url(transform: { maxWidth: 120, maxHeight: 120 }) } }';
+  const k = metaKey_('expProduct'), kb = metaKey_('binProduct'), kv = metaKey_('binVariant');
+  const query = 'query($after: String) { products(first: 100, after: $after, query: "status:active") { pageInfo { hasNextPage endCursor } nodes {' +
+    ' id title totalInventory pExp: metafield(namespace: "' + k.namespace + '", key: "' + k.key + '") { value }' +
+    ' pBin: metafield(namespace: "' + kb.namespace + '", key: "' + kb.key + '") { value }' +
+    ' featuredMedia { ' + img + ' }' +
+    ' variants(first: 1) { nodes { sku barcode vBin: metafield(namespace: "' + kv.namespace + '", key: "' + kv.key + '") { value } } } } } }';
+  const items = [];
+  let after = null, pages = 0, scanned = 0, withDate = 0, more = true;
+  while (more && pages < EXPIRY_MAX_PAGES) {
+    const page = shopifyAt_(RECEIVE_API, query, { after: after }).products;
+    pages++;
+    page.nodes.forEach(function (p) {
+      scanned++;
+      const exp = p.pExp && String(p.pExp.value || ''), d = dayNo(exp);
+      if (d == null) return;
+      withDate++;
+      const left = d - t0;
+      if (left > EXPIRY_DAYS) return;
+      const v = (p.variants && p.variants.nodes[0]) || {};
+      items.push({ productId: p.id, title: p.title, expiry: exp.slice(0, 10), daysLeft: left, stock: Number(p.totalInventory) || 0,
+        sku: v.sku || '', barcode: v.barcode || '', bin: binValue_(v.vBin) || binValue_(p.pBin),
+        image: (p.featuredMedia && p.featuredMedia.preview && p.featuredMedia.preview.image && p.featuredMedia.preview.image.url) || '' });
+    });
+    more = page.pageInfo.hasNextPage; after = page.pageInfo.endCursor;
+  }
+  items.sort(function (a, b) { return a.daysLeft - b.daysLeft || (b.stock - a.stock); });
+  const out = { ok: true, today: today, days: EXPIRY_DAYS, generatedAt: new Date().toISOString(), scanned: scanned, withDate: withDate,
+    truncated: more || items.length > EXPIRY_MAX_ITEMS, items: items.slice(0, EXPIRY_MAX_ITEMS) };
+  try { cache.put(ck, JSON.stringify(out), 3600); } catch (e) { /* too big to cache: fine */ }
+  return out;
 }
 
 /* =====================================================================================

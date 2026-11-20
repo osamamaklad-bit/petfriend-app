@@ -76,6 +76,10 @@ function shopifyAnswer(url, body, headers) {
     const p2 = body.variables.cursor === 'k1';
     return { data: { orders: { nodes: p2 ? page2 : page1, pageInfo: { hasNextPage: !p2, endCursor: p2 ? null : 'k1' } } } };
   }
+  if (/products\(first: 100, after: \$after, query: "status:active"\)/.test(q)) { ctx.__expPages = (ctx.__expPages || 0) + 1; const p2 = body.variables.after === 'e1';
+    const P = (id, title, exp, inv, sku, vb, pb) => ({ id, title, totalInventory: inv, pExp: exp ? { value: exp } : null, pBin: pb ? { value: pb } : null, featuredMedia: null, variants: { nodes: [{ sku, barcode: '', vBin: vb ? { value: vb } : null }] } });
+    return { data: { products: { nodes: p2 ? [P('p4', 'Far', '2027-12-01', 9, 'F'), P('p5', 'In 30', '2026-12-15', 4, 'T', '', '["C-1","C-2"]')]
+      : [P('p1', 'Expired', '2026-11-01', 3, 'E', 'A-1'), P('p2', 'No date', null, 5, 'N'), P('p3', 'Today', '2026-11-15', 0, 'D')], pageInfo: { hasNextPage: !p2, endCursor: p2 ? null : 'e1' } } } }; }
   if (/returnableFulfillments/.test(q)) return { data: { returnableFulfillments: { nodes: [{ fulfillment: { location: { id: 'L1' } }, returnableFulfillmentLineItems: { nodes: [{ quantity: 2, fulfillmentLineItem: { id: 'FLI1', lineItem: { title: 'Food', sku: 'F1', image: null, variant: { barcode: '111', sku: 'F1' } } } }] } }] } } };
   if (/orders\(first: 1, query: \$q\) \{ nodes/.test(q)) return { data: { orders: { nodes: [{ id: 'gid://Order/1', name: '#1001' }] } } };
   if (/returnCreate/.test(q)) return { data: { returnCreate: { return: { id: 'R', name: '#1001-R1', reverseFulfillmentOrders: { nodes: [{ lineItems: { nodes: [{ id: 'RLI1', totalQuantity: 1, fulfillmentLineItem: { id: 'FLI1' } }] } }] } }, userErrors: [] } } };
@@ -100,7 +104,7 @@ const ctx = {
   SpreadsheetApp: { getActive: () => ({ getSheetByName: n => sheets[n] || null, insertSheet: n => sheet(n) }) },
   DriveApp: { createFolder: () => ({ getId: () => 'F' }), getFolderById: () => ({ createFile: b => ({ getId: () => 'file1', getUrl: () => 'https://drive/file1' }) }), getFileById: () => ({ getBlob: () => ({ getBytes: () => [1] }) }) },
   Session: { getActiveUser: () => ({ getEmail: () => 'me@x' }), getScriptTimeZone: () => 'Africa/Cairo' },
-  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : '20261115', newBlob: () => ({}), base64Decode: () => [], base64Encode: () => 'AA==' },
+  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? '2026-11-15' : '20261115', newBlob: () => ({}), base64Decode: () => [], base64Encode: () => 'AA==', sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create() {} }) }) }) },
   Logger: { log: (...a) => console.log('   LOG', ...a) },
@@ -317,6 +321,20 @@ check('Pick list: shows each order\'s current fulfillment status', r.pickList &&
 sheets.Activity.rows.splice(1, 0, [new Date('2020-01-01'), 'Orders', 'fulfill', 'old', 1, '']);
 ctx.__cache && delete ctx.__cache.logs_pruned; ctx.pruneLogs_();
 check('Logs: rows older than 60 days removed', sheets.Activity.rows.some(x => x[3] === 'old'), !sheets.Activity.rows.some(x => x[3] === 'old') && sheets.Activity.rows.length > 2);
+
+r = post({ action: 'expiryReport', key: 'kkk' });
+check('Expiry: past and soon (<=90 days) only, soonest first, all pages', r.items && r.items.map(i => i.title + ':' + i.daysLeft),
+  r.ok && r.items.map(i => i.title + ':' + i.daysLeft).join() === 'Expired:-14,Today:0,In 30:30' && r.scanned === 5 && r.withDate === 4 && !r.truncated);
+check('Expiry: stock, SKU and bin (variant first, then product list)', r.items, r.items[0].stock === 3 && r.items[0].sku === 'E' && r.items[0].bin === 'A-1' && r.items[2].bin === 'C-1, C-2');
+const pagesRead = ctx.__expPages; r = post({ action: 'expiryReport', key: 'kkk' });
+check('Expiry: cached (no new Shopify reads)', ctx.__expPages - pagesRead, r.ok && r.cached && ctx.__expPages === pagesRead);
+r = post({ action: 'expiryReport', key: 'kkk', refresh: true });
+check('Expiry: refresh reads again', ctx.__expPages - pagesRead, r.ok && !r.cached && ctx.__expPages === pagesRead + 2);
+
+let thr = 2; const origF = ctx.UrlFetchApp.fetch;
+ctx.UrlFetchApp.fetch = (url, o) => (thr && url.includes('/graphql.json')) ? (thr--, { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] }) }) : origF(url, o);
+r = post({ action: 'expiryReport', key: 'kkk', refresh: true }); ctx.UrlFetchApp.fetch = origF;
+check('Shopify THROTTLED: waits and retries', ctx.__slept, r.ok && r.items.length === 3 && ctx.__slept === 6000);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

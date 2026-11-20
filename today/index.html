@@ -8,6 +8,7 @@
 <title>Pet Friend Today</title>
 <script src="../i18n.js"></script>
 <script src="../settings.js"></script>
+<script src="../labels.js"></script>
 <style>
   :root {
     --ink: #2a1417; --paper: #e9fcfd; --card: #ffffff; --line: #b9ecf1; --muted: #6b5f62;
@@ -43,6 +44,22 @@
   .err-row b { color: var(--bad); }
   .err-row .m { color: var(--muted); word-break: break-word; margin-top: 2px; }
   .empty { color: var(--muted); padding: 6px 2px; font-size: 14px; }
+  .tile.exp .v { color: var(--warn); } .tile.exp.has { border-color: var(--warn); }
+  .exbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .exbar button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 600; }
+  .exbar button.on { background: var(--warn); border-color: var(--warn); color: var(--on); }
+  .exbar label { font-size: 14px; display: flex; align-items: center; gap: 4px; }
+  .exbar .sp { flex: 1; }
+  #expInfo { color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
+  .ex { display: flex; gap: 10px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; }
+  .ex img, .ex .noimg { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; background: var(--line); }
+  .ex .t { flex: 1; min-width: 0; }
+  .ex .t b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ex .t small { color: var(--muted); font-size: 12px; }
+  .ex .d { text-align: end; font-size: 13px; flex: none; }
+  .ex .d b { display: block; font-size: 14px; }
+  .ex.past { border-color: var(--bad); } .ex.past .d b { color: var(--bad); }
+  .ex.soon .d b { color: var(--warn); }
   @media (min-width: 700px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } header, main { max-width: 1100px; } }
 </style>
 </head>
@@ -58,6 +75,16 @@
   <div class="tiles" id="tiles"></div>
   <h2 id="errTitle">Errors today</h2>
   <div id="errors"></div>
+  <h2>Expiry dates</h2>
+  <div class="exbar" id="exbar">
+    <button data-d="0">Expired</button><button data-d="30" class="on">30 days</button><button data-d="60">60 days</button><button data-d="90">90 days</button>
+    <label><input type="checkbox" id="inStock" checked> In stock only</label>
+    <span class="sp"></span>
+    <button id="expLabels">Print labels</button>
+    <button id="expRefresh">&#8635; Check again</button>
+  </div>
+  <div id="expInfo"></div>
+  <div id="expList"><div class="empty">Loading...</div></div>
 </main>
 <script>
 (function () {
@@ -111,6 +138,7 @@
     box.appendChild(tile('', 'Pick lists', String(d.pickLists.count), [d.pickLists.qty + (d.pickLists.qty === 1 ? ' order' : ' orders')]));
     box.appendChild(tile('', 'Shipment photos', String(d.photos.qty), [d.photos.count + (d.photos.count === 1 ? ' shipment' : ' shipments')]));
     box.appendChild(tile('err' + (d.errors.count ? ' has' : ''), 'Errors today', String(d.errors.count), [d.errors.count ? 'see the list below' : 'all good']));
+    expTile();
     const eb = $('errors'); eb.innerHTML = '';
     if (!d.errors.last.length) { eb.innerHTML = '<div class="empty">No errors today.</div>'; return; }
     d.errors.last.forEach(function (x) {
@@ -124,16 +152,83 @@
     });
   }
 
+  // ---------- expiry dates (product custom.expiry_date): expired and coming up ----------
+  let exp = null, expBusy = false, expDays = 30;
+  try { expDays = +(localStorage.getItem('pf_exp_days') || 30); } catch (e) {}
+  function expRows() {
+    if (!exp) return [];
+    const inStock = $('inStock').checked;
+    return exp.items.filter(function (x) { return (expDays === 0 ? x.daysLeft < 0 : x.daysLeft <= expDays) && (!inStock || x.stock > 0); });
+  }
+  function expTile() {
+    const box = $('tiles'); if (!box.childNodes.length) return;
+    const old = box.querySelector('.tile.exp'); if (old) old.remove();
+    if (!exp) return;
+    const past = exp.items.filter(function (x) { return x.daysLeft < 0 && x.stock > 0; }).length;
+    const soon = exp.items.filter(function (x) { return x.daysLeft >= 0 && x.daysLeft <= 30 && x.stock > 0; }).length;
+    box.appendChild(tile('exp' + (past + soon ? ' has' : ''), 'Expiring in 30 days', String(soon), [past ? past + ' expired in stock' : 'none expired in stock']));
+  }
+  function renderExp() {
+    document.querySelectorAll('#exbar button[data-d]').forEach(function (b) { b.classList.toggle('on', +b.dataset.d === expDays); });
+    const list = $('expList'); list.innerHTML = '';
+    expTile();
+    if (!exp) return;
+    $('expInfo').textContent = 'Checked ' + exp.scanned + ' products, ' + exp.withDate + ' with an expiry date' + (exp.truncated ? ' (list cut short)' : '') + ' · ' + fmtTime(exp.generatedAt);
+    const rows = expRows();
+    if (!rows.length) { list.innerHTML = '<div class="empty">' + (expDays === 0 ? 'Nothing expired.' : 'Nothing expires in this period.') + '</div>'; return; }
+    rows.forEach(function (x) {
+      const el = document.createElement('div'); el.className = 'ex' + (x.daysLeft < 0 ? ' past' : x.daysLeft <= 30 ? ' soon' : '');
+      const im = x.image ? document.createElement('img') : document.createElement('div');
+      if (x.image) { im.src = x.image; im.alt = ''; } else im.className = 'noimg';
+      const t = document.createElement('div'); t.className = 't';
+      const b = document.createElement('b'); b.textContent = x.title; b.setAttribute('data-no-i18n', ''); b.dir = 'auto';
+      const sm = document.createElement('small'); sm.dir = 'ltr'; sm.setAttribute('data-no-i18n', '');
+      sm.textContent = [x.sku && 'SKU ' + x.sku, x.bin && 'Bin ' + x.bin].filter(Boolean).join(' · ');
+      const st = document.createElement('small'); st.textContent = ' ' + (x.stock + ' in stock');
+      t.appendChild(b); t.appendChild(sm); t.appendChild(st);
+      const d = document.createElement('div'); d.className = 'd';
+      const db = document.createElement('b');
+      db.textContent = x.daysLeft < 0 ? 'Expired ' + (-x.daysLeft) + (x.daysLeft === -1 ? ' day ago' : ' days ago') : x.daysLeft === 0 ? 'Expires today' : x.daysLeft + (x.daysLeft === 1 ? ' day left' : ' days left');
+      const dd = document.createElement('span'); dd.textContent = x.expiry; dd.dir = 'ltr'; dd.setAttribute('data-no-i18n', '');
+      d.appendChild(db); d.appendChild(dd);
+      el.appendChild(im); el.appendChild(t); el.appendChild(d); list.appendChild(el);
+    });
+  }
+  async function loadExp(refresh) {
+    if (expBusy) return;
+    const key = store.get('appKey'); if (!key) return;
+    expBusy = true;
+    if (refresh || !exp) { $('expList').innerHTML = '<div class="empty">Checking expiry dates...</div>'; }
+    try {
+      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: 'expiryReport', refresh: !!refresh }) });
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error || 'Request failed');
+      exp = d; renderExp();
+    } catch (e) { $('expList').innerHTML = ''; const m = document.createElement('div'); m.className = 'empty'; m.textContent = e.message; $('expList').appendChild(m); }
+    finally { expBusy = false; }
+  }
+  $('exbar').addEventListener('click', function (e) {
+    const b = e.target.closest('button[data-d]'); if (!b) return;
+    expDays = +b.dataset.d; try { localStorage.setItem('pf_exp_days', String(expDays)); } catch (x) {}
+    renderExp();
+  });
+  $('inStock').addEventListener('change', renderExp);
+  $('expRefresh').addEventListener('click', function () { loadExp(true); });
+  $('expLabels').addEventListener('click', function () {
+    const rows = expRows(); if (!rows.length) return;
+    pfLabels.open(rows.map(function (x) { return { title: x.title, code: x.sku || x.barcode, sub: ['EXP ' + x.expiry, x.bin].filter(Boolean).join(' · '), copies: x.stock }; }));
+  });
+
   $('refreshBtn').addEventListener('click', function () { load(); });
   $('settingsBtn').addEventListener('click', async function () {
     const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });
-    if (v) { store.set('appKey', v.appKey); load(); }
+    if (v) { store.set('appKey', v.appKey); load(); loadExp(); }
   });
-  document.addEventListener('pf-lang', render);
+  document.addEventListener('pf-lang', function () { render(); renderExp(); });
   // refresh when the tab is opened again, and every 2 minutes while it is visible
-  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show') load(true); });
+  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show') { load(true); loadExp(); } });
   setInterval(function () { if (!document.hidden && store.get('appKey')) load(true); }, 120000);
-  load();
+  load(); loadExp();
 })();
 </script>
 </body>

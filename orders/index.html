@@ -11,6 +11,7 @@
 <title>Pet Friend Orders</title>
 <script src="../i18n.js"></script>
 <script src="../settings.js"></script>
+<script src="../labels.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
   /* Pet Friend brand: same palette as the Shipments and POS tabs */
@@ -92,6 +93,7 @@
   .ordertitle { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 2px 8px; }
   .ordertitle strong { font-size: 20px; }
   .ordertitle span { color: var(--muted); font-size: 14px; }
+  #labelsBtn { width: 100%; margin: 0 0 8px; }
 
   .item {
     display: grid; grid-template-columns: 56px 1fr auto; gap: 10px; align-items: center;
@@ -191,7 +193,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.1</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -225,6 +227,7 @@
   <div id="orderTitle" class="ordertitle" hidden>
     <strong id="orderName"></strong><span id="orderSummary"></span>
   </div>
+  <button class="ghost" id="labelsBtn" hidden>Print labels</button>
   <div id="list"></div>
 </main>
 
@@ -550,6 +553,7 @@
   function render() {
     const list = $('list');
     $('orderTitle').hidden = !state.order;
+    $('labelsBtn').hidden = !(state.order && isRcv());
     $('orderInput').placeholder = state.order ? 'Item barcode or SKU' : isRcv() ? 'PO number' : 'Order number';
     $('loadBtn').textContent = state.order ? 'Add' : 'Load';
     $('orderInput').inputMode = state.order ? 'text' : 'numeric'; // SKUs can contain letters
@@ -687,6 +691,16 @@
     if (!it.verified) { say('Scan the barcode of ' + it.title + ' first', 'bad'); feedback('bad'); return; }
     it.got = isRcv() ? Math.max(0, it.got + d) : Math.max(0, Math.min(it.need, it.got + d)); // Receive may go above the PO
     render();
+  });
+
+  // ---------- barcode labels (Receive): one per unit received, else per unit expected ----------
+  $('labelsBtn').addEventListener('click', function () {
+    if (!state.order) return;
+    pfLabels.open(state.items.map(function (it) {
+      return { title: it.title, code: it.sku || it.barcode || '',
+        sub: [it.binVariant || it.binProduct, it.expProduct && 'EXP ' + it.expProduct].filter(Boolean).join(' · '),
+        copies: it.got > 0 ? it.got : Math.max(0, it.need - it.rej - it.can) };
+    }));
   });
 
   // ---------- fulfill ----------

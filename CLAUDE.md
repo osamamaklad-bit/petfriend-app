@@ -12,6 +12,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
   live. Data (product names, customers, codes, bins, dates) must carry `data-no-i18n` and `dir="ltr"`.
 - `settings.js`: the Settings window (PIN / app key), shared by every tab.
+- `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
+  Printed barcodes are checked by decoding them with html5-qrcode in a test.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
 - `apps-script/Code.gs`: the ONE Google Apps Script server for every tab. Bump `SERVER_VERSION` on every change.
 - `tests/server-test.js`: runs `Code.gs` in Node with fake Google, Shopify and Bosta services:
@@ -48,6 +50,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
     new orders qualify. A manual "Create pick list now" button also exists.
   - Eligible order: open, not cancelled, unfulfilled, and either paid, or tagged `confirmed` without `not confirmed yet`.
 - POS: every sale carries a `saleId`, so a retried sale never creates a second order.
+- Expiry report (Today): active products with `custom.expiry_date` past or within 90 days, cached 1 hour.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.
