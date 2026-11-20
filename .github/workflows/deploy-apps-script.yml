@@ -86,7 +86,7 @@ jobs:
       - name: Check the web app now runs the new version
         run: |
           want=$(grep -oP "SERVER_VERSION = '\K[^']+" apps-script/Code.gs)
-          url=$(grep -oP "API_URL = '\Khttps://script\.google\.com/[^']+" pos/index.html | head -1)
+          url=$(grep -oP "PF_API_URL = '\Khttps://script\.google\.com/[^']+" config.js | head -1)
           echo "Expecting version $want at $url"
           for i in 1 2 3 4 5 6; do
             got=$(curl -sL "$url" | grep -oP '"version":"\K[^"]+' || true)
