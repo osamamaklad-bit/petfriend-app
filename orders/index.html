@@ -220,7 +220,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.4</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.5</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -850,10 +850,10 @@
     if (state.busy) return;
     const n = totalGot(), name = state.order.name, missing = sumOf(openOf);
     const xtra = sumOf(extraOf), rej = sumOf((i) => i.rej), can = sumOf((i) => i.can);
-    if (!confirm(T('Receive ' + n + (n === 1 ? ' item' : ' items') + ' from ' + name + ' into stock?') +
+    if (!await pfConfirm(T('Receive ' + n + (n === 1 ? ' item' : ' items') + ' from ' + name + ' into stock?') +
       (xtra ? '\n' + T(xtra + ' of them are extra (more than ordered).') : '') +
       (rej ? '\n' + T(rej + ' rejected.') : '') + (can ? '\n' + T(can + ' cancelled.') : '') +
-      (missing > 0 ? '\n' + T(missing + ' not scanned will stay open on the purchase order.') : ''))) return;
+      (missing > 0 ? '\n' + T(missing + ' not scanned will stay open on the purchase order.') : ''), { title: 'Receive', ok: 'Receive' })) return;
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Receiving ' + name + '...');
     const rcvItems = state.items.filter((i) => (i.verified && i.got > 0) || i.rej > 0 || i.can > 0).map((i) => ({
@@ -881,8 +881,8 @@
     if (state.busy) return;
     const n = totalGot(), name = state.order.name;
     const restock = $('restock').checked;
-    if (!confirm(T('Create a return for ' + n + (n === 1 ? ' item' : ' items') + ' on ' + name + '?' +
-      (restock ? '\nThe items will be put back into stock.' : '\nThe items will NOT be restocked.')))) return;
+    if (!await pfConfirm(T('Create a return for ' + n + (n === 1 ? ' item' : ' items') + ' on ' + name + '?' +
+      (restock ? '\nThe items will be put back into stock.' : '\nThe items will NOT be restocked.')), { title: 'Returns', ok: 'Create return' })) return;
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Creating return for ' + name + '...');
     try {
@@ -935,10 +935,10 @@
   function hasScans() { return totalGot() > 0 || state.items.some(function (i) { return i.rej > 0 || i.can > 0; }); }
 
   // ---------- mode ----------
-  function setMode(m, initial) {
+  async function setMode(m, initial) {
     if (!initial) {
       if (m === state.mode || state.busy) return;
-      if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
+      if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
     }
     state.mode = m;
     if (!ONLY_CHECK) store.set('mode', m);   // the Check tab never changes the Orders tab's mode
@@ -990,9 +990,9 @@
   // Inside the PetFriend app: stop the camera when the user switches to another tab
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
   // From the Pick list (through the main page): open an order in Fulfill
-  window.addEventListener('message', function (e) {
+  window.addEventListener('message', async function (e) {
     if (ONLY_CHECK || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
-    if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
+    if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
     state.order = null; state.items = [];
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));

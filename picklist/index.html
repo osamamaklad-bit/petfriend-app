@@ -240,7 +240,7 @@
 
   async function createNow() {
     if (state.busy) return;
-    if (!confirm(T('Create a pick list now with the new orders that qualify?'))) return;
+    if (!await pfConfirm(T('Create a pick list now with the new orders that qualify?'), { title: 'Pick list', ok: 'Create' })) return;
     state.busy = true; $('createBtn').disabled = true;
     say('Creating pick list...');
     let made = null;
@@ -335,7 +335,7 @@
     const c = state.current;
     if (!c || state.busy) return;
     const done = !c.done;
-    if (done && !confirm(T('Mark this pick list as finished? It will be hidden from the list.'))) return;
+    if (done && !await pfConfirm(T('Mark this pick list as finished? It will be hidden from the list.'), { title: 'Pick list', ok: '✓ Finished' })) return;
     state.busy = true; $('finishBtn').disabled = true;
     try {
       await api({ action: 'setPickListDone', id: c.id, done: done });

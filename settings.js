@@ -4,6 +4,9 @@
  *     { key: 'pin', label: 'PIN', secret: true, numeric: true, value: '1234' }
  *   ]}).then(values => { ... })   // values = { pin: '...' }, or null if cancelled
  *
+ * Also pfConfirm(message, { ok, cancel, title, danger }) -> Promise<boolean> and pfAlert(message): branded
+ * replacements for the browser's confirm() / alert().
+ *
  * Secret fields show as dots with a Show/Hide button. Text is in English and is
  * translated by i18n.js like the rest of the page.
  */
@@ -26,9 +29,12 @@
     '.pfset .c{background:#fff;color:inherit;border:2px solid #b9ecf1}' +
     '.pfset .ok{background:#e3031b;color:#fff;border:2px solid #e3031b}' +
     '.pfset .lang{display:flex;gap:6px;margin-top:5px}' +
+    '.pfconf .msg{margin:0 0 4px;font-size:17px;line-height:1.45;white-space:pre-line;color:inherit}' +
+    '.pfconf h2{color:#e3031b}.pfconf .b button{min-width:110px}' +
+    '.pfconf.danger .ok{background:#c2410c;border-color:#c2410c}' +
     '.pfset .lang button{flex:1;font:inherit;font-size:16px;font-weight:600;padding:10px;border:2px solid #b9ecf1;border-radius:10px;background:#fff;color:inherit;cursor:pointer}' +
     '.pfset .lang button.on{background:#e3031b;border-color:#e3031b;color:#fff}' +
-    '@media (prefers-color-scheme:dark){' +
+    '@media (prefers-color-scheme:dark){.pfconf h2{color:#ff4a5c}' +
     '.pfset{background:#17282b;color:#eaf7f8}.pfset label{color:#8fb0b3}' +
     '.pfset input,.pfset .eye,.pfset .c{background:#0f1c1e;border-color:#27403f}' +
     '.pfset input:focus{border-color:#ff4a5c}.pfset .ok{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}' +
@@ -145,5 +151,51 @@
     });
   }
 
+  /* Branded yes / no window instead of the browser's confirm() (which shows the site address and can't be styled).
+   *   if (await pfConfirm('Receive 4 items?', { ok: 'Receive', title: 'Receive' })) { ... }
+   * Resolves true for the OK button, false for Cancel / Esc / a tap outside. The text is translated by i18n.js
+   * (pass it already translated with pfT when it is built from pieces). */
+  function pfConfirm(message, o) {
+    o = o || {};
+    addStyle();
+    return new Promise(function (resolve) {
+      var d = document.createElement('dialog');
+      d.className = 'pfset pfconf' + (o.danger ? ' danger' : '');
+      var form = document.createElement('form');
+      var h = document.createElement('h2');
+      var logo = document.createElement('img');
+      logo.src = new URL('icon-192.png', BASE).href;
+      logo.alt = '';
+      h.appendChild(logo);
+      h.appendChild(document.createTextNode(o.title || 'Pet Friend'));
+      form.appendChild(h);
+      var m = document.createElement('p');
+      m.className = 'msg';
+      m.textContent = message;
+      form.appendChild(m);
+      var bar = document.createElement('div');
+      bar.className = 'b';
+      var no = document.createElement('button');
+      no.type = 'button'; no.className = 'c'; no.textContent = o.cancel || 'Cancel';
+      var yes = document.createElement('button');
+      yes.type = 'submit'; yes.className = 'ok'; yes.textContent = o.ok || 'OK';
+      if (o.alert) no.hidden = true;                      // pfAlert: one button
+      bar.appendChild(no); bar.appendChild(yes);
+      form.appendChild(bar);
+      d.appendChild(form);
+      var answer = false;
+      form.addEventListener('submit', function (e) { e.preventDefault(); answer = true; d.close(); });
+      no.addEventListener('click', function () { d.close(); });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });   // tap on the dark backdrop
+      d.addEventListener('close', function () { d.remove(); resolve(answer); });
+      document.body.appendChild(d);
+      d.showModal();
+      yes.focus();
+    });
+  }
+  function pfAlert(message, o) { return pfConfirm(message, Object.assign({ alert: true, ok: 'OK' }, o || {})).then(function () {}); }
+
   window.pfSettings = pfSettings;
+  window.pfConfirm = pfConfirm;
+  window.pfAlert = pfAlert;
 })();
