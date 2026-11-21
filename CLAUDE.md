@@ -6,7 +6,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 ## Layout
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
-  `pos/`, `orders/` (Fulfill · Returns · Receive), `picklist/`, `shipments/`, `today/`.
+  `pos/`, `orders/` (Fulfill · Returns · Receive · Check), `picklist/`, `shipments/`, `today/`.
   The main page passes messages between tabs: `pf-hide` (camera off), `pf-show` (refresh) and `pf-open-order`
   (from the Pick list, opens an order in Fulfill).
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
@@ -51,6 +51,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
     new orders qualify. A manual "Create pick list now" button also exists.
   - Eligible order: open, not cancelled, unfulfilled, and either paid, or tagged `confirmed` without `not confirmed yet`.
 - POS: every sale carries a `saleId`, so a retried sale never creates a second order.
+- Check (Orders tab): `lookupProduct` finds variants by barcode or SKU (numeric codes also with 12/13/14-digit
+  zero padding), then by name; read-only except the expiry date. Shopify 2026 variants can have several
+  barcodes (`barcodes`); `barcode` is deprecated but still returns the first one.
 - Expiry report (Today): active products with `custom.expiry_date` past or within 90 days, cached 1 hour.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`

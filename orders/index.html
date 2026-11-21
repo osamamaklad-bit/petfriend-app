@@ -171,6 +171,32 @@
   body.rcv #fulfillBtn { background: var(--rcv); color: var(--on); }
   body.rcv #fulfillBtn:disabled { background: var(--muted); }
   body.rcv #notifyLbl, body.rcv #chips button[data-f] { display: none; }
+  /* Check a product */
+  :root { --chk: #4338ca; }
+  @media (prefers-color-scheme: dark) { :root { --chk: #a5b4fc; } }
+  body.chk header h1 #modeLabel { color: var(--chk); }
+  body.chk .modes button.on { background: var(--chk); color: var(--on); }
+  body.chk footer, body.chk #openOrders { display: none !important; }
+  body.chk main { padding-bottom: 40px; }
+  .pcard { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; display: grid; grid-template-columns: 140px 1fr; gap: 12px; }
+  .pcard .pic { width: 140px; height: 140px; border-radius: 10px; object-fit: contain; background: #fff; border: 1px solid var(--line); }
+  .pcard .noimg { width: 140px; height: 140px; border-radius: 10px; background: var(--soft); }
+  .pcard .t { font-weight: 700; font-size: 17px; line-height: 1.25; }
+  .pcard .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); margin-inline-start: 6px; vertical-align: middle; }
+  .pcard .price { font-size: 26px; font-weight: 800; color: var(--accent); margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .pcard .price s { font-size: 15px; font-weight: 600; color: var(--muted); margin-inline-start: 8px; }
+  .pcard .codes { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .pcard .facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin-top: 8px; font-size: 14px; align-items: baseline; }
+  .pcard .facts .k { color: var(--muted); }
+  .pcard .facts b { font-size: 15px; white-space: nowrap; }
+  .pcard .facts b.stock0 { color: var(--bad); }
+  .pcard .facts b.bin { color: var(--rcv); }
+  .pcard .facts b.expired { color: var(--bad); } .pcard .facts b.soon { color: var(--warn); }
+  .pcard .facts small { color: var(--muted); font-weight: 400; margin-inline-start: 6px; }
+  .pcard .locs { grid-column: 2; color: var(--muted); font-size: 12px; }
+  .pcard .acts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pcard .acts button { flex: 1; min-width: 120px; }
+  @media (max-width: 420px) { .pcard { grid-template-columns: 96px 1fr; } .pcard .pic, .pcard .noimg { width: 96px; height: 96px; } .pcard .price { font-size: 22px; } }
 
   /* ---------- computer / tablet ---------- */
   @media (min-width: 900px) {
@@ -193,7 +219,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.1</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -202,6 +228,7 @@
     <button data-m="fulfill" class="on">Fulfill</button>
     <button data-m="return">Returns</button>
     <button data-m="receive">Receive</button>
+    <button data-m="check">Check</button>
   </div>
 
   <div class="orderbar">
@@ -272,7 +299,9 @@
   const state = { mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
   const isRet = () => state.mode === 'return';
   const isRcv = () => state.mode === 'receive';   // receiving stock from suppliers (purchase orders)
+  const isChk = () => state.mode === 'check';     // check a product: price, stock, bin, expiry (read-only)
   function idleMsg() {
+    if (isChk()) return 'Check a product: scan its barcode, or type a SKU or name.';
     if (isRcv()) return 'Receive: pick a purchase order, or scan or type its number.';
     return isRet()
       ? 'Returns: scan the order barcode on the packing slip, or type the number.'
@@ -472,6 +501,7 @@
     if (!typed && code === state.lastCode && now - state.lastAt < 1200) { state.lastAt = now; return; }
     state.lastCode = code; state.lastAt = now;
 
+    if (isChk()) { lookup(code); return; }
     if (!state.order) { loadOrder(code); return; }
 
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
@@ -552,6 +582,7 @@
 
   function render() {
     const list = $('list');
+    if (isChk()) { renderCheck(); return; }
     $('orderTitle').hidden = !state.order;
     $('labelsBtn').hidden = !(state.order && isRcv());
     $('orderInput').placeholder = state.order ? 'Item barcode or SKU' : isRcv() ? 'PO number' : 'Order number';
@@ -693,6 +724,112 @@
     render();
   });
 
+  // ---------- check a product (read-only; only the expiry date can be edited, as in Receive) ----------
+  async function lookup(code) {
+    code = String(code || '').trim();
+    if (!code || state.busy) return;
+    state.busy = true;
+    say('Checking ' + code + '...');
+    try {
+      const d = await api({ action: 'lookupProduct', code: code });
+      state.check = d;
+      renderCheck();
+      if (!d.items.length) { say('Not found in Shopify: ' + code, 'bad'); feedback('bad'); }
+      else { say(d.items.length === 1 ? d.items[0].title : d.items.length + ' products found for ' + code, 'ok'); feedback('ok'); }
+    } catch (e) { say(e.message, 'bad'); feedback('bad'); }
+    finally { state.busy = false; }
+  }
+  function daysTo(v) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+    if (!m) return null;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - t) / 864e5);
+  }
+  function renderCheck() {
+    const list = $('list');
+    $('orderTitle').hidden = true; $('labelsBtn').hidden = true; $('openOrders').hidden = true;
+    $('orderInput').placeholder = 'Barcode, SKU or name';
+    $('orderInput').inputMode = 'text';
+    $('loadBtn').textContent = 'Check';
+    list.innerHTML = '';
+    const d = state.check;
+    if (!d) return;
+    const money = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ' + (d.currency || '');
+    d.items.forEach(function (it, idx) {
+      const el = document.createElement('div'); el.className = 'pcard';
+      const img = it.image ? document.createElement('img') : document.createElement('div');
+      if (it.image) { img.src = it.image; img.alt = ''; img.className = 'pic'; } else img.className = 'noimg';
+      el.appendChild(img);
+      const box = document.createElement('div');
+      const t = document.createElement('div'); t.className = 't';
+      const tn = document.createElement('span'); tn.textContent = it.title; tn.setAttribute('data-no-i18n', ''); tn.dir = 'auto'; t.appendChild(tn);
+      if (it.status && it.status !== 'ACTIVE') { const b = document.createElement('span'); b.className = 'badge'; b.textContent = it.status === 'DRAFT' ? 'Draft' : it.status === 'ARCHIVED' ? 'Archived' : it.status; t.appendChild(b); }
+      box.appendChild(t);
+      const pr = document.createElement('div'); pr.className = 'price'; pr.dir = 'ltr'; pr.setAttribute('data-no-i18n', '');
+      pr.textContent = money(it.price);
+      if (it.compareAtPrice && Number(it.compareAtPrice) > Number(it.price)) { const s = document.createElement('s'); s.textContent = money(it.compareAtPrice); pr.appendChild(s); }
+      box.appendChild(pr);
+      const codes = document.createElement('div'); codes.className = 'codes'; codes.dir = 'ltr'; codes.setAttribute('data-no-i18n', '');
+      const bcs = (it.barcodes && it.barcodes.length ? it.barcodes : [it.barcode]).filter(Boolean);
+      codes.textContent = [it.sku && 'SKU ' + it.sku, bcs.length && bcs.join(' · ')].filter(Boolean).join('  ·  ');
+      box.appendChild(codes);
+      const facts = document.createElement('div'); facts.className = 'facts';
+      function fact(label, value, cls, extra) {
+        const l = document.createElement('span'); l.className = 'k'; l.textContent = label;
+        const v = document.createElement('b'); v.textContent = value; v.dir = 'ltr'; v.setAttribute('data-no-i18n', ''); if (cls) v.className = cls;
+        // the value is data (not translated); the note after it ("10 days left") is translated
+        const w = document.createElement('span'); w.appendChild(v);
+        if (extra) { const x = document.createElement('small'); x.textContent = extra; w.appendChild(x); }
+        facts.appendChild(l); facts.appendChild(w);
+        return v;
+      }
+      if (!it.tracked) fact('In stock:', '–', '', 'not tracked');
+      else {
+        fact('In stock:', String(it.stock == null ? '?' : it.stock), it.stock > 0 ? '' : 'stock0');
+        if (it.locations.length > 1) {
+          const ls = document.createElement('div'); ls.className = 'locs'; ls.dir = 'auto'; ls.setAttribute('data-no-i18n', '');
+          ls.textContent = it.locations.map((l) => l.name + ': ' + l.available).join(' · ');
+          facts.appendChild(ls);
+        }
+      }
+      if (it.binVariant) fact('Variant bin:', it.binVariant, 'bin');
+      if (it.binProduct && it.binProduct !== it.binVariant) fact('Product bin:', it.binProduct, 'bin');
+      if (!it.binVariant && !it.binProduct) fact('Bin:', '–');
+      const dl = daysTo(it.expProduct);
+      if (it.expProduct) fact('Expiry:', it.expProduct, dl != null && dl < 0 ? 'expired' : dl != null && dl <= 30 ? 'soon' : '',
+        dl == null ? '' : dl < 0 ? 'Expired ' + (-dl) + (dl === -1 ? ' day ago' : ' days ago') : dl === 0 ? 'Expires today' : dl + (dl === 1 ? ' day left' : ' days left'));
+      else fact('Expiry:', '–');
+      box.appendChild(facts);
+      el.appendChild(box);
+      const acts = document.createElement('div'); acts.className = 'acts';
+      const e1 = document.createElement('button'); e1.className = 'ghost'; e1.textContent = 'Edit expiry'; e1.dataset.chkEdit = idx;
+      const e2 = document.createElement('button'); e2.className = 'ghost'; e2.textContent = 'Print label'; e2.dataset.chkLabel = idx;
+      acts.appendChild(e1); acts.appendChild(e2); el.appendChild(acts);
+      list.appendChild(el);
+    });
+  }
+  $('list').addEventListener('click', async function (e) {
+    if (!isChk() || !state.check) return;
+    const lb = e.target.closest('button[data-chk-label]'), ed = e.target.closest('button[data-chk-edit]');
+    if (lb) {
+      const it = state.check.items[+lb.dataset.chkLabel];
+      pfLabels.open([{ title: it.title, code: it.sku || it.barcode || '', sub: [it.binVariant || it.binProduct, it.expProduct && 'EXP ' + it.expProduct].filter(Boolean).join(' · '), copies: 1 }]);
+      return;
+    }
+    if (!ed || state.busy) return;
+    const it = state.check.items[+ed.dataset.chkEdit], exp = it.expProduct || '';
+    const v = await pfSettings({ title: it.title, fields: [{ key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }] });
+    if (!v) return;
+    state.busy = true; say('Saving ' + it.title + '...');
+    try {
+      const r = await api({ action: 'setItemMeta', variantId: it.variantId, values: v });
+      state.check.items.forEach(function (x) { if (x.productId === it.productId) x.expProduct = r.values.expProduct; });
+      renderCheck();
+      say(r.changed ? 'Saved expiry date for ' + it.title : 'No changes', 'ok'); feedback('ok');
+    } catch (err) { say(err.message, 'bad'); feedback('bad'); }
+    finally { state.busy = false; }
+  });
+
   // ---------- barcode labels (Receive): one per unit received, else per unit expected ----------
   $('labelsBtn').addEventListener('click', function () {
     if (!state.order) return;
@@ -804,13 +941,15 @@
     store.set('mode', m);
     document.body.classList.toggle('ret', m === 'return');
     document.body.classList.toggle('rcv', m === 'receive');
-    $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : 'Fulfill';
+    document.body.classList.toggle('chk', m === 'check');
+    $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : m === 'check' ? 'Check' : 'Fulfill';
+    state.check = null;
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
     state.order = null; state.items = [];
     render();
     if (!initial) {
       say(idleMsg());
-      if (m !== 'return' && ready()) loadList();
+      if ((m === 'fulfill' || m === 'receive') && ready()) loadList();
     }
   }
   $('modes').addEventListener('click', function (e) {
@@ -822,6 +961,7 @@
   function submitBox() {
     const v = $('orderInput').value.trim();
     if (!v) return;
+    if (isChk()) { $('orderInput').value = ''; lookup(v); return; }
     if (state.order) { $('orderInput').value = ''; onScan(v, true); }
     else loadOrder(v);
   }
@@ -855,9 +995,9 @@
     loadOrder(String(e.data.order || ''));
   });
 
-  setMode(['return', 'receive'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
+  setMode(['return', 'receive', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
   if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
-  else if (isRet()) say(idleMsg());
+  else if (isRet() || isChk()) say(idleMsg());
   else loadList();
 })();
 </script>

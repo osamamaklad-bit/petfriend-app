@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-21.1';
+const SERVER_VERSION = '2026-11-21.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -274,7 +274,8 @@ const ORDER_ACTIONS = {
   getPickList: function (r) { return getPickList_(r.id); },
   createPickList: function () { return createPickList_('manual'); },
   dailySummary: function () { return dailySummary_(); },
-  expiryReport: function (r) { return expiryReport_(r); }
+  expiryReport: function (r) { return expiryReport_(r); },
+  lookupProduct: function (r) { return lookupProduct_(r); }
 };
 
 function ordersApi_(r) {
@@ -1104,6 +1105,53 @@ function dailySummary_() {
       return { time: new Date(x[0]).toISOString(), part: String(x[1]), action: String(x[2]), message: String(x[3]).replace(/^'/, '') };
     }) }
   };
+}
+
+/* =====================================================================================
+ * Check a product (Orders tab, "Check" mode): scan or type a barcode, SKU or name and see the
+ * picture, price, stock per location, bin locations and expiry date. Read-only.
+ * ===================================================================================== */
+function lookupProduct_(r) {
+  const text = String((r && r.code) || '').trim().slice(0, 100);
+  if (!text) throw new Error('Scan or type a barcode, SKU or name');
+  const q = function (v) { return '"' + String(v).replace(/["\\]/g, '') + '"'; };
+  // the same code may be stored with or without leading zeros (UPC-A 12 digits = EAN-13 with a leading 0)
+  const codes = [text];
+  if (/^\d+$/.test(text)) {
+    const bare = text.replace(/^0+/, '');
+    [bare, ('0000000000000' + bare).slice(-12), ('0000000000000' + bare).slice(-13), ('00000000000000' + bare).slice(-14)].forEach(function (c) {
+      if (bare.length >= 6 && c.length >= bare.length && codes.indexOf(c) === -1) codes.push(c);
+    });
+  }
+  const byCode = codes.map(function (c) { return 'barcode:' + q(c) + ' OR sku:' + q(c); }).join(' OR ');
+  const img = 'preview { image { url(transform: { maxWidth: 600, maxHeight: 600 }) } }';
+  const query = 'query($q: String!) { shop { currencyCode } productVariants(first: 10, query: $q) { nodes {' +
+    ' id title displayName sku barcode barcodes(first: 5) { nodes { value } } price compareAtPrice inventoryQuantity ' + metaQuery_('variant') +
+    ' media(first: 1) { nodes { ' + img + ' } }' +
+    ' product { id title status variantsCount { count } ' + metaQuery_('product') + ' featuredMedia { ' + img + ' } }' +
+    ' inventoryItem { tracked inventoryLevels(first: 10) { nodes { location { name } quantities(names: ["available"]) { quantity } } } } } } }';
+  let d = shopifyAt_(RECEIVE_API, query, { q: byCode }), how = 'code';
+  if (!d.productVariants.nodes.length && /[^\d\s-]/.test(text)) {          // nothing by code: try the name
+    d = shopifyAt_(RECEIVE_API, query, { q: text.replace(/["\\:()]/g, ' ') }); how = 'name';
+  }
+  const items = d.productVariants.nodes.map(function (v) {
+    const meta = metaValues_(v), levels = (v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.nodes) || [];
+    return {
+      variantId: v.id, productId: v.product && v.product.id, title: v.displayName || v.title,
+      variantTitle: (v.product && v.product.variantsCount && v.product.variantsCount.count > 1) ? v.title : '',
+      sku: v.sku || '', barcode: v.barcode || '',
+      // a variant can now have several barcodes (Shopify 2026): list them all, first one first
+      barcodes: ((v.barcodes && v.barcodes.nodes) || []).map(function (b) { return b.value; }).filter(function (b, i, a) { return b && a.indexOf(b) === i; }), price: v.price, compareAtPrice: v.compareAtPrice || '',
+      stock: v.inventoryQuantity, tracked: !(v.inventoryItem && v.inventoryItem.tracked === false),
+      locations: levels.map(function (l) {
+        const a = (l.quantities || []).filter(function (x) { return x; })[0];
+        return { name: l.location && l.location.name, available: a ? a.quantity : 0 };
+      }),
+      status: v.product && v.product.status, image: mediaUrl_(v),
+      binVariant: meta.binVariant, binProduct: meta.binProduct, expProduct: meta.expProduct
+    };
+  });
+  return { ok: true, query: text, by: how, currency: d.shop && d.shop.currencyCode, items: items };
 }
 
 /* =====================================================================================

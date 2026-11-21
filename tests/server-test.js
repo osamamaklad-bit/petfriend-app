@@ -86,6 +86,12 @@ function shopifyAnswer(url, body, headers) {
   if (/returnCreate/.test(q)) return { data: { returnCreate: { return: { id: 'R', name: '#1001-R1', reverseFulfillmentOrders: { nodes: [{ lineItems: { nodes: [{ id: 'RLI1', totalQuantity: 1, fulfillmentLineItem: { id: 'FLI1' } }] } }] } }, userErrors: [] } } };
   if (/reverseFulfillmentOrderDispose/.test(q)) return { data: { reverseFulfillmentOrderDispose: { userErrors: [] } } };
   if (/status:open/.test(q)) return { data: { orders: { edges: [{ node: { name: '#1002', createdAt: 'x', cancelledAt: null, displayFulfillmentStatus: 'UNFULFILLED', currentSubtotalLineItemsQuantity: 3, shippingAddress: { name: 'Mona', city: 'Cairo' } } }] } } };
+  if (/barcodes\(first: 5\)/.test(q)) { ctx.__lookQ = (ctx.__lookQ || []).concat([body.variables.q]);
+    const hit = /"012345678905"|"6723085"/.test(body.variables.q) || body.variables.q === 'royal kitten';
+    return { data: { shop: { currencyCode: 'EGP' }, productVariants: { nodes: hit ? [{ id: 'V1', title: '2kg', displayName: 'Royal Canin Kitten - 2kg', sku: '6723085', barcode: '12345678905',
+      barcodes: { nodes: [{ value: '12345678905' }, { value: '5000000000001' }] }, price: '850.00', compareAtPrice: '900.00', inventoryQuantity: 7, vBin: { value: 'A-10' }, media: { nodes: [] },
+      product: { id: 'P1', title: 'Royal Canin Kitten', status: 'ACTIVE', variantsCount: { count: 2 }, pBin: { value: '["A-1"]' }, pExp: { value: '2027-01-31' }, featuredMedia: { preview: { image: { url: 'https://cdn/p.jpg' } } } },
+      inventoryItem: { tracked: true, inventoryLevels: { nodes: [{ location: { name: 'Main store' }, quantities: [{ quantity: 5 }] }, { location: { name: 'Warehouse' }, quantities: [{ quantity: 2 }] }] } } }] : [] } } }; }
   if (/productVariants/.test(q)) return { data: { productVariants: { nodes: [{ id: 'v1', displayName: 'Food', price: '100' }] } } };
   if (/tag:POS/.test(JSON.stringify(body.variables))) return { data: { orders: { nodes: [] } } };
   if (/shop \{ name/.test(q)) return { data: { shop: { name: 'Pet Friend' } } };
@@ -350,6 +356,20 @@ check('Pick list: created even when every saved list is old (month without lists
 const realNow = ctx.Date.now; let fakeT = 0; ctx.Date.now = () => (fakeT += 200000);
 r = post({ action: 'expiryReport', key: 'kkk', refresh: true }); ctx.Date.now = realNow;
 check('Expiry: stops before Google\'s 6-minute limit and says the list is cut short', r, r.ok && r.truncated === true && r.scanned === 3);
+
+r = post({ action: 'lookupProduct', key: 'kkk', code: '12345678905' });
+check('Check product: UPC-A without its leading 0 also searches the 12-digit code', ctx.__lookQ.at(-1), r.ok && r.items.length === 1 && /barcode:"012345678905"/.test(ctx.__lookQ.at(-1)) && r.by === 'code');
+const it0 = r.items[0];
+check('Check product: price, stock per location, bins, expiry, all barcodes, picture', it0, it0.price === '850.00' && it0.compareAtPrice === '900.00' && it0.stock === 7
+  && it0.locations.map(l => l.name + ':' + l.available).join() === 'Main store:5,Warehouse:2' && it0.binVariant === 'A-10' && it0.binProduct === 'A-1'
+  && it0.expProduct === '2027-01-31' && it0.barcodes.length === 2 && it0.image === 'https://cdn/p.jpg' && it0.variantTitle === '2kg' && r.currency === 'EGP');
+r = post({ action: 'lookupProduct', key: 'kkk', code: 'royal kitten' });
+check('Check product: no code match -> searches by name', ctx.__lookQ.slice(-2), r.ok && r.by === 'name' && r.items.length === 1 && ctx.__lookQ.at(-1) === 'royal kitten');
+r = post({ action: 'lookupProduct', key: 'kkk', code: '999' });
+check('Check product: unknown number -> empty list, no name search', r, r.ok && r.items.length === 0 && r.by === 'code');
+r = post({ action: 'lookupProduct', key: 'kkk', code: 'a"b OR sku:*' });
+check('Check product: quotes in the search are removed', ctx.__lookQ.at(-2), r.ok && !/a"b/.test(ctx.__lookQ.at(-2)));
+r = post({ action: 'lookupProduct', key: 'bad', code: '6723085' }); check('Check product: wrong key refused', r, r.ok === false);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
