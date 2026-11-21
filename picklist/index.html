@@ -316,12 +316,17 @@
   $('printBtn').addEventListener('click', function () { window.print(); });
   document.addEventListener('pf-lang', function () { if (state.current) render(); else renderLists(); });
   // back on this tab (e.g. after fulfilling an order): refresh the open list's order status quietly
+  // (a tab hidden inside the app still counts as visible to the browser, so the main page tells us)
+  let shown = true;
   window.addEventListener('message', function (e) {
-    if (e.origin !== location.origin || e.data !== 'pf-show' || !state.current || state.busy) return;
+    if (e.origin !== location.origin) return;
+    if (e.data === 'pf-hide') { shown = false; return; }
+    if (e.data === 'pf-show') { shown = true; if (!state.current) loadLists(true); }
+    if (e.data !== 'pf-show' || !state.current || state.busy) return;
     api({ action: 'getPickList', id: state.current.id }).then(function (d) { if (state.current && d.pickList.id === state.current.id) { state.current = d.pickList; render(); } }).catch(function () {});
   });
   // while this screen is open, look for new pick lists every minute
-  setInterval(function () { if (store.get('appKey') && !document.hidden) loadLists(true); }, 60000);
+  setInterval(function () { if (shown && store.get('appKey') && !document.hidden) loadLists(true); }, 60000);
 
   async function openSettings() {
     const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });

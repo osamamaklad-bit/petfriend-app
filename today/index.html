@@ -227,8 +227,14 @@
   });
   document.addEventListener('pf-lang', function () { render(); renderExp(); });
   // refresh when the tab is opened again, and every 2 minutes while it is visible
-  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show') { load(true); loadExp(); } });
-  setInterval(function () { if (!document.hidden && store.get('appKey')) load(true); }, 120000);
+  // (a tab hidden inside the app still counts as visible to the browser, so the main page tells us)
+  let shown = true;
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin) return;
+    if (e.data === 'pf-hide') shown = false;
+    if (e.data === 'pf-show') { shown = true; load(true); loadExp(); }
+  });
+  setInterval(function () { if (shown && !document.hidden && store.get('appKey')) load(true); }, 120000);
   load(); loadExp();
 })();
 </script>

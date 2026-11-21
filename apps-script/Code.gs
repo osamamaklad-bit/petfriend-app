@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-20.3';
+const SERVER_VERSION = '2026-11-21.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -955,7 +955,13 @@ function createPickList_(kind) {
 
 function plPrune_() {
   const s = plSheet_(), rows = plRows_(), cutoff = Date.now() - PL_KEEP_DAYS * 864e5;
-  for (let i = rows.length - 1; i >= 0; i--) if (new Date(rows[i][1]).getTime() < cutoff) s.deleteRow(i + 2);
+  for (let i = rows.length - 1; i >= 0; i--) if (new Date(rows[i][1]).getTime() < cutoff) deleteDataRows_(s, i + 2, 1);
+}
+/** Deletes sheet rows. Google Sheets refuses to delete every row under the frozen header, so when that is what
+ *  is asked (all rows old), the rows are emptied instead: blank rows at the end are ignored and reused. */
+function deleteDataRows_(s, from, count) {
+  try { s.deleteRows(from, count); }
+  catch (e) { s.getRange(from, 1, count, Math.max(1, s.getLastColumn())).clearContent(); }
 }
 
 /** For the app: the pick lists of the last 7 days, newest first (summaries only). */
@@ -1059,7 +1065,7 @@ function pruneLogs_() {
       const times = s.getRange(2, 1, n - 1, 1).getValues();
       let old = 0;
       while (old < times.length && new Date(times[old][0]).getTime() < cutoff) old++;
-      if (old) s.deleteRows(2, old);
+      if (old) deleteDataRows_(s, 2, old);
     } catch (e) { console.error('pruneLogs_', name, e.message); }
   });
   cache.put('logs_pruned', '1', 20 * 60 * 60);
@@ -1124,7 +1130,8 @@ function expiryReport_(r) {
     ' variants(first: 1) { nodes { sku barcode vBin: metafield(namespace: "' + kv.namespace + '", key: "' + kv.key + '") { value } } } } } }';
   const items = [];
   let after = null, pages = 0, scanned = 0, withDate = 0, more = true;
-  while (more && pages < EXPIRY_MAX_PAGES) {
+  const started = Date.now();   // Google stops a run after 6 minutes: return what was read after 4
+  while (more && pages < EXPIRY_MAX_PAGES && Date.now() - started < 240000) {
     const page = shopifyAt_(RECEIVE_API, query, { after: after }).products;
     pages++;
     page.nodes.forEach(function (p) {

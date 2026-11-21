@@ -9,11 +9,12 @@ const props = { POS_PIN: '1111', APP_KEY: 'kkk', APP_PIN: '2222', SHOP: 'pf', CL
 const fetches = [];
 const sheets = {};
 function sheet(name) { return sheets[name] || (sheets[name] = { rows: [], name,
-  appendRow(r) { (ctx.__rawAppends = ctx.__rawAppends || []).push(r); this.rows.push(r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { return this.rows.length; }, deleteRows(i, k) { this.rows.splice(i - 1, k); }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { this.rows.splice(i - 1, 1); },
+  appendRow(r) { (ctx.__rawAppends = ctx.__rawAppends || []).push(r); this.rows.splice(this.getLastRow(), 0, r.map(v => typeof v === 'string' && v[0] === "'" ? v.slice(1) : v)); }, setFrozenRows() {}, getLastRow() { let n = this.rows.length; while (n && !this.rows[n - 1].some(v => v !== '' && v != null)) n--; return n; }, deleteRows(i, k) { if (this.rows.length - k < 2) throw new Error('Sorry, it is not possible to delete all non-frozen rows.'); this.rows.splice(i - 1, k); }, getLastColumn() { return this.rows.reduce((m, x) => Math.max(m, x.length), 0); }, deleteRow(i) { if (this.rows.length - 1 < 2) throw new Error('Sorry, it is not possible to delete all non-frozen rows.'); this.rows.splice(i - 1, 1); },
   getDataRange() { const s = this; return { getValues: () => s.rows.map(r => r.slice()) }; },
   getRange(r, c, nr = 1, nc = 1) { const s = this; return {
     getValue: () => (s.rows[r - 1] || [])[c - 1], setValue: v => { s.rows[r - 1][c - 1] = v; },
     getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (s.rows[r - 1 + i] || [])[c - 1 + j])),
+    clearContent: () => { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) if (s.rows[r - 1 + i]) s.rows[r - 1 + i][c - 1 + j] = ''; },
     setValues: vals => vals.forEach((row, i) => { s.rows[r - 1 + i] = s.rows[r - 1 + i] || []; row.forEach((v, j) => s.rows[r - 1 + i][c - 1 + j] = v); }) }; },
   getParent: () => ({ getName: () => 'Test sheet' }) }); }
 function shopifyAnswer(url, body, headers) {
@@ -335,6 +336,20 @@ let thr = 2; const origF = ctx.UrlFetchApp.fetch;
 ctx.UrlFetchApp.fetch = (url, o) => (thr && url.includes('/graphql.json')) ? (thr--, { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] }) }) : origF(url, o);
 r = post({ action: 'expiryReport', key: 'kkk', refresh: true }); ctx.UrlFetchApp.fetch = origF;
 check('Shopify THROTTLED: waits and retries', ctx.__slept, r.ok && r.items.length === 3 && ctx.__slept === 6000);
+
+// Google Sheets cannot delete every row under the header: cleanup must still work when ALL rows are old
+sheets.Errors.rows.length = 1; sheets.Errors.rows.push([new Date('2020-01-01'), 'Orders', 'x', 'old1'], [new Date('2020-01-02'), 'Orders', 'x', 'old2']);
+ctx.__cache && delete ctx.__cache.logs_pruned; ctx.pruneLogs_();
+check('Logs: all rows old -> emptied without an error', sheets.Errors.rows, sheets.Errors.getLastRow() === 1);
+post({ action: 'receivePO', key: 'kkk', items: [] });
+check('Logs: next error is written right under the header', sheets.Errors.rows[1], sheets.Errors.getLastRow() === 2 && /Nothing to receive/.test(sheets.Errors.rows[1][3]));
+sheets.PickLists.rows.length = 1; sheets.PickLists.rows.push(['PL-old', new Date('2020-01-01'), 'auto', 1, 1, 'gid://Order/9']);
+r = post({ action: 'createPickList', key: 'kkk' });
+check('Pick list: created even when every saved list is old (month without lists)', r, r.ok && r.created && sheets.PickLists.getLastRow() === 2 && sheets.PickLists.rows[1][0] !== 'PL-old');
+
+const realNow = ctx.Date.now; let fakeT = 0; ctx.Date.now = () => (fakeT += 200000);
+r = post({ action: 'expiryReport', key: 'kkk', refresh: true }); ctx.Date.now = realNow;
+check('Expiry: stops before Google\'s 6-minute limit and says the list is cut short', r, r.ok && r.truncated === true && r.scanned === 3);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

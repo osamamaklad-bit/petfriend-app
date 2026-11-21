@@ -193,7 +193,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-20.3</span></small></h1>
+  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -791,11 +791,14 @@
     renderOrders();
   });
 
+  // anything counted on the open order (received units, or Receive's rejected / cancelled counts)
+  function hasScans() { return totalGot() > 0 || state.items.some(function (i) { return i.rej > 0 || i.can > 0; }); }
+
   // ---------- mode ----------
   function setMode(m, initial) {
     if (!initial) {
       if (m === state.mode || state.busy) return;
-      if (state.order && totalGot() > 0 && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
+      if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
     }
     state.mode = m;
     store.set('mode', m);
@@ -846,7 +849,7 @@
   // From the Pick list (through the main page): open an order in Fulfill
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
-    if (state.order && totalGot() > 0 && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
+    if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
     state.order = null; state.items = [];
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));

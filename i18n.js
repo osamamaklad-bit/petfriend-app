@@ -34,6 +34,8 @@
     'waiting to be fulfilled': 'في انتظار التجهيز',
     'Could not read POS sales': 'تعذر قراءة مبيعات الكاشير',
     'Loading...': 'جارٍ التحميل...',
+    "Can't reach the server. Check the internet, or try another network (for example mobile data).": 'مش قادر يوصل للسيرفر. اتأكد من النت، أو جرب شبكة تانية (مثلاً بيانات الموبايل).',
+    'The server sent an unexpected reply. Try again in a minute.': 'السيرفر رد برد غير متوقع. جرب تاني بعد دقيقة.',
     'Expiry dates': 'تواريخ الصلاحية',
     'Expired': 'منتهي',
     '30 days': '30 يوم', '60 days': '60 يوم', '90 days': '90 يوم',
