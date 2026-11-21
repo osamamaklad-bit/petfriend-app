@@ -10,6 +10,7 @@
   "theme_color": "#d9001b",
   "shortcuts": [
     { "name": "POS", "url": "./#pos" },
+    { "name": "Check", "url": "./#check" },
     { "name": "Orders", "url": "./#orders" },
     { "name": "Pick list", "url": "./#picklist" },
     { "name": "Shipments", "url": "./#shipments" },

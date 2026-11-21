@@ -153,6 +153,7 @@
   .ord .q b { display: block; font-size: 20px; color: var(--ink); }
 
   /* ---------- mode switch (fulfill / returns) ---------- */
+  .modes[hidden] { display: none !important; }
   .modes { display: flex; gap: 4px; padding: 4px; margin-bottom: 10px; background: var(--card); border: 2px solid var(--line); border-radius: 12px; }
   .modes button { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 10px; border-radius: 8px; font-size: 16px; font-weight: 700; }
   .modes button.on { background: var(--accent); color: var(--on); }
@@ -219,7 +220,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Orders<small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.2</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-21.3</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -299,6 +300,8 @@
   const state = { mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
   const isRet = () => state.mode === 'return';
   const isRcv = () => state.mode === 'receive';   // receiving stock from suppliers (purchase orders)
+  // the Check tab of the main page opens this page as orders/index.html?only=check: Check mode only
+  const ONLY_CHECK = /[?&]only=check\b/.test(location.search);
   const isChk = () => state.mode === 'check';     // check a product: price, stock, bin, expiry (read-only)
   function idleMsg() {
     if (isChk()) return 'Check a product: scan its barcode, or type a SKU or name.';
@@ -938,7 +941,7 @@
       if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
     }
     state.mode = m;
-    store.set('mode', m);
+    if (!ONLY_CHECK) store.set('mode', m);   // the Check tab never changes the Orders tab's mode
     document.body.classList.toggle('ret', m === 'return');
     document.body.classList.toggle('rcv', m === 'receive');
     document.body.classList.toggle('chk', m === 'check');
@@ -988,14 +991,19 @@
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
   // From the Pick list (through the main page): open an order in Fulfill
   window.addEventListener('message', function (e) {
-    if (e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
+    if (ONLY_CHECK || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
     if (state.order && hasScans() && !confirm(T('Discard the scans for ' + state.order.name + '?'))) return;
     state.order = null; state.items = [];
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));
   });
 
-  setMode(['return', 'receive', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
+  if (ONLY_CHECK) {
+    $('modes').hidden = true;
+    $('pageTitle').textContent = 'Pet Friend Check';
+    document.title = 'Pet Friend Check';
+  }
+  setMode(ONLY_CHECK ? 'check' : ['return', 'receive', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
   if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
   else if (isRet() || isChk()) say(idleMsg());
   else loadList();

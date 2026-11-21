@@ -6,7 +6,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 ## Layout
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
-  `pos/`, `orders/` (Fulfill · Returns · Receive · Check), `picklist/`, `shipments/`, `today/`.
+  `pos/`, `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Receive · Check),
+  `picklist/`, `shipments/`, `today/`.
   The main page passes messages between tabs: `pf-hide` (camera off), `pf-show` (refresh) and `pf-open-order`
   (from the Pick list, opens an order in Fulfill).
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated

@@ -35,6 +35,8 @@
     'Could not read POS sales': 'تعذر قراءة مبيعات الكاشير',
     'Loading...': 'جارٍ التحميل...',
     'Check': 'كشف',
+    'Pet Friend Check': 'كشف منتج - بت فريند',
+    'Check a product': 'كشف منتج',
     'Check a product: scan its barcode, or type a SKU or name.': 'كشف منتج: امسح الباركود، أو اكتب الـ SKU أو الاسم.',
     'Barcode, SKU or name': 'باركود أو SKU أو اسم',
     'In stock:': 'المخزون:',
