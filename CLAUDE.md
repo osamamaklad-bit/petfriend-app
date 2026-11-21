@@ -56,6 +56,10 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   zero padding), then by name; read-only except the expiry date. Shopify 2026 variants can have several
   barcodes (`barcodes`); `barcode` is deprecated but still returns the first one.
 - Expiry report (Today): active products with `custom.expiry_date` past or within 90 days, cached 1 hour.
+- Bosta bulky check (`syncBosta`, hourly trigger from `installTrigger`): new shipments come into `Tracking` from
+  shipment photos, the Bosta wallet feed (`BOSTA_FEES_URL`, up to `BOSTA_FEES_PAGES` pages, default 5) and Bosta
+  numbers on Shopify fulfillments (last 7 days). Checked newest first; sizes matching `FLAG_REGEX` (default
+  `bulky`) go to `Bulky`. Each run saves `BOSTA_LAST_SYNC` (shown in Today); failures give one Errors line per run.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

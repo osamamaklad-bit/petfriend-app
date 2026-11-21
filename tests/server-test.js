@@ -15,7 +15,7 @@ function sheet(name) { return sheets[name] || (sheets[name] = { rows: [], name,
     getValue: () => (s.rows[r - 1] || [])[c - 1], setValue: v => { s.rows[r - 1][c - 1] = v; },
     getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (s.rows[r - 1 + i] || [])[c - 1 + j])),
     clearContent: () => { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) if (s.rows[r - 1 + i]) s.rows[r - 1 + i][c - 1 + j] = ''; },
-    setValues: vals => vals.forEach((row, i) => { s.rows[r - 1 + i] = s.rows[r - 1 + i] || []; row.forEach((v, j) => s.rows[r - 1 + i][c - 1 + j] = v); }) }; },
+    setValues: vals => vals.forEach((row, i) => { s.rows[r - 1 + i] = s.rows[r - 1 + i] || []; row.forEach((v, j) => s.rows[r - 1 + i][c - 1 + j] = typeof v === 'string' && v[0] === "'" ? v.slice(1) : v); }) }; },
   getParent: () => ({ getName: () => 'Test sheet' }) }); }
 function shopifyAnswer(url, body, headers) {
   const q = body.query;
@@ -81,6 +81,10 @@ function shopifyAnswer(url, body, headers) {
     const P = (id, title, exp, inv, sku, vb, pb) => ({ id, title, totalInventory: inv, pExp: exp ? { value: exp } : null, pBin: pb ? { value: pb } : null, featuredMedia: null, variants: { nodes: [{ sku, barcode: '', vBin: vb ? { value: vb } : null }] } });
     return { data: { products: { nodes: p2 ? [P('p4', 'Far', '2027-12-01', 9, 'F'), P('p5', 'In 30', '2026-12-15', 4, 'T', '', '["C-1","C-2"]')]
       : [P('p1', 'Expired', '2026-11-01', 3, 'E', 'A-1'), P('p2', 'No date', null, 5, 'N'), P('p3', 'Today', '2026-11-15', 0, 'D')], pageInfo: { hasNextPage: !p2, endCursor: p2 ? null : 'e1' } } } }; }
+  if (/fulfillment_status:shipped/.test(JSON.stringify(body.variables || {}))) return { data: { orders: { nodes: [
+    { name: '#14341', fulfillments: [{ trackingInfo: [{ number: '6660000001', company: 'Bosta', url: null }] }] },
+    { name: '#14339', fulfillments: [{ trackingInfo: [{ number: 'JD0141', company: 'Aramex', url: null }] }, { trackingInfo: [] }] },
+    { name: '#14338', fulfillments: [] } ] } } };
   if (/returnableFulfillments/.test(q)) return { data: { returnableFulfillments: { nodes: [{ fulfillment: { location: { id: 'L1' } }, returnableFulfillmentLineItems: { nodes: [{ quantity: 2, fulfillmentLineItem: { id: 'FLI1', lineItem: { title: 'Food', sku: 'F1', image: null, variant: { barcode: '111', sku: 'F1' } } } }] } }] } } };
   if (/orders\(first: 1, query: \$q\) \{ nodes/.test(q)) return { data: { orders: { nodes: [{ id: 'gid://Order/1', name: '#1001' }] } } };
   if (/returnCreate/.test(q)) return { data: { returnCreate: { return: { id: 'R', name: '#1001-R1', reverseFulfillmentOrders: { nodes: [{ lineItems: { nodes: [{ id: 'RLI1', totalQuantity: 1, fulfillmentLineItem: { id: 'FLI1' } }] } }] } }, userErrors: [] } } };
@@ -104,7 +108,10 @@ const ctx = {
   UrlFetchApp: { fetch(url, o = {}) { const body = o.payload && typeof o.payload === 'string' ? JSON.parse(o.payload) : (o.payload || {});
     fetches.push({ ver: (url.match(/api\/([\d-]+)\//) || [])[1], url, token: (o.headers || {})['X-Shopify-Access-Token'], q: (body.query || '') });
     let ans, code = 200;
-    if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: '#1001' } }; }
+    if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
+      ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
+    else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
+    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: '#1001' } }; }
     else ans = shopifyAnswer(url, body);
     return { getResponseCode: () => code, getContentText: () => JSON.stringify(ans) }; } },
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
@@ -370,6 +377,21 @@ check('Check product: unknown number -> empty list, no name search', r, r.ok && 
 r = post({ action: 'lookupProduct', key: 'kkk', code: 'a"b OR sku:*' });
 check('Check product: quotes in the search are removed', ctx.__lookQ.at(-2), r.ok && !/a"b/.test(ctx.__lookQ.at(-2)));
 r = post({ action: 'lookupProduct', key: 'bad', code: '6723085' }); check('Check product: wrong key refused', r, r.ok === false);
+
+// ---- Bosta: several wallet pages + Shopify numbers, newest first, status for Today, errors logged once
+props.BOSTA_FEES_URL = 'https://app.bosta.co/api/v2/wallet/transactions?page=1&pageSize=50';
+sheets.Tracking.rows.push(["7770000001", new Date(), 0, '', '', false]);
+const errN = sheets.Errors.getLastRow();
+let st = ctx.syncBosta({ triggerUid: '1' });
+const trk = sheets.Tracking.rows.map(x => String(x[0]));
+check('Bosta: numbers from wallet pages 1 and 2 (number or text) imported once', st.fees, st.fees.pages === 3 && ['5550000001', '5550000002'].every(t => trk.filter(x => x === t).length === 1));
+check('Bosta: Bosta numbers on Shopify fulfillments imported, other carriers skipped', st.shopify, st.shopify.found === 1 && trk.filter(x => x === '6660000001').length === 1 && !trk.some(x => /0141/.test(x)));
+check('Bosta: a failing shipment (401) -> one line in Errors with the count', sheets.Errors.rows.slice(1, errN + 1), st.failed === 1 && sheets.Errors.getLastRow() === errN + 1 && /1 shipment\(s\) failed.*7770000001.*401/.test(sheets.Errors.rows[errN][3]));
+check('Bosta: newly found bulky shipment logged to Activity', st.bulkyNew, st.bulkyNew >= 1 && sheets.Activity.rows.some(x => x[1] === 'Shipments' && x[2] === 'bulky'));
+r = post({ action: 'dailySummary', key: 'kkk' });
+check('Today: Bosta sync status (last run, open shipments, bulky today)', r.bosta, r.ok && r.bosta.last && r.bosta.last.checked === st.checked && r.bosta.open >= 1 && typeof r.bosta.trigger === 'boolean' && r.bulky.count >= 1);
+st = ctx.syncBosta({ triggerUid: '1' });
+check('Bosta: second run adds nothing twice', st.fees, st.fees.added === 0 && st.shopify.added === 0);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-21.2';
+const SERVER_VERSION = '2026-11-21.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1101,6 +1101,8 @@ function dailySummary_() {
     pickLists: tally(pick('Pick list', ['auto', 'manual'])),
     photos: tally(pick('Shipments', ['photo'])),
     openOrders: openOrders,
+    bosta: (function () { try { return bostaStatus_(); } catch (e) { return { error: e.message }; } })(),
+    bulky: tally(pick('Shipments', ['bulky'])),
     errors: { count: errs.length, last: errs.slice(-10).reverse().map(function (x) {
       return { time: new Date(x[0]).toISOString(), part: String(x[1]), action: String(x[2]), message: String(x[3]).replace(/^'/, '') };
     }) }
@@ -1358,34 +1360,70 @@ function items_(d) {
   return pd ? pd.description + ' (items: ' + pd.itemsCount + ')' : '';
 }
 /** Pull tracking numbers of ALL shipments from the same Bosta fees feed your fees script uses
- *  (BOSTA_FEES_URL, covering recent days) and add unseen ones to Tracking with 0 photos. */
+ *  (BOSTA_FEES_URL, e.g. .../wallet/transactions?page=1&pageSize=50) and add unseen ones to Tracking with
+ *  0 photos. Reads up to BOSTA_FEES_PAGES pages (default 5): page 1 alone holds only the newest 50 entries,
+ *  and payouts and other entries without a shipment take room there too. */
 function importFromFees() {
-  const url = P.getProperty('BOSTA_FEES_URL'); if (!url) return;
+  const url = P.getProperty('BOSTA_FEES_URL'); if (!url) return { pages: 0, found: 0, added: 0, skipped: 'no BOSTA_FEES_URL' };
   const h = {}; h[P.getProperty('BOSTA_AUTH_HEADER_NAME') || 'Authorization'] = P.getProperty('BOSTA_API_KEY');
-  const res = UrlFetchApp.fetch(url, { headers: h, muteHttpExceptions: true });
-  if (res.getResponseCode() !== 200) throw new Error('Fees feed ' + res.getResponseCode());
+  const maxPages = /[?&]page=\d+/.test(url) ? Math.max(1, Number(P.getProperty('BOSTA_FEES_PAGES')) || 5) : 1;
   const found = {};
-  (function walk(o) {
-    if (Array.isArray(o)) return o.forEach(walk);
-    if (o && typeof o === 'object') Object.keys(o).forEach(k => {
-      if (/tracking/i.test(k) && /^\d{6,}$/.test(String(o[k]))) found[String(o[k]).slice(-10)] = 1; else walk(o[k]);
-    });
-  })(JSON.parse(res.getContentText()));
+  let pages = 0;
+  for (let n = 1; n <= maxPages; n++) {
+    const res = UrlFetchApp.fetch(maxPages > 1 ? url.replace(/([?&]page=)\d+/, '$1' + n) : url, { headers: h, muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) { if (n === 1) throw new Error('Fees feed ' + res.getResponseCode()); break; }
+    pages++;
+    const before = Object.keys(found).length;
+    let entries = 0;
+    (function walk(o) {
+      if (Array.isArray(o)) { entries += o.length; return o.forEach(walk); }
+      if (o && typeof o === 'object') Object.keys(o).forEach(k => {
+        if (/tracking/i.test(k) && /^\d{6,}$/.test(String(o[k]))) found[String(o[k]).slice(-10)] = 1; else walk(o[k]);
+      });
+    })(JSON.parse(res.getContentText()));
+    if (!entries || Object.keys(found).length === before && n > 1) break;   // an empty page: the end
+  }
+  const added = addTracking_(Object.keys(found));
+  return { pages: pages, found: Object.keys(found).length, added: added };
+}
+/** Adds tracking numbers that are not in Tracking yet (0 photos, not done). Returns how many were added. */
+function addTracking_(list) {
   const T = sh_('Tracking'), have = {};
   T.getDataRange().getValues().forEach(r => have[String(r[0])] = 1);
-  const add = Object.keys(found).filter(tn => !have[tn]).map(tn => ["'" + tn, new Date(), 0, '', '', false]);
+  const seen = {}, add = list.filter(tn => tn && !have[tn] && !seen[tn] && (seen[tn] = 1)).map(tn => ["'" + tn, new Date(), 0, '', '', false]);
   if (add.length) T.getRange(T.getLastRow() + 1, 1, add.length, 6).setValues(add);
+  return add.length;
+}
+/** Second source: Bosta tracking numbers written on Shopify fulfillments (e.g. by Bosta's Shopify app) in the
+ *  last 7 days. A number from another carrier is harmless: Bosta answers 404 and the row is marked NOT IN BOSTA. */
+function importFromShopify_() {
+  if (!P.getProperty('SHOPIFY_STORE')) return { found: 0, added: 0, skipped: 'no SHOPIFY_STORE' };
+  const since = Utilities.formatDate(new Date(Date.now() - 7 * 864e5), 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'");
+  const d = shopify_('query($q: String!) { orders(first: 100, query: $q, sortKey: UPDATED_AT, reverse: true) { nodes { name ' +
+    'fulfillments(first: 5) { trackingInfo(first: 3) { number company url } } } } }', { q: "updated_at:>='" + since + "' fulfillment_status:shipped" });
+  const found = [];
+  d.orders.nodes.forEach(o => (o.fulfillments || []).forEach(f => (f.trackingInfo || []).forEach(t => {
+    const num = String(t.number || '').replace(/\D/g, ''), isBosta = /bosta/i.test((t.company || '') + ' ' + (t.url || ''));
+    if (num.length >= 8 && (isBosta || (!t.company && num.length <= 10))) found.push(num.slice(-10));
+  })));
+  return { found: found.length, added: addTracking_(found) };
 }
 function syncBosta(only) {
   if (typeof only !== 'string') only = '';        // a time trigger passes an event object here
-  if (!only) try { importFromFees(); } catch (e) { console.error('importFromFees', e.message); logError_('Shipments', 'Bosta fees import', e); }
+  const st = { at: new Date().toISOString(), fees: null, shopify: null, checked: 0, bulkyNew: 0, bulkyUpdated: 0, failed: 0, firstError: '' };
+  if (!only) {
+    try { st.fees = importFromFees(); } catch (e) { st.fees = { error: e.message }; logError_('Shipments', 'Bosta fees import', e); }
+    try { st.shopify = importFromShopify_(); } catch (e) { st.shopify = { error: e.message }; logError_('Shipments', 'Bosta numbers from Shopify', e); }
+  }
   const t0 = Date.now(), flag = new RegExp(P.getProperty('FLAG_REGEX') || 'bulky', 'i');
   const T = sh_('Tracking'), data = T.getDataRange().getValues();
-  for (let i = 1; i < data.length && Date.now() - t0 < 300000; i++) {
+  // newest first, so new shipments are checked even when an old backlog does not fit in one run
+  for (let i = data.length - 1; i >= 1 && Date.now() - t0 < 300000; i--) {
     if (data[i][5] === true && !only) continue;
     const tn = String(data[i][0]);
     if (only && tn !== only) continue;
     try {
+      st.checked++;
       const d = bosta_(tn), p = pricing_(d), old = (Date.now() - new Date(data[i][1])) > 60 * 864e5;
       T.getRange(i + 1, 4, 1, 3).setValues([[d.state && d.state.value, p.size, p.final !== '' || old]]);
       if (!flag.test(p.size || '')) continue;
@@ -1394,14 +1432,28 @@ function syncBosta(only) {
       const row = [ "'" + tn, d.businessReference, p.size, p.vat, p.ship, p.sizeCost, p.material, p.final,
         d.state && d.state.value, items_(d), links, now, p.final !== '' ? now : '', p.final !== '' ? 'Charged' : 'Flagged' ];
       if (r) { const cur = B.getRange(r, 1, 1, 14).getValues()[0]; row[11] = cur[11]; if (!row[12]) row[12] = cur[12];
-        B.getRange(r, 1, 1, 14).setValues([row]); }
-      else B.appendRow(row);
+        B.getRange(r, 1, 1, 14).setValues([row]); st.bulkyUpdated++; }
+      else { B.appendRow(row); st.bulkyNew++; logActivity_('Shipments', 'bulky', tn, 1, { size: p.size, order: d.businessReference }); }
     } catch (e) {
       console.error(tn, e.message);
       if (/Bosta (400|404)/.test(e.message))             // not a Bosta shipment (misread): mark & stop retrying
         T.getRange(i + 1, 4, 1, 3).setValues([['NOT IN BOSTA', '', true]]);
+      else { st.failed++; if (!st.firstError) st.firstError = tn + ': ' + e.message; }
     }
   }
+  // e.g. an expired Bosta key fails every shipment: one line in Errors per run, not one per shipment
+  if (st.failed) logError_('Shipments', 'Bosta sync', new Error(st.failed + ' shipment(s) failed. First: ' + st.firstError));
+  if (!only) try { P.setProperty('BOSTA_LAST_SYNC', JSON.stringify(st)); } catch (e) {}
+  return st;
+}
+/** For the Today tab: the last automatic Bosta sync, and the open (not finished) shipments. */
+function bostaStatus_() {
+  let last = null;
+  try { last = JSON.parse(P.getProperty('BOSTA_LAST_SYNC') || 'null'); } catch (e) {}
+  const trig = (function () { try { return ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'syncBosta'); } catch (e) { return null; } })();
+  let open = 0, tracked = 0;
+  try { rows_('Tracking').forEach(r => { tracked++; if (r[5] !== true) open++; }); } catch (e) {}
+  return { last: last, trigger: trig, tracked: tracked, open: open };
 }
 
 /* =====================================================================================

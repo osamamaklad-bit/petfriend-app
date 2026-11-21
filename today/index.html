@@ -45,6 +45,7 @@
   .err-row .m { color: var(--muted); word-break: break-word; margin-top: 2px; }
   .empty { color: var(--muted); padding: 6px 2px; font-size: 14px; }
   .tile.exp .v { color: var(--warn); } .tile.exp.has { border-color: var(--warn); }
+  .tile.bosta.has { border-color: var(--warn); } .tile.bosta.has .s:first-of-type { color: var(--warn); font-weight: 600; }
   .exbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
   .exbar button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 600; }
   .exbar button.on { background: var(--warn); border-color: var(--warn); color: var(--on); }
@@ -97,6 +98,10 @@
   function say(msg, kind) { const b = $('banner'); b.className = kind || ''; b.textContent = msg; }
   const isAr = () => window.pfLang && window.pfLang.get() === 'ar';
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString(isAr() ? 'ar-EG-u-nu-latn' : [], { hour: '2-digit', minute: '2-digit' }) : '';
+  // a time today, or day + time when it was on another day (e.g. a Bosta check that stopped running)
+  const fmtWhen = (iso) => { if (!iso) return ''; const d = new Date(iso);
+    return d.toDateString() === new Date().toDateString() ? fmtTime(iso)
+      : d.toLocaleString(isAr() ? 'ar-EG-u-nu-latn' : [], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
   const money = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   async function load(quiet) {
@@ -138,6 +143,16 @@
     box.appendChild(tile('', 'Pick lists', String(d.pickLists.count), [d.pickLists.qty + (d.pickLists.qty === 1 ? ' order' : ' orders')]));
     box.appendChild(tile('', 'Shipment photos', String(d.photos.qty), [d.photos.count + (d.photos.count === 1 ? ' shipment' : ' shipments')]));
     box.appendChild(tile('err' + (d.errors.count ? ' has' : ''), 'Errors today', String(d.errors.count), [d.errors.count ? 'see the list below' : 'all good']));
+    // Bosta bulky check (hourly): is it running, and what did it find today
+    const bo = d.bosta || {}, lb = bo.last, bk = d.bulky || { count: 0 };
+    const age = lb && lb.at ? (Date.now() - new Date(lb.at).getTime()) / 36e5 : null;
+    const bad = bo.trigger === false || age == null || age > 2 || (lb && lb.failed > 0);
+    box.appendChild(tile('bosta' + (bad ? ' has' : ''), 'Bulky shipments today', String(bk.count), [
+      bo.trigger === false ? 'Hourly Bosta check is off' : '',
+      lb && lb.at ? 'Last Bosta check ' + fmtWhen(lb.at) : 'Bosta check never ran',
+      lb ? lb.checked + (lb.checked === 1 ? ' shipment checked' : ' shipments checked') : '',
+      lb && lb.failed ? lb.failed + ' failed' : '',
+      bo.open != null ? bo.open + ' shipments followed' : '']));
     expTile();
     const eb = $('errors'); eb.innerHTML = '';
     if (!d.errors.last.length) { eb.innerHTML = '<div class="empty">No errors today.</div>'; return; }
