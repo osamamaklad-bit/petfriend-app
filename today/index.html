@@ -141,7 +141,9 @@
     box.appendChild(tile('rcv', 'Received', String(r.qty), [r.count + (r.count === 1 ? ' purchase order' : ' purchase orders'),
       r.extra ? r.extra + ' extra' : '', r.rejected ? r.rejected + ' rejected' : '', r.canceled ? r.canceled + ' cancelled' : '']));
     box.appendChild(tile('', 'Pick lists', String(d.pickLists.count), [d.pickLists.qty + (d.pickLists.qty === 1 ? ' order' : ' orders')]));
-    box.appendChild(tile('', 'Shipment photos', String(d.photos.qty), [d.photos.count + (d.photos.count === 1 ? ' shipment' : ' shipments')]));
+    const rp = d.returnPhotos || { count: 0, qty: 0 };
+    box.appendChild(tile('', 'Shipment photos', String(d.photos.qty), [d.photos.count + (d.photos.count === 1 ? ' shipment' : ' shipments'),
+      rp.qty ? rp.qty + (rp.qty === 1 ? ' return photo' : ' return photos') : '']));
     box.appendChild(tile('err' + (d.errors.count ? ' has' : ''), 'Errors today', String(d.errors.count), [d.errors.count ? 'see the list below' : 'all good']));
     // Bosta bulky check (hourly): is it running, and what did it find today
     const bo = d.bosta || {}, lb = bo.last, bk = d.bulky || { count: 0 };

@@ -13,7 +13,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
   live. Data (product names, customers, codes, bins, dates) must carry `data-no-i18n` and `dir="ltr"`.
 - `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
-- `settings.js`: the Settings window (PIN / app key), shared by every tab.
+- `settings.js`: the Settings window (PIN / app key, and the English / Arabic choice), shared by every tab. The tab bar
+  has no language button; tab order: POS · Check · Orders · Today · Pick list · Shipments. Arabic brand name: بتفريند.
 - `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
   Printed barcodes are checked by decoding them with html5-qrcode in a test.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
@@ -60,6 +61,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   shipment photos, the Bosta wallet feed (`BOSTA_FEES_URL`, up to `BOSTA_FEES_PAGES` pages, default 5) and Bosta
   numbers on Shopify fulfillments (last 7 days). Checked newest first; sizes matching `FLAG_REGEX` (default
   `bulky`) go to `Bulky`. Each run saves `BOSTA_LAST_SYNC` (shown in Today); failures give one Errors line per run.
+- Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
+- Shipments Returns: `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
+  never touches `Tracking`; logged as `return photo`.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

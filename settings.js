@@ -25,10 +25,14 @@
     '.pfset .b button{font:inherit;font-weight:600;padding:11px 18px;border-radius:10px;cursor:pointer}' +
     '.pfset .c{background:#fff;color:inherit;border:2px solid #b9ecf1}' +
     '.pfset .ok{background:#e3031b;color:#fff;border:2px solid #e3031b}' +
+    '.pfset .lang{display:flex;gap:6px;margin-top:5px}' +
+    '.pfset .lang button{flex:1;font:inherit;font-size:16px;font-weight:600;padding:10px;border:2px solid #b9ecf1;border-radius:10px;background:#fff;color:inherit;cursor:pointer}' +
+    '.pfset .lang button.on{background:#e3031b;border-color:#e3031b;color:#fff}' +
     '@media (prefers-color-scheme:dark){' +
     '.pfset{background:#17282b;color:#eaf7f8}.pfset label{color:#8fb0b3}' +
     '.pfset input,.pfset .eye,.pfset .c{background:#0f1c1e;border-color:#27403f}' +
-    '.pfset input:focus{border-color:#ff4a5c}.pfset .ok{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}}';
+    '.pfset input:focus{border-color:#ff4a5c}.pfset .ok{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}' +
+    '.pfset .lang button{background:#0f1c1e;border-color:#27403f}.pfset .lang button.on{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}}';
 
   function addStyle() {
     if (document.getElementById('pfset-css')) return;
@@ -84,6 +88,30 @@
         form.appendChild(lab);
         inputs[f.key] = inp;
       });
+
+      // The Settings window of every tab also holds the language (English / Arabic). It applies at once,
+      // and the other tabs follow (they share the saved choice). Not shown in other windows (e.g. Edit expiry).
+      if (window.pfLang && (opts.language || opts.title === 'Settings')) {
+        var ll = document.createElement('label');
+        ll.appendChild(document.createTextNode('Language'));
+        var lr = document.createElement('div');
+        lr.className = 'lang';
+        [['en', 'English'], ['ar', 'العربية']].forEach(function (x) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = x[1];
+          b.setAttribute('data-no-i18n', '');
+          b.dataset.lang = x[0];
+          if (window.pfLang.get() === x[0]) b.className = 'on';
+          b.addEventListener('click', function () {
+            window.pfLang.set(x[0]);
+            lr.querySelectorAll('button').forEach(function (y) { y.className = y.dataset.lang === x[0] ? 'on' : ''; });
+          });
+          lr.appendChild(b);
+        });
+        ll.appendChild(lr);
+        form.appendChild(ll);
+      }
 
       var bar = document.createElement('div');
       bar.className = 'b';

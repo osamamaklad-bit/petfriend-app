@@ -55,7 +55,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-21.3';
+const SERVER_VERSION = '2026-11-21.4';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -273,6 +273,7 @@ const ORDER_ACTIONS = {
   listPickLists: function () { return listPickLists_(); },
   getPickList: function (r) { return getPickList_(r.id); },
   createPickList: function () { return createPickList_('manual'); },
+  setPickListDone: function (r) { return setPickListDone_(r); },
   dailySummary: function () { return dailySummary_(); },
   expiryReport: function (r) { return expiryReport_(r); },
   lookupProduct: function (r) { return lookupProduct_(r); }
@@ -967,10 +968,46 @@ function deleteDataRows_(s, from, count) {
 
 /** For the app: the pick lists of the last 7 days, newest first (summaries only). */
 function listPickLists_() {
-  const cutoff = Date.now() - 7 * 864e5;
+  const cutoff = Date.now() - 7 * 864e5, done = plDone_();
   const lists = plRows_().map(plSummary_).filter(function (x) { return new Date(x.createdAt).getTime() >= cutoff; })
-    .sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); }).slice(0, 50);
+    .sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); }).slice(0, 50)
+    .map(function (x) { return Object.assign(x, { done: !!done[x.id], doneAt: done[x.id] || '' }); });
   return { ok: true, pickLists: lists };
+}
+
+/* Finished pick lists: the app hides them. Kept in their own sheet (one row per finished list), so every phone
+ * sees the same thing; rows of lists that no longer exist are removed. */
+const PL_DONE_SHEET = 'PickListsDone';
+function plDoneSheet_() {
+  const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+  let s = ss.getSheetByName(PL_DONE_SHEET);
+  if (!s) { s = ss.insertSheet(PL_DONE_SHEET); s.appendRow(['Id', 'DoneAt']); s.setFrozenRows(1); }
+  return s;
+}
+function plDone_() {
+  const s = plDoneSheet_(), n = s.getLastRow(), out = {};
+  if (n < 2) return out;
+  s.getRange(2, 1, n - 1, 2).getValues().forEach(function (r) { if (r[0]) out[String(r[0])] = new Date(r[1]).toISOString(); });
+  return out;
+}
+/** done = true: mark the pick list finished (hidden in the app); false: open it again. */
+function setPickListDone_(r) {
+  const id = String((r && r.id) || '');
+  const ids = {}; plRows_().forEach(function (x) { ids[String(x[0])] = 1; });
+  if (!ids[id]) throw new Error('Pick list not found');
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const s = plDoneSheet_(), n = s.getLastRow();
+    const col = n > 1 ? s.getRange(2, 1, n - 1, 1).getValues() : [];
+    // drop this list's old mark and marks of lists that no longer exist (bottom up, so row numbers stay right)
+    for (let i = col.length - 1; i >= 0; i--) {
+      const v = String(col[i][0]);
+      if (v === id || !ids[v]) deleteDataRows_(s, i + 2, 1);
+    }
+    if (r.done !== false) s.appendRow([id, new Date()]);
+  } finally { lock.releaseLock(); }
+  logActivity_('Pick list', r.done !== false ? 'done' : 'reopen', id, 0);
+  return { ok: true, id: id, done: r.done !== false };
 }
 
 /** For the app: one pick list with its products. */
@@ -978,7 +1015,9 @@ function getPickList_(id) {
   const row = plRows_().filter(function (r) { return String(r[0]) === String(id); })[0];
   if (!row) throw new Error('Pick list not found');
   const data = row.slice(6).filter(function (c) { return c !== '' && c != null; }).join('');
-  return { ok: true, pickList: Object.assign(plSummary_(row), { items: data ? JSON.parse(data) : [], orderStatus: orderStatus_(String(row[5] || '')) }) };
+  const done = plDone_();
+  return { ok: true, pickList: Object.assign(plSummary_(row), { items: data ? JSON.parse(data) : [], orderStatus: orderStatus_(String(row[5] || '')),
+    done: !!done[String(id)], doneAt: done[String(id)] || '' }) };
 }
 
 /** Current fulfillment status of a pick list's orders: { '#1001': 'FULFILLED', ... } (empty if Shopify can't be read). */
@@ -1100,6 +1139,7 @@ function dailySummary_() {
     received: received,
     pickLists: tally(pick('Pick list', ['auto', 'manual'])),
     photos: tally(pick('Shipments', ['photo'])),
+    returnPhotos: tally(pick('Shipments', ['return photo'])),
     openOrders: openOrders,
     bosta: (function () { try { return bostaStatus_(); } catch (e) { return { error: e.message }; } })(),
     bulky: tally(pick('Shipments', ['bulky'])),
@@ -1209,7 +1249,7 @@ function expiryReport_(r) {
  * Shipments: photos + Bosta bulky tracker
  * ===================================================================================== */
 
-const SHIP_FNS = { saveShipment: saveShipment, saveOther: saveOther, getShipment: getShipment, checkPin: checkPin };
+const SHIP_FNS = { saveShipment: saveShipment, saveReturn: saveReturn, saveOther: saveOther, getShipment: getShipment, checkPin: checkPin };
 const DEFAULT_URL = 'https://app.bosta.co/api/v2/deliveries/business/{tn}';
 const HEAD = {
   Shipments: ['Time', 'Tracking', 'FileId', 'PhotoURL', 'Note', 'ScannedBy', 'Carrier'],
@@ -1279,9 +1319,38 @@ function saveShipment(pin, tn, photos, note, force) {
   } finally { lock.releaseLock(); }
 }
 
+/** A shipment coming BACK (returned by Bosta or by the customer): photos saved to Shipments with carrier
+ *  "Bosta return". Does not touch Tracking (that sheet follows outgoing shipments and their fees). */
+function saveReturn(pin, tn, photos, note, force) {
+  pin_(pin); tn = String(tn).replace(/\D/g, '').slice(-10);
+  if (!/^\d{10}$/.test(tn)) throw new Error('Need at least 10 digits of the barcode');
+  if (!photos || !photos.length) throw new Error('Add at least one photo');
+  if (!force && P.getProperty('BOSTA_API_KEY')) {
+    try { bosta_(tn); } catch (e) {               // block misreads: number must exist in Bosta
+      if (/Bosta (400|404)/.test(e.message)) throw new Error(tn + ' not found in Bosta. Misread, scan again.');
+    }
+  }
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    if (!force) {
+      const first = rows_('Shipments').find(x => String(x[1]) === tn && /return$/i.test(String(x[6] || '')));
+      if (first) return { duplicate: true, at: Utilities.formatDate(new Date(first[0]), 'Africa/Cairo', 'dd MMM HH:mm') };
+    }
+    const user = Session.getActiveUser().getEmail() || 'app', now = new Date(), f = folder_(), s = carrierCol_();
+    photos.forEach((d, i) => {
+      const file = f.createFile(Utilities.newBlob(Utilities.base64Decode(d.split(',')[1]), 'image/jpeg',
+        'RETURN_' + tn + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg'));
+      s.appendRow([now, "'" + tn, file.getId(), file.getUrl(), note || '', user, 'Bosta return']);
+    });
+    logActivity_('Shipments', 'return photo', tn, photos.length);
+    return { saved: photos.length };
+  } finally { lock.releaseLock(); }
+}
+
 /** Other carriers / no tracking: saved to Shipments only (never to Tracking, so Bosta sync ignores it). */
-function saveOther(pin, carrier, ref, photos, note) {
+function saveOther(pin, carrier, ref, photos, note, isReturn) {
   pin_(pin); carrier = String(carrier || '').trim() || 'Other';
+  if (isReturn) carrier += ' return';
   if (!photos || !photos.length) throw new Error('Add at least one photo');
   const now = new Date();
   ref = String(ref || '').trim().toUpperCase().replace(/\s+/g, '') ||
@@ -1294,7 +1363,7 @@ function saveOther(pin, carrier, ref, photos, note) {
         ref.replace(/[^\w-]/g, '_') + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg'));
       s.appendRow([now, "'" + ref, file.getId(), file.getUrl(), note || '', user, carrier]);
     });
-    logActivity_('Shipments', 'photo', ref, photos.length, { carrier: carrier });
+    logActivity_('Shipments', isReturn ? 'return photo' : 'photo', ref, photos.length, { carrier: carrier });
     return { saved: photos.length, ref: ref };
   } finally { lock.releaseLock(); }
 }
@@ -1304,14 +1373,17 @@ function getShipment(pin, q) {
   pin_(pin); q = String(q).trim().toUpperCase().replace(/\s+/g, '');
   const d = q.replace(/\D/g, ''), t10 = d.length >= 10 ? d.slice(-10) : '';
   const rows = rows_('Shipments').filter(r => { const s = String(r[1]).toUpperCase(); return s === q || (t10 && s === t10); });
+  const isRet = r => /return$/i.test(String(r[6] || ''));
   const photos = rows.slice(-8).map(r => ({
-    time: Utilities.formatDate(new Date(r[0]), 'Africa/Cairo', 'dd MMM HH:mm'), note: r[4], url: r[3],
+    time: Utilities.formatDate(new Date(r[0]), 'Africa/Cairo', 'dd MMM HH:mm'), note: r[4], url: r[3], ret: isRet(r),
     img: 'data:image/jpeg;base64,' + Utilities.base64Encode(DriveApp.getFileById(r[2]).getBlob().getBytes())
   }));
-  const carrier = rows.length ? String(rows[rows.length - 1][6] || 'Bosta') : (t10 ? 'Bosta' : '');
+  const out = rows.filter(r => !isRet(r)), retRows = rows.filter(isRet);
+  const carrier = out.length ? String(out[out.length - 1][6] || 'Bosta')
+    : retRows.length ? String(retRows[retRows.length - 1][6]).replace(/\s*return$/i, '') || 'Bosta' : (t10 ? 'Bosta' : '');
   const t = t10 && carrier === 'Bosta' ? rows_('Tracking').find(r => String(r[0]) === t10) : null;
   const b = t ? rows_('Bulky').find(r => String(r[0]) === t10) : null;
-  return { tn: t ? t10 : q, carrier, photos, state: t ? t[3] : '', size: t ? t[4] : '',
+  return { tn: t ? t10 : q, carrier, photos, returned: retRows.length > 0, state: t ? t[3] : '', size: t ? t[4] : '',
     bulky: b ? { size: b[2], expected: b[3], final: b[7], status: b[13], items: b[9] } : null };
 }
 

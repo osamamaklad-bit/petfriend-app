@@ -75,6 +75,11 @@
   .pl .q { text-align: end; font-size: 12px; color: var(--muted); white-space: nowrap; }
   .pl .q b { display: block; font-size: 18px; color: var(--ink); }
   .pl.done { opacity: .6; }
+  .pl.fin { opacity: .55; border-style: dashed; }
+  .pl .tag.f { background: var(--ok-bg, #dcfce7); color: var(--ok, #15803d); }
+  .bar button.finish { background: var(--ok, #15803d); border-color: var(--ok, #15803d); color: #fff; }
+  .bar button.reopen { border-color: var(--ok, #15803d); color: var(--ok, #15803d); }
+  #showDoneBtn { width: 100%; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; padding: 10px; cursor: pointer; }
   .backrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .backrow button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px 12px; font: inherit; font-weight: 600; }
   .backrow strong { font-size: 18px; }
@@ -118,11 +123,13 @@
 
   <!-- the pick lists of the last days -->
   <div id="lists"></div>
+  <button id="showDoneBtn" hidden></button>
 
   <!-- one pick list -->
   <div id="detail" hidden>
     <div class="backrow"><button id="backBtn">‹ Back</button><strong id="plName" data-no-i18n></strong></div>
     <div class="bar">
+      <button id="finishBtn" class="finish">✓ Finished</button>
       <button id="printBtn">Print</button>
       <label><input type="checkbox" id="hidePicked"> Hide picked</label>
     </div>
@@ -143,7 +150,7 @@
     get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   };
-  const state = { lists: [], current: null, busy: false, known: null };
+  const state = { lists: [], current: null, busy: false, known: null, showDone: false };
   // picked lines are remembered on this phone, per pick list
   let picked = {};
   try { picked = JSON.parse(store.get('pf_picked2') || '{}'); } catch (e) { picked = {}; }
@@ -179,7 +186,10 @@
       Object.keys(picked).forEach((k) => { if (!state.known[k.split('|')[0]]) delete picked[k]; });
       savePicked();
       if (fresh.length) { say('New pick list: ' + fresh[0].orders + (fresh[0].orders === 1 ? ' order' : ' orders') + ', ' + fresh[0].products + (fresh[0].products === 1 ? ' product' : ' products') + '.', 'ok'); beep(); }
-      else if (!quiet) say(d.pickLists.length ? 'Tap a pick list to open it.' : 'No pick lists in the last 7 days.', d.pickLists.length ? 'ok' : '');
+      else if (!quiet) {
+        const open = d.pickLists.filter((x) => !x.done).length;
+        say(open ? 'Tap a pick list to open it.' : d.pickLists.length ? 'Every pick list is finished.' : 'No pick lists in the last 7 days.', open ? 'ok' : '');
+      }
       renderLists(fresh);
     } catch (e) { if (!quiet) say(e.message, 'bad'); }
   }
@@ -187,14 +197,19 @@
   function renderLists(fresh) {
     const box = $('lists'); box.innerHTML = '';
     const isNew = {}; (fresh || []).forEach((x) => { isNew[x.id] = 1; });
-    state.lists.forEach(function (x) {
+    // finished pick lists are hidden, unless "Show finished" is on
+    const nFin = state.lists.filter((x) => x.done).length, btn = $('showDoneBtn');
+    btn.hidden = !nFin;
+    btn.textContent = state.showDone ? 'Hide finished pick lists' : 'Show finished pick lists (' + nFin + ')';
+    state.lists.filter((x) => !x.done || state.showDone).forEach(function (x) {
       const done = doneCount(x.id);
       const b = document.createElement('button');
-      b.className = 'pl' + (isNew[x.id] ? ' new' : '') + (done && done >= x.products ? ' done' : '');
+      b.className = 'pl' + (isNew[x.id] ? ' new' : '') + (done && done >= x.products ? ' done' : '') + (x.done ? ' fin' : '');
       b.innerHTML = '<div><div class="a"></div><div class="b"></div></div><div class="q"><b></b><span></span></div>';
       b.querySelector('.a').textContent = fmt(x.createdAt);
       const tag = document.createElement('span'); tag.className = 'tag' + (x.kind === 'manual' ? ' m' : ''); tag.textContent = x.kind === 'manual' ? 'Manual' : 'Automatic';
       b.querySelector('.a').appendChild(tag);
+      if (x.done) { const f = document.createElement('span'); f.className = 'tag f'; f.textContent = 'Finished'; b.querySelector('.a').appendChild(f); }
       b.querySelector('.b').textContent = x.orders + (x.orders === 1 ? ' order' : ' orders') + ' · ' + x.products + (x.products === 1 ? ' product' : ' products');
       b.querySelector('.q b').textContent = done + '/' + x.products;
       b.querySelector('.q span').textContent = 'picked';
@@ -210,7 +225,7 @@
     try {
       const d = await api({ action: 'getPickList', id: id });
       state.current = d.pickList;
-      $('lists').hidden = true; $('detail').hidden = false; $('createBtn').parentNode.hidden = true;
+      $('lists').hidden = true; $('showDoneBtn').hidden = true; $('detail').hidden = false; $('createBtn').parentNode.hidden = true;
       say('Sorted by bin location. Tap a line when it is picked.', 'ok');
       render();
       window.scrollTo(0, 0);
@@ -254,6 +269,8 @@
     const c = state.current, ps = c.items, units = ps.reduce((s, p) => s + p.quantity, 0);
     const done = ps.filter((p) => picked[pickKey(p)]).length;
     $('plName').textContent = fmt(c.createdAt);
+    $('finishBtn').textContent = c.done ? 'Open again' : '✓ Finished';
+    $('finishBtn').className = c.done ? 'reopen' : 'finish';
     $('genAt').textContent = '';
     $('sumText').textContent = c.orders + (c.orders === 1 ? ' order' : ' orders') + ' · ' + ps.length + (ps.length === 1 ? ' product' : ' products') + ' · ' + units + ' units';
     $('pickedText').textContent = ps.length ? 'Picked ' + done + ' of ' + ps.length : '';
@@ -313,6 +330,23 @@
   $('refreshBtn').addEventListener('click', function () { loadLists(); });
   $('createBtn').addEventListener('click', createNow);
   $('backBtn').addEventListener('click', closeList);
+  // finished: hidden from the list on every phone (saved on the server); "Open again" undoes it
+  $('finishBtn').addEventListener('click', async function () {
+    const c = state.current;
+    if (!c || state.busy) return;
+    const done = !c.done;
+    if (done && !confirm(T('Mark this pick list as finished? It will be hidden from the list.'))) return;
+    state.busy = true; $('finishBtn').disabled = true;
+    try {
+      await api({ action: 'setPickListDone', id: c.id, done: done });
+      c.done = done;
+      state.lists.forEach((x) => { if (x.id === c.id) x.done = done; });
+      if (done) { state.busy = false; closeList(); say('Pick list finished and hidden.', 'ok'); }
+      else { render(); say('Pick list opened again.', 'ok'); }
+    } catch (e) { say(e.message, 'bad'); }
+    finally { state.busy = false; $('finishBtn').disabled = false; }
+  });
+  $('showDoneBtn').addEventListener('click', function () { state.showDone = !state.showDone; renderLists(); });
   $('printBtn').addEventListener('click', function () { window.print(); });
   document.addEventListener('pf-lang', function () { if (state.current) render(); else renderLists(); });
   // back on this tab (e.g. after fulfilling an order): refresh the open list's order status quietly

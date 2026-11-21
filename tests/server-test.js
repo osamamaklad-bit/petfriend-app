@@ -393,6 +393,39 @@ check('Today: Bosta sync status (last run, open shipments, bulky today)', r.bost
 st = ctx.syncBosta({ triggerUid: '1' });
 check('Bosta: second run adds nothing twice', st.fees, st.fees.added === 0 && st.shopify.added === 0);
 
+// ---- pick list finished mark (hidden in the app, same for every phone)
+r = post({ action: 'listPickLists', key: 'kkk' });
+const plid = r.pickLists[0].id;
+check('Pick list: not finished at first', r.pickLists[0], r.ok && r.pickLists[0].done === false);
+r = post({ action: 'setPickListDone', key: 'kkk', id: plid, done: true });
+let l2 = post({ action: 'listPickLists', key: 'kkk' });
+check('Pick list: marked finished, shows in the list with done', l2.pickLists.find(x => x.id === plid), r.ok && l2.pickLists.find(x => x.id === plid).done === true && !!l2.pickLists.find(x => x.id === plid).doneAt);
+post({ action: 'setPickListDone', key: 'kkk', id: plid, done: true });
+check('Pick list: marking twice keeps one row', sheets.PickListsDone.rows, sheets.PickListsDone.getLastRow() === 2);
+r = post({ action: 'getPickList', key: 'kkk', id: plid }); check('Pick list: open list knows it is finished', r.pickList && r.pickList.done, r.ok && r.pickList.done === true);
+r = post({ action: 'setPickListDone', key: 'kkk', id: plid, done: false });
+l2 = post({ action: 'listPickLists', key: 'kkk' });
+check('Pick list: opened again', l2.pickLists.find(x => x.id === plid), r.ok && l2.pickLists.find(x => x.id === plid).done === false && sheets.PickListsDone.getLastRow() === 1);
+r = post({ action: 'setPickListDone', key: 'kkk', id: 'PL-nope', done: true }); check('Pick list: unknown id refused', r, r.ok === false);
+check('Pick list: finish / reopen logged, not counted as new lists', sheets.Activity.rows.filter(x => x[1] === 'Pick list' && /done|reopen/.test(x[2])).length, sheets.Activity.rows.filter(x => x[1] === 'Pick list' && /done|reopen/.test(x[2])).length === 3);
+
+// ---- return shipments
+r = post({ fn: 'saveReturn', args: ['2222', 'abc 4444444444', ['data:image/jpeg;base64,AA', 'data:image/jpeg;base64,AA'], 'torn box', false] });
+check('Return shipment: photos saved as "Bosta return"', sheets.Shipments.rows.slice(-2).map(x => x[6]), r.result && r.result.saved === 2 && sheets.Shipments.rows.slice(-2).every(x => x[6] === 'Bosta return' && x[1] === '4444444444'));
+check('Return shipment: Tracking (outgoing) not touched', sheets.Tracking.rows.some(x => String(x[0]) === '4444444444'), !sheets.Tracking.rows.some(x => String(x[0]) === '4444444444'));
+r = post({ fn: 'saveReturn', args: ['2222', '4444444444', ['data:image/jpeg;base64,AA'], '', false] });
+check('Return shipment: second save is a duplicate unless forced', r.result, r.result && r.result.duplicate === true);
+r = post({ fn: 'saveReturn', args: ['2222', '4444444444', ['data:image/jpeg;base64,AA'], '', true] }); check('Return shipment: forced adds', r.result, r.result && r.result.saved === 1);
+r = post({ fn: 'saveReturn', args: ['2222', '1111111111', ['data:image/jpeg;base64,AA'], '', false] }); check('Return shipment: misread (not in Bosta) refused', r, /not found in Bosta/.test(r.error || ''));
+r = post({ fn: 'saveReturn', args: ['9999', '4444444444', ['data:image/jpeg;base64,AA'], '', false] }); check('Return shipment: wrong PIN refused', r, /PIN/.test(r.error || ''));
+r = post({ fn: 'saveOther', args: ['2222', 'Aramex', 'AR1', ['data:image/jpeg;base64,AA'], '', true] });
+check('Return shipment: other carrier marked as return', sheets.Shipments.rows.at(-1)[6], r.result && sheets.Shipments.rows.at(-1)[6] === 'Aramex return');
+post({ fn: 'saveShipment', args: ['2222', '4444444444', ['data:image/jpeg;base64,AA'], 'out', true] });
+r = post({ fn: 'getShipment', args: ['2222', '4444444444'] });
+check('Search: return photos flagged, carrier stays Bosta', r.result, r.result.returned === true && r.result.carrier === 'Bosta' && r.result.photos.filter(p => p.ret).length === 3 && r.result.photos.filter(p => !p.ret).length === 1);
+r = post({ action: 'dailySummary', key: 'kkk' });
+check('Today: return photos counted apart', r.returnPhotos, r.ok && r.returnPhotos.count === 3 && r.returnPhotos.qty === 4);
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;
