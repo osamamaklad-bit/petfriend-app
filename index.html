@@ -39,13 +39,14 @@
   nav button.on { color: var(--acc); }
   nav button:focus-visible { outline: 3px solid var(--acc); outline-offset: -3px; }
   nav .brand { display: none; }
-  /* phones: 8 tabs share the width; long names wrap onto two lines */
+  /* phones: the tab bar is a carousel. Tabs keep their normal size (24px icons, 12px names) and the bar scrolls
+     sideways with a finger; the open tab is scrolled into view. */
   @media (max-width: 899px) {
-    nav button { flex: 1 1 0; min-width: 0; padding: 7px 0 9px; font-size: 10px; letter-spacing: -.2px; line-height: 1.15; text-align: center; overflow-wrap: normal; word-break: normal; hyphens: none; }
-    nav button svg { width: 22px; height: 22px; flex: none; }
+    nav { overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain; }
+    nav::-webkit-scrollbar { display: none; }
+    nav button { flex: 0 0 auto; min-width: 78px; padding: 8px 8px 10px; scroll-snap-align: center; white-space: nowrap; }
   }
-  @media (max-width: 379px) { nav button { font-size: 8.5px; letter-spacing: -.3px; } nav button svg { width: 20px; height: 20px; } }
-  @media (max-width: 339px) { nav button { overflow-wrap: anywhere; } }
   /* Computer / tablet: tab bar becomes a side bar */
   @media (min-width: 900px) {
     body { flex-direction: row; }
@@ -121,6 +122,9 @@
       b.classList.toggle('on', b.dataset.t === t);
       b.setAttribute('aria-current', b.dataset.t === t ? 'page' : 'false');
     });
+    // carousel (phones): bring the open tab into view
+    const on = document.querySelector('#tabs button[data-t="' + t + '"]');
+    if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest', inline: 'center', behavior: current ? 'smooth' : 'auto' }); } catch (e) {} }
     try { localStorage.setItem('pf_tab', t); } catch (e) {}
     if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t);
   }
