@@ -4,6 +4,7 @@
 <title>PetFriend POS</title>
 <script src="../config.js"></script><script src="../i18n.js"></script>
 <script src="../settings.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <meta name="theme-color" content="#8ef5fc">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -53,6 +54,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #f2b705}
  <div class="col left">
   <div class="r"><input id="q" placeholder="Scan or type barcode / name" autofocus autocomplete="off"><button id="cam">Camera</button></div>
   <video id="v" playsinline muted></video>
+  <div id="reader" style="display:none;border-radius:6px;overflow:hidden"></div>
   <div id="msg"></div>
   <div id="res"></div>
  </div>
@@ -82,7 +84,7 @@ async function api(action, data) {
 }
 const say = t => $('msg').textContent = t || '';
 const sub = () => cart.reduce((s, i) => s + i.price * i.qty, 0);
-const total = () => { const d = Number($('disc').value) || 0, s = sub(); return Math.max(0, $('dtype').value === 'amount' ? s - d : s * (1 - d / 100)); };
+const total = () => { const d = Math.max(0, Number($('disc').value) || 0), s = sub(); return Math.max(0, $('dtype').value === 'amount' ? s - d : s * (1 - d / 100)); };
 
 function add(v) {
   const c = cart.find(i => i.id === v.id);
@@ -131,6 +133,7 @@ const newSaleId = () => Date.now().toString(36) + '-' + Math.random().toString(3
 $('pay').onclick = async () => {
   if (!cart.length) return say('Cart is empty');
   const dv = Number($('disc').value) || 0;
+  if (dv < 0) return say('Discount cannot be negative');
   if ($('dtype').value === 'pct' && dv > 100) return say('Discount cannot exceed 100%');
   if ($('dtype').value === 'amount' && dv > sub()) return say('Discount is more than the cart total');
   const t = total(), cash = Number($('cash').value) || t;
@@ -162,24 +165,40 @@ $('today').onclick = async () => {
   } catch (e) { say(e.message); }
 };
 
+// Camera: the browser's own barcode reader where it exists (Chrome on Android), else the same scanner library as
+// the other tabs (Safari on iPhone has no BarcodeDetector).
+let qr = null;
+function stopCam() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; $('v').style.display = 'none'; }
+  if (qr) { const q = qr; qr = null; q.stop().then(() => q.clear()).catch(() => {}); $('reader').style.display = 'none'; }
+}
+// The camera sees a barcode many times a second: add it once, and again only after it has been out of view for
+// a moment (while it stays in view, the wait keeps restarting). For more units, use + in the cart.
+function onCode(code) {
+  const now = Date.now();
+  if (code === lastScan && now - lastAt < 1500) { lastAt = now; return; }
+  lastScan = code; lastAt = now; if (navigator.vibrate) navigator.vibrate(60); return find(code);
+}
 $('cam').onclick = async () => {
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; $('v').style.display = 'none'; return; }
-  if (!('BarcodeDetector' in window)) return say('Camera scanning is not supported in this browser. Use Chrome on Android or a scanner.');
+  if (stream || qr) return stopCam();
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    $('v').srcObject = stream; $('v').style.display = 'block'; await $('v').play();
-    const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'] });
-    (async function loop() {
-      if (!stream) return;
-      try {
-        const b = await det.detect($('v'));
-        if (b[0] && (b[0].rawValue !== lastScan || Date.now() - lastAt > 2500)) {
-          lastScan = b[0].rawValue; lastAt = Date.now(); if (navigator.vibrate) navigator.vibrate(60); await find(lastScan);
-        }
-      } catch (e) {}
-      setTimeout(loop, 250);
-    })();
-  } catch (e) { say('Camera blocked: ' + e.message); }
+    if ('BarcodeDetector' in window) {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      $('v').srcObject = stream; $('v').style.display = 'block'; await $('v').play();
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'] });
+      (async function loop() {
+        if (!stream) return;
+        try { const b = await det.detect($('v')); if (b[0]) await onCode(b[0].rawValue); } catch (e) {}
+        setTimeout(loop, 250);
+      })();
+    } else if (window.Html5Qrcode) {
+      $('reader').style.display = 'block';
+      qr = new Html5Qrcode('reader');
+      await qr.start({ facingMode: 'environment' },
+        { fps: 10, qrbox: function (w, h) { return { width: Math.max(160, Math.floor(w * 0.9)), height: Math.max(80, Math.floor(h * 0.45)) }; } },
+        function (text) { onCode(String(text).trim()); }, function () {});
+    } else say('Camera scanning is not available here. Type the code or use a scanner.');
+  } catch (e) { stopCam(); say('Camera blocked: ' + (e.message || e)); }
 };
 // ---------- settings (PIN) ----------
 async function openSettings() {
@@ -194,5 +213,5 @@ $('setBtn').onclick = openSettings;
 render();
 if (!pin) say('Open Settings and enter the PIN.');
 // Inside the PetFriend app: stop the camera when the user switches to another tab
-window.addEventListener('message', e => { if (e.origin === location.origin && e.data === 'pf-hide' && stream) { stream.getTracks().forEach(t => t.stop()); stream = null; $('v').style.display = 'none'; } });
+window.addEventListener('message', e => { if (e.origin === location.origin && e.data === 'pf-hide') stopCam(); });
 </script></body></html>

@@ -49,6 +49,8 @@
     'The server sent an unexpected reply. Try again in a minute.': 'السيرفر رد برد غير متوقع. جرب تاني بعد دقيقة.',
     'Expiry dates': 'تواريخ الصلاحية',
     'Pet Friend': 'بتفريند',
+    'Discount cannot be negative': 'الخصم لا يمكن أن يكون بالسالب',
+    'Camera scanning is not available here. Type the code or use a scanner.': 'المسح بالكاميرا غير متاح هنا. اكتب الكود أو استخدم الماسح.',
     'Create return': 'إنشاء المرتجع',
     'Discard': 'تجاهل المسح',
     'Create': 'إنشاء',
