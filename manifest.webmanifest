@@ -14,6 +14,7 @@
     { "name": "Orders", "url": "./#orders" },
     { "name": "Pick list", "url": "./#picklist" },
     { "name": "Shipments", "url": "./#shipments" },
+    { "name": "Return shipments", "url": "./#returns" },
     { "name": "Today", "url": "./#today" }
   ],
   "icons": [

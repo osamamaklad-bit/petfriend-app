@@ -7,7 +7,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
   `pos/`, `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Receive · Check),
-  `picklist/`, `shipments/`, `today/`.
+  `picklist/`, `shipments/` (outgoing: Save + Search), `returns` (= `shipments/index.html?only=returns`: Save return +
+  Search), `today/`.
   The main page passes messages between tabs: `pf-hide` (camera off), `pf-show` (refresh) and `pf-open-order`
   (from the Pick list, opens an order in Fulfill).
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
@@ -15,7 +16,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
 - `settings.js`: the Settings window (PIN / app key, and the English / Arabic choice), shared by every tab, and the
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
-  has no language button; tab order: POS · Check · Orders · Today · Pick list · Shipments. Arabic brand name: بتفريند.
+  has no language button; tab order: POS · Check · Orders · Today · Pick list · Shipments · Return shipments (Today in the middle). Arabic brand name: بتفريند.
 - `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
   Printed barcodes are checked by decoding them with html5-qrcode in a test.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
@@ -68,7 +69,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   to `Tracking` for the bulky check. An order already fulfilled opens in Fulfill (`getOrder` with `allowDone`) to add a
   Bosta number to its newest live shipment (`addOrderTracking`, `fulfillmentTrackingInfoUpdate`; existing numbers kept).
 - Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
-- Shipments Returns: `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
+- Return shipments (own tab): `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
   never touches `Tracking`; logged as `return photo`.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
