@@ -162,10 +162,10 @@
 
   async function api(payload) {
     const key = store.get('appKey');
-    if (!key) { openSettings(); throw new Error('Enter the app key in Settings'); }
+    if (!key) { openSettings(); throw new Error('Enter the Orders pass in Settings'); }
     const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ key: key }, payload)) });
     const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Request failed');
+    if (!data.ok) throw new Error(data.error === 'Wrong app key' ? 'Wrong Orders pass' : data.error || 'Request failed');
     return data;
   }
 
@@ -363,14 +363,14 @@
   setInterval(function () { if (shown && store.get('appKey') && !document.hidden) loadLists(true); }, 60000);
 
   async function openSettings() {
-    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });
+    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'Orders pass', hint: 'The same pass opens Orders, Check, Purchase orders, Pick list and Today.', secret: true, value: store.get('appKey') }] });
     if (!v) return;
     store.set('appKey', v.appKey);
     if (v.appKey) loadLists();
   }
   $('settingsBtn').addEventListener('click', openSettings);
 
-  if (store.get('appKey')) loadLists(); else say('Open Settings and enter the app key.', 'bad');
+  if (store.get('appKey')) loadLists(); else say('Open Settings and enter the Orders pass.', 'bad');
 })();
 </script>
 </body>

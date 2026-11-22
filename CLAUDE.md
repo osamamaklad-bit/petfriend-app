@@ -36,8 +36,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 
 ## Rules agreed with the owner
 
-- Logins: each tab has its own PIN / key, entered in Settings (POS: `POS_PIN`; Orders, Pick list and Today:
-  `APP_KEY`; Shipments: `APP_PIN`).
+- Logins: each tab has its own pass, entered in Settings and named after its section: "POS pass" (`POS_PIN`),
+  "Orders pass" (`APP_KEY`: Orders, Check, Purchase orders, Pick list, Today), "Shipments pass" (`APP_PIN`: Shipments,
+  Return shipments). Every tab header has a language button (English / العربية) next to Settings (added by settings.js).
 - Scanning (Fulfill, Returns, Receive): an item's + / − buttons stay locked until **that item's own code** is
   scanned (camera or USB/Bluetooth scanner). A code matches the item's barcode **or SKU** (store labels carry
   the SKU). Matching is exact (ignoring spaces, dashes, case and leading zeros); real GTINs (valid check digit) also

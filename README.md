@@ -12,9 +12,9 @@ One installable phone app for the store, with its tools in a bottom tab bar (a s
 | **Shipments** | Photograph packages per Bosta tracking number (or another carrier); search photos.
 | **Return shipments** | Its own tab: scan and photograph shipments that came back (saved as returns, apart from outgoing photos); search photos; Bosta bulky-fee tracking | `Shipments-Pics` |
 
-Each tool keeps **its own login**, entered with the **Settings** button in that tab's header: the PIN for POS, the app key for Orders, and the PIN for Shipments. Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
+Each tool keeps **its own login**, entered with the **Settings** button in that tab's header and named after its section: **POS pass**, **Orders pass** (Orders, Check, Purchase orders, Pick list, Today) and **Shipments pass** (Shipments, Return shipments). Each one is remembered on the phone, so it's entered only once. The Settings window (`settings.js`) is shared by all three tabs.
 
-**Language:** English by default. The **Settings** window of any tab has a Language choice (English / العربية); it switches every tab at once (Arabic is right-to-left), and the phone remembers the choice. The translations are in `i18n.js`: add new on-screen text to `EXACT`, or to `PATTERNS` if it contains a name or number.
+**Language:** English by default. The language button in every tab's header (next to Settings), or the Language choice in Settings, switches between English and العربية; it switches every tab at once (Arabic is right-to-left), and the phone remembers the choice. The translations are in `i18n.js`: add new on-screen text to `EXACT`, or to `PATTERNS` if it contains a name or number.
 
 **Scanning rule (Fulfill, Returns, Receive):** each item's + / − buttons stay locked until that item's own code is scanned (camera or barcode scanner): its barcode or its SKU, since many labels carry the SKU. A wrong code unlocks nothing, and only scanned items can be fulfilled, returned or received. Items with neither a barcode nor a SKU are flagged.
 

@@ -65,16 +65,16 @@ window.addEventListener('message',e=>{if(e.origin===location.origin&&e.data==='p
 <script>
 let pin='', photos=[], qr=null, busy=false, pending=[], lastTn='', lastAt=0, camMode=false, other=false, ret=false; try{pin=localStorage.getItem('pfs_pin')||''}catch(e){}
 const $=id=>document.getElementById(id), say=(t,bad)=>{$('msg').textContent=t;$('msg').className='msg'+(bad?' bad':'')};
-function boot(){ if(pin) google.script.run.withFailureHandler(fail).checkPin(pin); else say('Open Settings and enter the PIN.',true) }
+function boot(){ if(pin) google.script.run.withFailureHandler(fail).checkPin(pin); else say('Open Settings and enter the Shipments pass.',true) }
 function lock(){pin='';try{localStorage.removeItem('pfs_pin')}catch(e){}}
-async function settings(){ const v=await pfSettings({title:'Settings',fields:[{key:'pin',label:'PIN',secret:true,numeric:true,value:pin}]}); if(!v) return;
+async function settings(){ const v=await pfSettings({title:'Settings',fields:[{key:'pin',label:'Shipments pass',hint:'The same pass opens Shipments and Return shipments.',secret:true,numeric:true,value:pin}]}); if(!v) return;
   pin=v.pin; try{localStorage.setItem('pfs_pin',pin)}catch(e){} say(''); boot() }
 // 1 = Save (outgoing), 3 = Returns (same screen, saved as a return), 2 = Search
 function tab(n){ ret=n===3; document.body.classList.toggle('ret',ret); $('retNote').classList.toggle('hide',!ret);
   $('v1').classList.toggle('hide',n===2); $('v2').classList.toggle('hide',n!==2);
   [1,2,3].forEach(i=>$('t'+i).classList.toggle('on',i===n));
   $('force').classList.add('hide'); $('th').innerHTML=''; lastTn=''; say('') }
-function fail(e){say(e.message||String(e),true);busy=false;if(/PIN/.test(e.message||'')){lock();say('Wrong PIN. Open Settings and enter it again.',true)}}
+function fail(e){say(e.message||String(e),true);busy=false;if(/PIN/.test(e.message||'')){lock();say('Wrong Shipments pass. Open Settings and enter it again.',true)}}
 function shrink(file){return new Promise(ok=>{const im=new Image();im.onload=()=>{const s=Math.min(1,1280/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.7))};im.src=URL.createObjectURL(file)})}
 async function addPhotos(fs){
   const list=[];
@@ -142,6 +142,6 @@ function find(){
 // The main page has two tabs on this page: Shipments (outgoing: Save + Search) and Return shipments
 // (shipments/index.html?only=returns: Return + Search). Each keeps to its own kind.
 const ONLY_RETURNS=/[?&]only=returns\b/.test(location.search);
-if(ONLY_RETURNS){ $('t1').classList.add('hide'); $('t3').classList.remove('hide'); $('pageTitle').textContent='Pet Friend Return Shipments'; document.title='Pet Friend Return Shipments'; tab(3) }
+if(ONLY_RETURNS){ $('t1').classList.add('hide'); $('t3').classList.remove('hide'); $('pageTitle').textContent='Return Shipments'; document.title='Pet Friend Return Shipments'; tab(3) }
 boot();
 </script></body></html>

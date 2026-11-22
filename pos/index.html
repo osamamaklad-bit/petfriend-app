@@ -76,10 +76,10 @@ let cart = [], stream = null, lastScan = '', lastAt = 0;
 let pin = ''; try { pin = localStorage.getItem('pin') || ''; } catch (e) {} // set in Settings
 
 async function api(action, data) {
-  if (!pin) { openSettings(); throw new Error('Open Settings and enter the PIN.'); }
+  if (!pin) { openSettings(); throw new Error('Open Settings and enter the POS pass.'); }
   const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action, pin, ...data }) }); // text/plain avoids CORS preflight
   const j = await r.json();
-  if (!j.ok) throw new Error(j.error);
+  if (!j.ok) throw new Error(j.error === 'Wrong PIN' ? 'Wrong POS pass' : j.error);
   return j.data;
 }
 const say = t => $('msg').textContent = t || '';
@@ -202,16 +202,16 @@ $('cam').onclick = async () => {
 };
 // ---------- settings (PIN) ----------
 async function openSettings() {
-  const v = await pfSettings({ title: 'Settings', fields: [{ key: 'pin', label: 'PIN', secret: true, numeric: true, value: pin }] });
+  const v = await pfSettings({ title: 'Settings', fields: [{ key: 'pin', label: 'POS pass', secret: true, numeric: true, value: pin }] });
   if (!v) return;
   pin = v.pin;
   try { localStorage.setItem('pin', pin); } catch (e) {}
-  say(pin ? '' : 'Open Settings and enter the PIN.');
+  say(pin ? '' : 'Open Settings and enter the POS pass.');
 }
 $('setBtn').onclick = openSettings;
 
 render();
-if (!pin) say('Open Settings and enter the PIN.');
+if (!pin) say('Open Settings and enter the POS pass.');
 // Inside the PetFriend app: stop the camera when the user switches to another tab
 window.addEventListener('message', e => { if (e.origin === location.origin && e.data === 'pf-hide') stopCam(); });
 </script></body></html>

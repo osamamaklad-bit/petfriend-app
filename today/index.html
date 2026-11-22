@@ -107,12 +107,12 @@
   async function load(quiet) {
     if (busy) return;
     const key = store.get('appKey');
-    if (!key) { say('Open Settings and enter the app key.', 'bad'); return; }
+    if (!key) { say('Open Settings and enter the Orders pass.', 'bad'); return; }
     busy = true; if (!quiet) say('Loading...');
     try {
       const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: 'dailySummary' }) });
       const d = await res.json();
-      if (!d.ok) throw new Error(d.error || 'Request failed');
+      if (!d.ok) throw new Error(d.error === 'Wrong app key' ? 'Wrong Orders pass' : d.error || 'Request failed');
       last = d; render(); say('Updated ' + fmtTime(d.generatedAt));
     } catch (e) { say(e.message, 'bad'); }
     finally { busy = false; }
@@ -219,7 +219,7 @@
     try {
       const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: 'expiryReport', refresh: !!refresh }) });
       const d = await res.json();
-      if (!d.ok) throw new Error(d.error || 'Request failed');
+      if (!d.ok) throw new Error(d.error === 'Wrong app key' ? 'Wrong Orders pass' : d.error || 'Request failed');
       if (!Array.isArray(d.items)) throw new Error('Could not read expiry dates');
       exp = d; renderExp();
     } catch (e) { $('expList').innerHTML = ''; const m = document.createElement('div'); m.className = 'empty'; m.textContent = e.message; $('expList').appendChild(m); }
@@ -239,7 +239,7 @@
 
   $('refreshBtn').addEventListener('click', function () { load(); });
   $('settingsBtn').addEventListener('click', async function () {
-    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') }] });
+    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'Orders pass', hint: 'The same pass opens Orders, Check, Purchase orders, Pick list and Today.', secret: true, value: store.get('appKey') }] });
     if (v) { store.set('appKey', v.appKey); load(); loadExp(); }
   });
   document.addEventListener('pf-lang', function () { render(); renderExp(); });

@@ -29,6 +29,8 @@
     '.pfset .c{background:#fff;color:inherit;border:2px solid #b9ecf1}' +
     '.pfset .ok{background:#e3031b;color:#fff;border:2px solid #e3031b}' +
     '.pfset .lang{display:flex;gap:6px;margin-top:5px}' +
+    '.pfset .hint{display:block;font-weight:400;font-size:12px;color:#6b5f62;margin-top:4px}' +
+    '.pflangbtn{font-weight:700!important}' +
     '.pfconf .msg{margin:0 0 4px;font-size:17px;line-height:1.45;white-space:pre-line;color:inherit}' +
     '.pfconf h2{color:#e3031b}.pfconf .b button{min-width:110px}' +
     '.pfconf.danger .ok{background:#c2410c;border-color:#c2410c}' +
@@ -38,7 +40,7 @@
     '.pfset{background:#17282b;color:#eaf7f8}.pfset label{color:#8fb0b3}' +
     '.pfset input,.pfset .eye,.pfset .c{background:#0f1c1e;border-color:#27403f}' +
     '.pfset input:focus{border-color:#ff4a5c}.pfset .ok{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}' +
-    '.pfset .lang button{background:#0f1c1e;border-color:#27403f}.pfset .lang button.on{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}}';
+    '.pfset .hint{color:#8fb0b3}.pfset .lang button{background:#0f1c1e;border-color:#27403f}.pfset .lang button.on{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}}';
 
   function addStyle() {
     if (document.getElementById('pfset-css')) return;
@@ -91,6 +93,12 @@
           row.appendChild(eye);
         }
         lab.appendChild(row);
+        if (f.hint) {                                   // e.g. which tabs share this pass
+          var hint = document.createElement('small');
+          hint.className = 'hint';
+          hint.textContent = f.hint;
+          lab.appendChild(hint);
+        }
         form.appendChild(lab);
         inputs[f.key] = inp;
       });
@@ -194,6 +202,30 @@
     });
   }
   function pfAlert(message, o) { return pfConfirm(message, Object.assign({ alert: true, ok: 'OK' }, o || {})).then(function () {}); }
+
+  /* Language button in every tab's header, next to the Settings button (English <-> العربية). It names the language
+   * you switch TO, and all tabs follow (they share the saved choice). */
+  function addLangButton() {
+    if (!window.pfLang || document.querySelector('.pflangbtn')) return;
+    var set = document.querySelector('#settingsBtn, #setBtn, button[onclick="settings()"]');
+    if (!set) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = (set.className ? set.className + ' ' : '') + 'pflangbtn';
+    b.setAttribute('data-no-i18n', '');
+    b.setAttribute('aria-label', 'Language');
+    var st = set.getAttribute('style') || '';
+    if (/margin-left:\s*auto/.test(st)) {           // Shipments: the gap moves to the first of the two buttons
+      b.setAttribute('style', st);
+      set.setAttribute('style', st.replace(/margin-left:\s*auto;?/, 'margin-left:6px;'));
+    } else if (st) b.setAttribute('style', st);
+    function label() { b.textContent = window.pfLang.get() === 'ar' ? 'English' : 'العربية'; }
+    label();
+    b.addEventListener('click', function () { window.pfLang.set(window.pfLang.get() === 'ar' ? 'en' : 'ar'); });
+    document.addEventListener('pf-lang', label);
+    set.parentNode.insertBefore(b, set);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addLangButton); else addLangButton();
 
   window.pfSettings = pfSettings;
   window.pfConfirm = pfConfirm;

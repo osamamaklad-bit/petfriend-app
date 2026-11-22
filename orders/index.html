@@ -233,7 +233,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.6</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.7</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -369,11 +369,11 @@
   // ---------- API ----------
   async function api(payload) {
     const url = apiUrl(), key = store.get('appKey');
-    if (!url || !key) { openSettings(); throw new Error(API_URL ? 'Enter the app key in Settings' : 'Set the API URL and key in Settings'); }
+    if (!url || !key) { openSettings(); throw new Error(API_URL ? 'Enter the Orders pass in Settings' : 'Set the API URL and Orders pass in Settings'); }
     // No Content-Type header: keeps it a "simple" request so Apps Script needs no CORS preflight
     const res = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ key: key }, payload)) });
     const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Request failed');
+    if (!data.ok) throw new Error(data.error === 'Wrong app key' ? 'Wrong Orders pass' : data.error || 'Request failed');
     return data;
   }
 
@@ -1099,11 +1099,11 @@
   async function openSettings() {
     const fields = [];
     if (!API_URL) fields.push({ key: 'apiUrl', label: 'Apps Script web app URL', value: store.get('apiUrl') }); // only if not set in the code above
-    fields.push({ key: 'appKey', label: 'App key', secret: true, value: store.get('appKey') });
+    fields.push({ key: 'appKey', label: 'Orders pass', hint: 'The same pass opens Orders, Check, Purchase orders, Pick list and Today.', secret: true, value: store.get('appKey') });
     const v = await pfSettings({ title: 'Settings', fields: fields });
     if (!v) return;
     Object.keys(v).forEach(function (k) { store.set(k, v[k]); });
-    if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
+    if (!ready()) say(API_URL ? 'Open Settings and enter the Orders pass.' : 'Open Settings and enter the API URL and Orders pass.', 'warn');
     else { say(idleMsg()); if (!state.order && !isRet()) loadList(); }
   }
   $('settingsBtn').addEventListener('click', openSettings);
@@ -1124,7 +1124,7 @@
     $('pageTitle').textContent = document.title = ONLY === 'check' ? 'Pet Friend Check' : 'Pet Friend Purchase Orders';
   } else document.querySelector('#modes button[data-m=receive]').remove();   // Receive has its own tab now
   setMode(ONLY || (['return', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill'), true);
-  if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
+  if (!ready()) say(API_URL ? 'Open Settings and enter the Orders pass.' : 'Open Settings and enter the API URL and Orders pass.', 'warn');
   else if (isRet() || isChk()) say(idleMsg());
   else loadList();
 })();
