@@ -12,6 +12,7 @@
     { "name": "POS", "url": "./#pos" },
     { "name": "Check", "url": "./#check" },
     { "name": "Orders", "url": "./#orders" },
+    { "name": "Purchase orders", "url": "./#receive" },
     { "name": "Pick list", "url": "./#picklist" },
     { "name": "Shipments", "url": "./#shipments" },
     { "name": "Return shipments", "url": "./#returns" },

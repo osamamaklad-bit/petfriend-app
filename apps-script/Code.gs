@@ -56,7 +56,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-22.2';
+const SERVER_VERSION = '2026-11-22.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -270,6 +270,7 @@ const ORDER_ACTIONS = {
   getReturnable: function (r) { return getReturnable_(r); },
   processReturn: function (r) { return processReturn_(r); },
   listPOs: function () { return listPOs_(); },
+  setPOHidden: function (r) { return setPOHidden_(r); },
   getPO: function (r) { return getPO_(r); },
   receivePO: function (r) { return receivePO_(r); },
   setItemMeta: function (r) { return setItemMeta_(r); },
@@ -738,7 +739,37 @@ function allPOs_(fields, pageSize, maxPages) {
 }
 
 /** Purchase orders still waiting for stock (status ORDERED, not fully received), newest first. */
+/* Purchase orders removed from the app's list ("Remove"): Shopify has no way to delete a purchase order through its
+ * API, so the app only hides it, on every phone. It stays in Shopify unchanged, can still be opened by its number,
+ * and "Show hidden" brings it back. */
+const HIDDEN_PO_SHEET = 'HiddenPOs';
+function hiddenPOSheet_() {
+  const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+  let s = ss.getSheetByName(HIDDEN_PO_SHEET);
+  if (!s) { s = ss.insertSheet(HIDDEN_PO_SHEET); s.appendRow(['Id', 'Name', 'HiddenAt']); s.setFrozenRows(1); }
+  return s;
+}
+function hiddenPOs_() {
+  const s = hiddenPOSheet_(), n = s.getLastRow(), out = {};
+  if (n < 2) return out;
+  s.getRange(2, 1, n - 1, 1).getValues().forEach(function (r) { if (r[0]) out[String(r[0])] = 1; });
+  return out;
+}
+function setPOHidden_(r) {
+  const id = String((r && r.id) || ''), name = String((r && r.name) || '').slice(0, 50), hide = r.hidden !== false;
+  if (!/^gid:\/\/shopify\/[A-Za-z]*PurchaseOrder\/\d+$/.test(id)) throw new Error('Unknown purchase order');
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const s = hiddenPOSheet_(), n = s.getLastRow(), col = n > 1 ? s.getRange(2, 1, n - 1, 1).getValues() : [];
+    for (let i = col.length - 1; i >= 0; i--) if (String(col[i][0]) === id) deleteDataRows_(s, i + 2, 1);
+    if (hide) s.appendRow([id, "'" + name, new Date()]);
+  } finally { lock.releaseLock(); }
+  logActivity_('Orders', hide ? 'remove PO' : 'show PO', name || id, 0);
+  return { ok: true, id: id, hidden: hide };
+}
+
 function listPOs_() {
+  const hidden = hiddenPOs_();
   const nodes = allPOs_('id name orderedAt dateCreated origin { supplierName } destination { name }' +
     ' transfers(first: 3) { nodes { totalQuantity receivedQuantity } }', 100, 10);
   const orders = nodes.map(function (po) {
@@ -749,7 +780,8 @@ function listPOs_() {
       customer: po.origin && po.origin.supplierName || '',      // shown where the customer is for orders
       city: po.destination && po.destination.name || '',
       createdAt: po.orderedAt || po.dateCreated,
-      qty: Math.max(0, total - received)
+      qty: Math.max(0, total - received),
+      hidden: !!hidden[po.id]
     };
   }).filter(function (po) { return po.qty > 0; })
     .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); }); // newest first

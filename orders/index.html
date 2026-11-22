@@ -94,6 +94,12 @@
   .ordertitle strong { font-size: 20px; }
   .ordertitle span { color: var(--muted); font-size: 14px; }
   #labelsBtn { width: 100%; margin: 0 0 8px; }
+  .ordwrap { display: flex; gap: 6px; align-items: stretch; }
+  .ordwrap .ord { flex: 1; min-width: 0; }
+  .ordwrap.gone .ord { opacity: .55; border-style: dashed; }
+  .podel { flex: none; align-self: stretch; margin-bottom: 8px; border: 2px solid var(--line); background: var(--card); color: var(--bad); border-radius: 12px; padding: 0 12px; font: inherit; font-size: 13px; font-weight: 700; }
+  .podel.back { color: var(--ok); }
+  #showHiddenBtn { width: 100%; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; padding: 10px; }
   .trackline { margin: -2px 2px 8px; font-size: 13px; color: var(--muted); }
   .donecard { background: var(--warn-bg); border: 2px solid var(--warn); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-weight: 600; margin-bottom: 8px; }
   .donecard.existing { background: var(--card); border-color: var(--line); color: var(--muted); font-weight: 400; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -227,7 +233,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.4</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.6</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -257,6 +263,7 @@
       <button id="refreshBtn" aria-label="Refresh">&#8635; Refresh</button>
     </div>
     <div id="orderList"></div>
+    <button id="showHiddenBtn" type="button" hidden></button>
   </div>
 
   <div id="orderTitle" class="ordertitle" hidden>
@@ -309,7 +316,10 @@
   const isRet = () => state.mode === 'return';
   const isRcv = () => state.mode === 'receive';   // receiving stock from suppliers (purchase orders)
   // the Check tab of the main page opens this page as orders/index.html?only=check: Check mode only
-  const ONLY_CHECK = /[?&]only=check\b/.test(location.search);
+  // the main page opens this page three ways: Orders (Fulfill · Returns · Check), the Check tab (?only=check) and
+  // the Purchase orders tab (?only=receive). A tab opened with ?only= keeps to that mode.
+  const ONLY = (location.search.match(/[?&]only=(check|receive)\b/) || [])[1] || '';
+  const ONLY_CHECK = ONLY === 'check';
   const isChk = () => state.mode === 'check';     // check a product: price, stock, bin, expiry (read-only)
   function idleMsg() {
     if (isChk()) return 'Check a product: scan its barcode, or type a SKU or name.';
@@ -429,13 +439,18 @@
   function renderOrders() {
     const box = $('orderList');
     const term = $('orderInput').value.replace(/[^0-9a-z]/gi, '').toLowerCase();
+    const nHidden = isRcv() ? state.orders.filter((o) => o.hidden).length : 0;
     const rows = state.orders.filter(function (o) {
+      if (isRcv() && o.hidden && !state.showHidden) return false;     // removed from the app (still in Shopify)
       if (!isRcv() && state.filter !== 'all' && o.status !== state.filter) return false;
       return !term || o.name.replace(/[^0-9a-z]/gi, '').toLowerCase().indexOf(term) !== -1;
     });
     $('listTitle').textContent = isRcv() ? 'Purchase orders' : 'Open orders';
     $('ordersCount').textContent = rows.length + (isRcv() ? (rows.length === 1 ? ' purchase order' : ' purchase orders') : (rows.length === 1 ? ' order' : ' orders'));
     box.innerHTML = '';
+    const hb = $('showHiddenBtn');
+    hb.hidden = !nHidden;
+    hb.textContent = state.showHidden ? 'Hide removed purchase orders' : 'Show removed purchase orders (' + nHidden + ')';
     if (!rows.length) { box.innerHTML = '<div class="empty">' + (isRcv() ? 'No purchase orders waiting for stock.' : 'No orders to show.') + '</div>'; return; }
     rows.forEach(function (o) {
       const b = document.createElement('button');
@@ -448,10 +463,31 @@
       b.querySelector('.b').textContent = [o.customer, o.city, o.createdAt && fmtDate(o.createdAt)].filter(Boolean).join(' · ');
       b.querySelector('.q b').textContent = o.qty;
       b.addEventListener('click', function () { loadOrder(o.name); });
-      box.appendChild(b);
+      if (!isRcv()) { box.appendChild(b); return; }
+      // purchase orders: Remove (hide from the app on every phone) / Show again
+      const w = document.createElement('div'); w.className = 'ordwrap' + (o.hidden ? ' gone' : '');
+      const d = document.createElement('button'); d.type = 'button'; d.className = 'podel' + (o.hidden ? ' back' : '');
+      d.textContent = o.hidden ? 'Show again' : 'Remove';
+      d.setAttribute('aria-label', (o.hidden ? 'Show again ' : 'Remove ') + o.name);
+      d.addEventListener('click', function () { setPOHidden(o, !o.hidden); });
+      w.appendChild(b); w.appendChild(d); box.appendChild(w);
     });
   }
 
+  async function setPOHidden(o, hide) {
+    if (state.busy) return;
+    if (hide && !await pfConfirm(T('Remove ' + o.name + ' from the app? It stays in Shopify, and you can show it again.'), { title: 'Purchase orders', ok: 'Remove', danger: true })) return;
+    state.busy = true;
+    try {
+      await api({ action: 'setPOHidden', id: o.id, name: o.name, hidden: hide });
+      o.hidden = hide;
+      renderOrders();
+      say(hide ? o.name + ' removed from the list.' : o.name + ' is back in the list.', 'ok');
+    } catch (e) { say(e.message, 'bad'); feedback('bad'); }
+    finally { state.busy = false; }
+  }
+
+  $('showHiddenBtn').addEventListener('click', function () { state.showHidden = !state.showHidden; renderOrders(); });
   $('chips').addEventListener('click', function (e) {
     const b = e.target.closest('button[data-f]');
     if (!b) return;
@@ -1026,7 +1062,7 @@
       if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
     }
     state.mode = m;
-    if (!ONLY_CHECK) store.set('mode', m);   // the Check tab never changes the Orders tab's mode
+    if (!ONLY) store.set('mode', m);   // the Check and Purchase orders tabs never change the Orders tab's mode
     document.body.classList.toggle('ret', m === 'return');
     document.body.classList.toggle('rcv', m === 'receive');
     document.body.classList.toggle('chk', m === 'check');
@@ -1076,19 +1112,18 @@
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-hide' && state.camOn) stopCamera(); });
   // From the Pick list (through the main page): open an order in Fulfill
   window.addEventListener('message', async function (e) {
-    if (ONLY_CHECK || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
+    if (ONLY || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
     if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
     state.order = null; state.items = []; state.tracking = null;
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));
   });
 
-  if (ONLY_CHECK) {
+  if (ONLY) {
     $('modes').hidden = true;
-    $('pageTitle').textContent = 'Pet Friend Check';
-    document.title = 'Pet Friend Check';
-  }
-  setMode(ONLY_CHECK ? 'check' : ['return', 'receive', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill', true);
+    $('pageTitle').textContent = document.title = ONLY === 'check' ? 'Pet Friend Check' : 'Pet Friend Purchase Orders';
+  } else document.querySelector('#modes button[data-m=receive]').remove();   // Receive has its own tab now
+  setMode(ONLY || (['return', 'check'].indexOf(store.get('mode')) !== -1 ? store.get('mode') : 'fulfill'), true);
   if (!ready()) say(API_URL ? 'Open Settings and enter the app key.' : 'Open Settings and enter the API URL and app key.', 'warn');
   else if (isRet() || isChk()) say(idleMsg());
   else loadList();

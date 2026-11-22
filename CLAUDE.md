@@ -6,7 +6,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 ## Layout
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
-  `pos/`, `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Receive · Check),
+  `pos/`, `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Check),
+  `receive` (= `orders/index.html?only=receive`: purchase orders),
   `picklist/`, `shipments/` (outgoing: Save + Search), `returns` (= `shipments/index.html?only=returns`: Save return +
   Search), `today/`.
   The main page passes messages between tabs: `pf-hide` (camera off), `pf-show` (refresh) and `pf-open-order`
@@ -16,7 +17,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
 - `settings.js`: the Settings window (PIN / app key, and the English / Arabic choice), shared by every tab, and the
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
-  has no language button; tab order: POS · Check · Orders · Today · Pick list · Shipments · Return shipments (Today in the middle). Arabic brand name: بتفريند.
+  has no language button; tab order: POS · Check · Orders · Purchase orders · Today · Pick list · Shipments · Return shipments (8 tabs; names
+  wrap on phones, checked from 320px). Arabic brand name: بتفريند.
 - `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
   Printed barcodes are checked by decoding them with html5-qrcode in a test.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
@@ -41,7 +43,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   the SKU). Matching is exact (ignoring spaces, dashes, case and leading zeros); real GTINs (valid check digit) also
   match across EAN-13 / UPC-A / UPC-E / ITF-14 / GS1 (01). Different codes must never match.
 - Receive (supplier purchase orders, Admin API 2026-10):
-  - POs are listed newest first.
+  - POs are listed newest first. "Remove" only hides a PO in the app (`setPOHidden`, sheet `HiddenPOs`): Shopify's API
+    cannot delete or cancel a purchase order. "Show removed purchase orders" brings it back.
   - Over-receiving is allowed: the extra is added with `inventoryAdjustQuantities`, reason `received`.
   - Rejected and Cancelled counts per item; Rejected needs the item scanned.
   - Draft shipments are marked in transit, then received.

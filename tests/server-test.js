@@ -476,6 +476,22 @@ check('Fulfilled order: waybill of another order refused', r, r.ok === false && 
 r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '1111111111' });
 check('Fulfilled order: number not in Bosta refused', r, r.ok === false && /not a Bosta waybill/.test(r.error));
 
+// ---- purchase orders removed from the app (hidden; Shopify has no delete)
+r = post({ action: 'listPOs', key: 'kkk' });
+check('PO list: nothing hidden at first', r.orders.map(o => o.hidden), r.ok && r.orders.every(o => o.hidden === false));
+r = post({ action: 'setPOHidden', key: 'kkk', id: 'gid://shopify/InventoryPurchaseOrder/PO1', name: 'PO-1003', hidden: true });
+check('PO: a bad id is refused', r, r.ok === false);
+r = post({ action: 'setPOHidden', key: 'kkk', id: 'gid://shopify/InventoryPurchaseOrder/77', name: 'PO-77', hidden: true });
+post({ action: 'setPOHidden', key: 'kkk', id: 'gid://shopify/InventoryPurchaseOrder/77', name: 'PO-77', hidden: true });
+check('PO: removed (hidden) once, even when tapped twice', sheets.HiddenPOs.rows, r.ok && r.hidden === true && sheets.HiddenPOs.getLastRow() === 2 && sheets.HiddenPOs.rows[1][1] === 'PO-77');
+r = post({ action: 'setPOHidden', key: 'kkk', id: 'gid://shopify/InventoryPurchaseOrder/77', name: 'PO-77', hidden: false });
+check('PO: shown again', sheets.HiddenPOs.getLastRow(), r.ok && r.hidden === false && sheets.HiddenPOs.getLastRow() === 1);
+check('PO: remove / show logged', sheets.Activity.rows.slice(-3).map(x => x[2]).join(), sheets.Activity.rows.slice(-3).map(x => x[2]).join() === 'remove PO,remove PO,show PO');
+sheets.HiddenPOs.rows.push(['PO1', 'PO-1003', new Date()]);
+r = post({ action: 'listPOs', key: 'kkk' });
+check('PO list: a hidden PO is marked hidden (the app leaves it out)', r.orders.map(o => o.name + ':' + o.hidden), r.ok && r.orders.find(o => o.id === 'PO1').hidden === true && r.orders.filter(o => o.hidden).length === 1);
+sheets.HiddenPOs.rows.length = 1;
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;
