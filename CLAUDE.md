@@ -62,6 +62,10 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   shipment photos, the Bosta wallet feed (`BOSTA_FEES_URL`, up to `BOSTA_FEES_PAGES` pages, default 5) and Bosta
   numbers on Shopify fulfillments (last 7 days). Checked newest first; sizes matching `FLAG_REGEX` (default
   `bulky`) go to `Bulky`. Each run saves `BOSTA_LAST_SYNC` (shown in Today); failures give one Errors line per run.
+- Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
+  GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with
+  `fulfill` (checked again on the server) as trackingInfo company `Bosta` (+ `BOSTA_TRACK_URL` if set) and added
+  to `Tracking` for the bulky check.
 - Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
 - Shipments Returns: `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
   never touches `Tracking`; logged as `return photo`.

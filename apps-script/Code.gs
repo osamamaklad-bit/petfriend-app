@@ -35,6 +35,7 @@
  *     SHEET_ID               the Google Sheet's ID (only if this script is NOT opened from that sheet)
  *     PHOTO_FOLDER_ID        (optional; created on first photo)
  *     BOSTA_API_KEY, BOSTA_AUTH_HEADER_NAME, BOSTA_DELIVERY_URL (optional), BOSTA_FEES_URL (optional)
+ *     BOSTA_TRACK_URL        (optional) tracking page put on fulfillments, with {tn} for the number
  *     FLAG_REGEX             (optional, default "bulky")
  *
  * Shopify scopes for the Orders app: read_orders, read_products,
@@ -55,7 +56,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-21.4';
+const SERVER_VERSION = '2026-11-22.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -263,7 +264,8 @@ function posToday_() {
 const ORDER_ACTIONS = {
   listOrders: function () { return listOrders_(); },
   getOrder: function (r) { return getOrder_(r.query); },
-  fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName); },
+  fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName, r.tracking); },
+  checkWaybill: function (r) { return checkWaybill_(r.code, r.orderName); },
   getReturnable: function (r) { return getReturnable_(r); },
   processReturn: function (r) { return processReturn_(r); },
   listPOs: function () { return listPOs_(); },
@@ -386,8 +388,41 @@ function getOrder_(raw) {
   return { ok: true, order: { id: order.id, name: order.name }, items: items };
 }
 
-function fulfill_(items, notify, orderName) {
+/** Fulfill: is this scanned code a Bosta waybill, and is it for this order? Bosta keeps the Shopify order with the
+ *  shipment (businessReference, e.g. "petsfriend-5972:#14071"). Only a Bosta waybill whose order matches (or that has
+ *  no order on it) can be put on the fulfillment. */
+function checkWaybill_(code, orderName) {
+  const digits = String(code || '').replace(/\D/g, '');
+  if (digits.length < 9 || digits.length > 20) return { ok: true, bosta: false };
+  if (!P.getProperty('BOSTA_API_KEY')) throw new Error('Bosta is not set up (BOSTA_API_KEY)');
+  const tn = digits.length >= 10 ? digits.slice(-10) : digits;
+  let d;
+  try { d = bosta_(tn); } catch (e) {
+    if (/Bosta (400|404)/.test(e.message)) return { ok: true, bosta: false, tn: tn };
+    throw e;
+  }
+  const ref = String((d && d.businessReference) || ''), refNum = (ref.match(/#?\s*(\d+)\s*$/) || [])[1] || '';
+  const want = String(orderName || '').replace(/\D/g, '');
+  return { ok: true, bosta: true, tn: tn, ref: ref, refOrder: refNum ? '#' + refNum : '',
+    matches: !refNum || !want || refNum === want, state: (d && d.state && d.state.value) || '' };
+}
+function bostaTrackingUrl_(tn) {
+  const t = P.getProperty('BOSTA_TRACK_URL');          // optional, e.g. a Bosta tracking page with {tn} in it
+  return t && /^https:\/\//.test(t) ? t.replace('{tn}', encodeURIComponent(tn)) : '';
+}
+
+function fulfill_(items, notify, orderName, tracking) {
   if (!items || !items.length) return { ok: false, error: 'No items' };
+  // a Bosta waybill scanned with the order: checked again here, so only a real Bosta number for this order is saved
+  let track = null;
+  if (tracking) {
+    const w = checkWaybill_(tracking, orderName);
+    if (!w.bosta) throw new Error(String(tracking) + ' is not a Bosta waybill');
+    if (!w.matches) throw new Error('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + orderName);
+    track = { company: 'Bosta', number: w.tn };
+    const url = bostaTrackingUrl_(w.tn);
+    if (url) track.url = url;
+  }
 
   const grouped = {};
   items.forEach(function (it) {
@@ -404,15 +439,17 @@ function fulfill_(items, notify, orderName) {
         userErrors { field message }
       }
     }`,
-    { f: { notifyCustomer: !!notify, lineItemsByFulfillmentOrder: lineItemsByFulfillmentOrder } }
+    { f: Object.assign({ notifyCustomer: !!notify, lineItemsByFulfillmentOrder: lineItemsByFulfillmentOrder }, track ? { trackingInfo: track } : {}) }
   );
 
   const r = data.fulfillmentCreate;
   if (r.userErrors && r.userErrors.length) {
     return { ok: false, error: r.userErrors.map(function (u) { return u.message; }).join('; ') };
   }
-  logActivity_('Orders', 'fulfill', orderName || '', items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0));
-  return { ok: true, status: r.fulfillment.status };
+  logActivity_('Orders', 'fulfill', orderName || '', items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), track ? { tracking: track.number } : null);
+  // the hourly Bosta check now follows this shipment too (size, bulky fee)
+  if (track) try { addTracking_([track.number]); } catch (e) { console.warn('addTracking_', e.message); }
+  return { ok: true, status: r.fulfillment.status, tracking: track ? track.number : '' };
 }
 
 /** Returns: fulfilled items on an order that can still be returned. */

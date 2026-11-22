@@ -47,6 +47,7 @@ function shopifyAnswer(url, body, headers) {
       fulfillmentOrders: { edges: [{ node: { id: 'FO7', status: 'OPEN', assignedLocation: { name: 'Main' }, lineItems: { edges: [
         li('L1', 'No bin', '1', '', ''), li('L2', 'Shelf B-2', '2', '', 'B-2'), li('L3', 'Shelf A-10', '3', 'A-10', 'A-1'), li('L4', 'Shelf A-2', '4', 'A-2', '') ] } } }] } } }] } } };
   }
+  if (/fulfillment \{ id status \}/.test(q)) { ctx.__ful = body.variables.f; }
   if (/fulfillment \{ id status \}/.test(q)) return { data: { fulfillmentCreate: { fulfillment: { id: 'F1', status: 'SUCCESS' }, userErrors: [] } } };
   if (/nodes\(ids: \$ids\) \{ \.\.\. on Order/.test(q)) return { data: { nodes: body.variables.ids.map((id, i) => ({ id, name: '#100' + (i + 1), cancelledAt: null, displayFulfillmentStatus: i === 0 ? 'FULFILLED' : 'UNFULFILLED' })) } };
   if (/inventoryShipmentMarkInTransit/.test(q)) { ctx.__marked = (ctx.__marked || []).concat([body.variables.id]); return { data: { inventoryShipmentMarkInTransit: { inventoryShipment: { id: body.variables.id, status: 'IN_TRANSIT' }, userErrors: [] } } }; }
@@ -111,7 +112,7 @@ const ctx = {
     if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
-    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: '#1001' } }; }
+    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : '#1001' } }; }
     else ans = shopifyAnswer(url, body);
     return { getResponseCode: () => code, getContentText: () => JSON.stringify(ans) }; } },
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
@@ -425,6 +426,29 @@ r = post({ fn: 'getShipment', args: ['2222', '4444444444'] });
 check('Search: return photos flagged, carrier stays Bosta', r.result, r.result.returned === true && r.result.carrier === 'Bosta' && r.result.photos.filter(p => p.ret).length === 3 && r.result.photos.filter(p => !p.ret).length === 1);
 r = post({ action: 'dailySummary', key: 'kkk' });
 check('Today: return photos counted apart', r.returnPhotos, r.ok && r.returnPhotos.count === 3 && r.returnPhotos.qty === 4);
+
+// ---- Fulfill with a Bosta waybill
+r = post({ action: 'checkWaybill', key: 'kkk', code: '2222222222', orderName: '#1007' });
+check('Waybill: Bosta number for this order', r, r.ok && r.bosta && r.matches && r.tn === '2222222222' && r.refOrder === '#1007');
+r = post({ action: 'checkWaybill', key: 'kkk', code: '3333333333', orderName: '#1007' });
+check('Waybill: Bosta number of another order is flagged', r, r.ok && r.bosta && r.matches === false && r.refOrder === '#1001');
+r = post({ action: 'checkWaybill', key: 'kkk', code: '1111111111', orderName: '#1007' });
+check('Waybill: number not in Bosta -> not Bosta', r, r.ok && r.bosta === false);
+r = post({ action: 'checkWaybill', key: 'kkk', code: '5000159484695', orderName: '#1007' });
+check('Waybill: a product barcode (13 digits) is looked up by its last 10 digits only', r, r.ok && r.tn === '0159484695');
+r = post({ action: 'checkWaybill', key: 'kkk', code: 'ABC12', orderName: '#1007' });
+check('Waybill: short or non-number codes are not Bosta (no Bosta call)', r, r.ok && r.bosta === false && !r.tn);
+props.BOSTA_TRACK_URL = 'https://track.example/?n={tn}';
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: true, tracking: '2222222222', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: Bosta tracking saved on the fulfillment', ctx.__ful.trackingInfo, r.ok && r.tracking === '2222222222' && ctx.__ful.trackingInfo.company === 'Bosta'
+  && ctx.__ful.trackingInfo.number === '2222222222' && ctx.__ful.trackingInfo.url === 'https://track.example/?n=2222222222' && ctx.__ful.notifyCustomer === true);
+check('Fulfill: the waybill is followed by the bulky check (Tracking)', sheets.Tracking.rows.some(x => String(x[0]) === '2222222222'), sheets.Tracking.rows.some(x => String(x[0]) === '2222222222'));
+check('Fulfill: tracking in the Activity log', sheets.Activity.rows.at(-1), /2222222222/.test(sheets.Activity.rows.at(-1)[5]));
+delete props.BOSTA_TRACK_URL; ctx.__ful = null;
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '3333333333', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: waybill of another order refused, nothing fulfilled', r, r.ok === false && /for order #1001/.test(r.error) && ctx.__ful === null);
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: without a waybill still works (no tracking sent)', ctx.__ful, r.ok && !('trackingInfo' in ctx.__ful));
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

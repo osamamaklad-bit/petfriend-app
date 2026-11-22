@@ -94,6 +94,10 @@
   .ordertitle strong { font-size: 20px; }
   .ordertitle span { color: var(--muted); font-size: 14px; }
   #labelsBtn { width: 100%; margin: 0 0 8px; }
+  .trackline { margin: -2px 2px 8px; font-size: 13px; color: var(--muted); }
+  .trackline.on { background: var(--ok-bg); border: 2px solid var(--ok); color: var(--ok); border-radius: 10px; padding: 8px 12px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .trackline.on b { font-size: 17px; }
+  .trackline button { margin-inline-start: auto; border: 1px solid var(--ok); background: var(--card); color: var(--ok); border-radius: 8px; width: 32px; height: 30px; font-size: 15px; }
 
   .item {
     display: grid; grid-template-columns: 56px 1fr auto; gap: 10px; align-items: center;
@@ -220,7 +224,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.1</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -256,6 +260,7 @@
     <strong id="orderName"></strong><span id="orderSummary"></span>
   </div>
   <button class="ghost" id="labelsBtn" hidden>Print labels</button>
+  <div id="trackLine" class="trackline" hidden></div>
   <div id="list"></div>
 </main>
 
@@ -297,7 +302,7 @@
 
   const $ = (id) => document.getElementById(id);
   const T = (s) => (window.pfT ? window.pfT(s) : s); // Arabic for confirm/prompt boxes
-  const state = { mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
+  const state = { tracking: null, mode: 'fulfill', orders: [], filter: 'all', order: null, items: [], scanner: null, camOn: false, lastCode: '', lastAt: 0, busy: false };
   const isRet = () => state.mode === 'return';
   const isRcv = () => state.mode === 'receive';   // receiving stock from suppliers (purchase orders)
   // the Check tab of the main page opens this page as orders/index.html?only=check: Check mode only
@@ -378,7 +383,7 @@
         feedback('bad');
         return;
       }
-      state.order = data.order;
+      state.order = data.order; state.tracking = null;
       state.items = data.items.map((i) => Object.assign({ got: 0, rej: 0, can: 0, verified: false }, i)); // verified = its code was scanned; rej / can = rejected / cancelled (Receive)
       state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
       $('orderInput').value = '';
@@ -510,6 +515,7 @@
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
     // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
     const matches = state.items.filter((i) => (i.barcode && sameCode(code, i.barcode)) || (i.sku && sameCode(code, i.sku)));
+    if (!matches.length && !isRcv() && !isRet() && looksLikeWaybill(code)) { checkWaybill(code); return; }
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
       const expected = state.items.filter((i) => (i.barcode || i.sku) && !i.verified).map((i) => i.sku ? (i.barcode ? i.barcode + ' / ' + i.sku : i.sku) : i.barcode)
@@ -544,6 +550,31 @@
       feedback('ok');
     } else if (left === 0) { say('All items scanned. Ready to fulfill.', 'ok'); feedback('ok'); }
     else { say(item.title + ': ' + item.got + ' of ' + item.need, item.got === item.need ? 'ok' : 'warn'); feedback(item.got === item.need ? 'ok' : 'warn'); }
+  }
+
+  // ---------- Bosta waybill (Fulfill): its tracking number is saved on the fulfillment ----------
+  // 9-10 digits, or a longer number that is not a product barcode (GTINs have a check digit)
+  function looksLikeWaybill(code) {
+    const d = String(code).replace(/[\s-]/g, '');
+    if (!/^\d+$/.test(d)) return false;
+    if (d.length === 9 || d.length === 10) return true;
+    return d.length > 10 && d.length <= 20 && !([12, 13, 14].indexOf(d.length) !== -1 && gtinValid(d));
+  }
+  async function checkWaybill(code) {
+    if (state.busy || !state.order) return;
+    const order = state.order;
+    state.busy = true;
+    say('Checking waybill ' + code + ' with Bosta...');
+    try {
+      const w = await api({ action: 'checkWaybill', code: code, orderName: order.name });
+      if (state.order !== order) return;
+      if (!w.bosta) { say('Not in this order, and not a Bosta waybill: ' + code, 'bad'); feedback('bad'); return; }
+      if (!w.matches) { say('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + order.name, 'bad'); feedback('bad'); return; }
+      state.tracking = { number: w.tn, state: w.state };
+      render();
+      say('Bosta waybill ' + w.tn + ' added. It will be saved with the fulfillment.', 'ok'); feedback('ok');
+    } catch (e) { say(e.message, 'bad'); feedback('bad'); }
+    finally { state.busy = false; }
   }
 
   async function toggleCamera() {
@@ -602,6 +633,16 @@
       $('fulfillBtn').disabled = true; return;
     }
     $('orderName').textContent = state.order.name;
+    const tl = $('trackLine');
+    tl.hidden = isRcv() || isRet();
+    tl.className = 'trackline' + (state.tracking ? ' on' : '');
+    tl.innerHTML = '';
+    if (state.tracking) {
+      const t = document.createElement('span'); t.textContent = 'Bosta tracking:';
+      const n = document.createElement('b'); n.textContent = state.tracking.number; n.dir = 'ltr'; n.setAttribute('data-no-i18n', '');
+      const x = document.createElement('button'); x.type = 'button'; x.id = 'trackClear'; x.textContent = '✕'; x.setAttribute('aria-label', 'Remove tracking');
+      tl.appendChild(t); tl.appendChild(n); tl.appendChild(x);
+    } else tl.textContent = 'Scan the Bosta waybill to save its tracking number (optional).';
     $('orderSummary').textContent = isRcv()
       ? [totalGot() + ' received', sumOf((i) => i.rej) && sumOf((i) => i.rej) + ' rejected', sumOf((i) => i.can) && sumOf((i) => i.can) + ' cancelled', totalNeed() + ' expected'].filter(Boolean).join(' · ')
       : isRet()
@@ -868,7 +909,7 @@
         items: rcvItems
       });
       feedback('ok');
-      state.order = null; state.items = []; render();
+      state.order = null; state.items = []; state.tracking = null; render();
       say('Received ' + data.received + (data.received === 1 ? ' item' : ' items') + ' from ' + name + ' into stock.' +
         (data.extra ? '\n' + data.extra + ' extra' : '') + (data.rejected ? '\n' + data.rejected + ' rejected.' : '') + (data.canceled ? '\n' + data.canceled + ' cancelled.' : ''), 'ok');
       loadList();
@@ -895,7 +936,7 @@
         items: state.items.filter((i) => i.verified && i.got > 0).map((i) => ({ fliId: i.fliId, qty: i.got, locationId: i.locationId || '' }))
       });
       feedback('ok');
-      state.order = null; state.items = []; render();
+      state.order = null; state.items = []; state.tracking = null; render();
       say('Return ' + (data.returnName || '') + ' created for ' + name + (restock ? ', items restocked' : '') +
         '. Issue the refund in Shopify admin.', 'ok');
     } catch (e) {
@@ -913,20 +954,24 @@
         action: 'fulfill',
         orderName: state.order.name,
         notify: $('notify').checked,
+        tracking: state.tracking ? state.tracking.number : '',
         items: state.items.map((i) => ({ foId: i.foId, foliId: i.foliId, qty: i.got }))
       });
       feedback('ok');
-      const name = state.order.name;
-      state.order = null; state.items = []; render();
-      say('Order ' + name + ' fulfilled. Scan the next order.', 'ok');
+      const name = state.order.name, tn = state.tracking && state.tracking.number;
+      state.order = null; state.items = []; state.tracking = null; render();
+      say(tn ? 'Order ' + name + ' fulfilled with Bosta tracking ' + tn + '. Scan the next order.' : 'Order ' + name + ' fulfilled. Scan the next order.', 'ok');
       loadList();
     } catch (e) {
       say(e.message, 'bad'); feedback('bad'); $('fulfillBtn').disabled = false;
     } finally { state.busy = false; }
   }
 
+  $('trackLine').addEventListener('click', function (e) {
+    if (e.target.closest('#trackClear')) { state.tracking = null; render(); say('Tracking removed.', 'warn'); }
+  });
   $('resetBtn').addEventListener('click', function () {
-    state.order = null; state.items = []; render();
+    state.order = null; state.items = []; state.tracking = null; render();
     say(idleMsg());
     renderOrders();
   });
@@ -948,7 +993,7 @@
     $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : m === 'check' ? 'Check' : 'Fulfill';
     state.check = null;
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
-    state.order = null; state.items = [];
+    state.order = null; state.items = []; state.tracking = null;
     render();
     if (!initial) {
       say(idleMsg());
@@ -993,7 +1038,7 @@
   window.addEventListener('message', async function (e) {
     if (ONLY_CHECK || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
     if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
-    state.order = null; state.items = [];
+    state.order = null; state.items = []; state.tracking = null;
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));
   });
