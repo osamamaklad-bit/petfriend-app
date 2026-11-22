@@ -49,6 +49,7 @@
     'The server sent an unexpected reply. Try again in a minute.': 'السيرفر رد برد غير متوقع. جرب تاني بعد دقيقة.',
     'Expiry dates': 'تواريخ الصلاحية',
     'Pet Friend': 'بتفريند',
+    'Home': 'الرئيسية',
     'POS pass': 'باسورد الكاشير',
     'Orders pass': 'باسورد الطلبات',
     'Shipments pass': 'باسورد الشحنات',

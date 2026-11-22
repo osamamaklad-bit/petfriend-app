@@ -17,8 +17,10 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
 - `settings.js`: the Settings window (PIN / app key, and the English / Arabic choice), shared by every tab, and the
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
-  has no language button; tab order: POS · Check · Orders · Purchase orders · Today · Pick list · Shipments · Return shipments (8 tabs; on phones all fit
-  at once with smaller icons and names that wrap, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
+  has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
+  (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
+  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (all fit at once on
+  phones with smaller icons and wrapping names, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
 - `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
   Printed barcodes are checked by decoding them with html5-qrcode in a test.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**

@@ -128,7 +128,13 @@
   }
 
   function render() {
-    const d = last; if (!d) return;
+    if (!last) return;
+    // missing parts (e.g. an older server) show as 0 instead of breaking the screen
+    const Z = { count: 0, qty: 0 };
+    const d = Object.assign({}, last, {
+      fulfilled: last.fulfilled || Z, returns: last.returns || Z, pickLists: last.pickLists || Z, photos: last.photos || Z,
+      received: Object.assign({ count: 0, qty: 0, extra: 0, rejected: 0, canceled: 0 }, last.received || {}),
+      errors: Object.assign({ count: 0, last: [] }, last.errors || {}), generatedAt: last.generatedAt || new Date().toISOString() });
     $('when').textContent = new Date(d.generatedAt).toLocaleDateString(isAr() ? 'ar-EG-u-nu-latn' : [], { weekday: 'long', day: 'numeric', month: 'long' });
     const box = $('tiles'); box.innerHTML = '';
     box.appendChild(d.pos && !d.pos.error

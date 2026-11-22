@@ -225,7 +225,19 @@
     document.addEventListener('pf-lang', label);
     set.parentNode.insertBefore(b, set);
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addLangButton); else addLangButton();
+  // Inside the app: the logo in a tab's header goes to the home screen (Today)
+  function homeLogo() {
+    if (window.parent === window) return;
+    var logo = document.querySelector('header .logo, h1 .logo, .hd .logo');
+    if (!logo || logo.dataset.home) return;
+    logo.dataset.home = '1';
+    logo.style.cursor = 'pointer';
+    logo.setAttribute('role', 'button');
+    logo.setAttribute('aria-label', 'Home');
+    logo.addEventListener('click', function () { try { window.parent.postMessage('pf-home', location.origin); } catch (e) {} });
+  }
+  function onReady() { addLangButton(); homeLogo(); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onReady); else onReady();
 
   window.pfSettings = pfSettings;
   window.pfConfirm = pfConfirm;
