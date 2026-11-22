@@ -40,6 +40,14 @@ function shopifyAnswer(url, body, headers) {
     { shippableQuantity: 5, inventoryItem: { id: 'I9', sku: 'WK1', variants: { nodes: [{ displayName: 'Whiskas Tuna', barcode: '999', sku: 'WK1' }] } } } ] } } } };
   if (/inventoryShipmentCreateInTransit/.test(q)) return { data: { inventoryShipmentCreateInTransit: { inventoryShipment: { id: 'SNEW', lineItems: { nodes: body.variables.input.lineItems.map((l, i) => ({ id: 'SNL' + i, quantity: l.quantity, inventoryItem: { id: l.inventoryItemId } })) } }, userErrors: [] } } };
   if (/inventoryAdjustQuantities/.test(q)) { ctx.__adjust = body.variables; return { data: { inventoryAdjustQuantities: { inventoryAdjustmentGroup: { id: 'G1' }, userErrors: [] } } }; }
+  if (/fulfillmentOrders\(first: 10\)/.test(q) && /1008/.test(JSON.stringify(body.variables))) return { data: { orders: { edges: [{ node: { id: 'gid://Order/8', name: '#1008', cancelledAt: null,
+    displayFulfillmentStatus: 'FULFILLED', fulfillmentOrders: { edges: [{ node: { id: 'FO8', status: 'CLOSED', assignedLocation: { name: 'Main' }, lineItems: { edges: [] } } }] } } }] } } };
+  if (/fulfillments\(first: 20\)/.test(q)) { const done = /1008/.test(JSON.stringify(body.variables));
+    return { data: { orders: { nodes: [{ id: 'gid://Order/' + (done ? 8 : 9), name: done ? '#1008' : '#1009', cancelledAt: null, fulfillments: done ? [
+      { id: 'FUL0', status: 'CANCELLED', createdAt: '2026-11-21T10:00:00Z', trackingInfo: [] },
+      { id: 'FUL1', status: 'SUCCESS', createdAt: '2026-11-20T10:00:00Z', trackingInfo: (ctx.__trk || []).map(n => ({ number: n, company: 'Bosta', url: null })) } ] : [] }] } } }; }
+  if (/fulfillmentTrackingInfoUpdate/.test(q)) { ctx.__trkUpd = body.variables; ctx.__trk = body.variables.t.numbers || [body.variables.t.number];
+    return { data: { fulfillmentTrackingInfoUpdate: { fulfillment: { id: body.variables.id }, userErrors: [] } } }; }
   if (/fulfillmentOrders\(first: 10\)/.test(q)) {
     const li = (id, title, bc, vb, pb) => ({ node: { id, remainingQuantity: 1, lineItem: { title, variantTitle: null, sku: id, image: null,
       variant: { barcode: bc, vBin: vb ? { value: vb } : null, product: { pBin: pb ? { value: pb } : null, pExp: { value: '2027-01-01' } } } } } });
@@ -112,7 +120,7 @@ const ctx = {
     if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
-    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : '#1001' } }; }
+    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : tn === '8888888888' || tn === '8888888889' ? 'petsfriend-5972:#1008' : '#1001' } }; }
     else ans = shopifyAnswer(url, body);
     return { getResponseCode: () => code, getContentText: () => JSON.stringify(ans) }; } },
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
@@ -449,6 +457,24 @@ r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tra
 check('Fulfill: waybill of another order refused, nothing fulfilled', r, r.ok === false && /for order #1001/.test(r.error) && ctx.__ful === null);
 r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
 check('Fulfill: without a waybill still works (no tracking sent)', ctx.__ful, r.ok && !('trackingInfo' in ctx.__ful));
+
+// ---- Bosta tracking on an order that is already fulfilled
+r = post({ action: 'getOrder', key: 'kkk', query: '1008' });
+check('Fulfilled order: refused without allowDone (unchanged)', r, r.ok === false && /nothing left to fulfill/.test(r.error));
+r = post({ action: 'getOrder', key: 'kkk', query: '1008', allowDone: true });
+check('Fulfilled order: opens as done with its tracking numbers', r, r.ok && r.done === true && r.items.length === 0 && r.order.name === '#1008' && Array.isArray(r.tracking));
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888888', notify: true });
+check('Fulfilled order: Bosta number added to the newest live shipment', ctx.__trkUpd, r.ok && ctx.__trkUpd.id === 'FUL1' && ctx.__trkUpd.t.company === 'Bosta' && ctx.__trkUpd.t.number === '8888888888' && ctx.__trkUpd.n === true);
+check('Fulfilled order: logged and followed by the bulky check', sheets.Activity.rows.at(-1), sheets.Activity.rows.at(-1)[2] === 'tracking' && sheets.Tracking.rows.some(x => String(x[0]) === '8888888888'));
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888888' });
+check('Fulfilled order: same number again -> already there, nothing sent', r, r.ok && r.already === true);
+ctx.__trkUpd = null;
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888889' });
+check('Fulfilled order: a second number is added next to the first (never replaced)', ctx.__trkUpd && ctx.__trkUpd.t, r.ok && ctx.__trkUpd.t.numbers.join() === '8888888888,8888888889');
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '3333333333' });
+check('Fulfilled order: waybill of another order refused', r, r.ok === false && /for order #1001/.test(r.error));
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '1111111111' });
+check('Fulfilled order: number not in Bosta refused', r, r.ok === false && /not a Bosta waybill/.test(r.error));
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

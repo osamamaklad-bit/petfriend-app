@@ -65,7 +65,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with
   `fulfill` (checked again on the server) as trackingInfo company `Bosta` (+ `BOSTA_TRACK_URL` if set) and added
-  to `Tracking` for the bulky check.
+  to `Tracking` for the bulky check. An order already fulfilled opens in Fulfill (`getOrder` with `allowDone`) to add a
+  Bosta number to its newest live shipment (`addOrderTracking`, `fulfillmentTrackingInfoUpdate`; existing numbers kept).
 - Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
 - Shipments Returns: `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
   never touches `Tracking`; logged as `return photo`.

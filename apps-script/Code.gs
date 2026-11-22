@@ -56,7 +56,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-22.1';
+const SERVER_VERSION = '2026-11-22.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -263,7 +263,8 @@ function posToday_() {
 
 const ORDER_ACTIONS = {
   listOrders: function () { return listOrders_(); },
-  getOrder: function (r) { return getOrder_(r.query); },
+  getOrder: function (r) { return getOrder_(r.query, r.allowDone); },
+  addOrderTracking: function (r) { return addOrderTracking_(r.orderName, r.tracking, r.notify); },
   fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName, r.tracking); },
   checkWaybill: function (r) { return checkWaybill_(r.code, r.orderName); },
   getReturnable: function (r) { return getReturnable_(r); },
@@ -322,7 +323,7 @@ function listOrders_() {
   return { ok: true, orders: orders };
 }
 
-function getOrder_(raw) {
+function getOrder_(raw, allowDone) {
   const q = String(raw || '').trim().replace(/^#/, '');
   if (!q) return { ok: false, error: 'Enter an order number' };
 
@@ -383,6 +384,12 @@ function getOrder_(raw) {
   });
 
   if (!items.length) {
+    // Fulfill can still add a Bosta tracking number to an order that is already fulfilled
+    if (allowDone && /FULFILLED/.test(String(order.displayFulfillmentStatus))) {
+      const t = orderFulfillments_(order.name);
+      return { ok: true, order: { id: order.id, name: order.name }, items: [], done: true, status: order.displayFulfillmentStatus,
+        tracking: t.target ? t.target.numbers : [] };
+    }
     return { ok: false, error: 'Order ' + order.name + ' has nothing left to fulfill (' + order.displayFulfillmentStatus + ')' };
   }
   return { ok: true, order: { id: order.id, name: order.name }, items: items };
@@ -406,6 +413,40 @@ function checkWaybill_(code, orderName) {
   return { ok: true, bosta: true, tn: tn, ref: ref, refOrder: refNum ? '#' + refNum : '',
     matches: !refNum || !want || refNum === want, state: (d && d.state && d.state.value) || '' };
 }
+/** The order's shipments (fulfillments) and the one a tracking number is added to: the newest that is not cancelled. */
+function orderFulfillments_(orderName) {
+  const num = String(orderName || '').replace(/\D/g, '');
+  if (!num) throw new Error('Missing order number');
+  const o = shopify_('query($q: String!) { orders(first: 1, query: $q) { nodes { id name cancelledAt ' +
+    'fulfillments(first: 20) { id status createdAt trackingInfo(first: 10) { number company url } } } } }', { q: 'name:#' + num + ' OR name:' + num }).orders.nodes[0];
+  if (!o) throw new Error('Order ' + orderName + ' not found');
+  const live = (o.fulfillments || []).filter(function (f) { return f.status !== 'CANCELLED' && f.status !== 'FAILURE' && f.status !== 'ERROR'; })
+    .sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  const f = live[0];
+  return { order: o, target: f ? { id: f.id, info: f.trackingInfo || [], numbers: (f.trackingInfo || []).map(function (t) { return t.number; }).filter(Boolean) } : null };
+}
+/** Adds a Bosta tracking number to an order that is already fulfilled (its newest shipment). Same checks as Fulfill:
+ *  the number must be a Bosta waybill for this order. Numbers already on the shipment are kept, never replaced. */
+function addOrderTracking_(orderName, code, notify) {
+  const w = checkWaybill_(code, orderName);
+  if (!w.bosta) throw new Error(String(code) + ' is not a Bosta waybill');
+  if (!w.matches) throw new Error('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + orderName);
+  const of = orderFulfillments_(orderName);
+  if (of.order.cancelledAt) throw new Error('Order ' + of.order.name + ' is cancelled');
+  if (!of.target) throw new Error('Order ' + of.order.name + ' has no shipment yet: fulfill it first');
+  if (of.target.numbers.indexOf(w.tn) !== -1) return { ok: true, already: true, tracking: w.tn, order: of.order.name };
+  const all = of.target.numbers.concat([w.tn]), url = bostaTrackingUrl_(w.tn);
+  const input = all.length === 1 ? { company: 'Bosta', number: w.tn } : { company: 'Bosta', numbers: all };
+  if (url && all.length === 1) input.url = url;
+  const r = shopify_('mutation($id: ID!, $t: FulfillmentTrackingInput!, $n: Boolean) { fulfillmentTrackingInfoUpdate(fulfillmentId: $id, ' +
+    'trackingInfoInput: $t, notifyCustomer: $n) { fulfillment { id } userErrors { field message } } }', { id: of.target.id, t: input, n: !!notify })
+    .fulfillmentTrackingInfoUpdate;
+  userErrors_(r.userErrors);
+  logActivity_('Orders', 'tracking', of.order.name, 0, { tracking: w.tn });
+  try { addTracking_([w.tn]); } catch (e) { console.warn('addTracking_', e.message); }
+  return { ok: true, tracking: w.tn, order: of.order.name, numbers: all };
+}
+
 function bostaTrackingUrl_(tn) {
   const t = P.getProperty('BOSTA_TRACK_URL');          // optional, e.g. a Bosta tracking page with {tn} in it
   return t && /^https:\/\//.test(t) ? t.replace('{tn}', encodeURIComponent(tn)) : '';

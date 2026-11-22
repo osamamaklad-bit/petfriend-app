@@ -95,6 +95,9 @@
   .ordertitle span { color: var(--muted); font-size: 14px; }
   #labelsBtn { width: 100%; margin: 0 0 8px; }
   .trackline { margin: -2px 2px 8px; font-size: 13px; color: var(--muted); }
+  .donecard { background: var(--warn-bg); border: 2px solid var(--warn); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-weight: 600; margin-bottom: 8px; }
+  .donecard.existing { background: var(--card); border-color: var(--line); color: var(--muted); font-weight: 400; display: flex; gap: 6px; flex-wrap: wrap; }
+  .donecard.existing b { color: var(--ink); }
   .trackline.on { background: var(--ok-bg); border: 2px solid var(--ok); color: var(--ok); border-radius: 10px; padding: 8px 12px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
   .trackline.on b { font-size: 17px; }
   .trackline button { margin-inline-start: auto; border: 1px solid var(--ok); background: var(--card); color: var(--ok); border-radius: 8px; width: 32px; height: 30px; font-size: 15px; }
@@ -224,7 +227,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.2</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.3</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -377,18 +380,21 @@
     state.busy = true;
     say((isRcv() ? 'Loading purchase order ' : 'Loading order ') + q + '...');
     try {
-      const data = await api({ action: isRcv() ? 'getPO' : isRet() ? 'getReturnable' : 'getOrder', query: q });
+      // Fulfill also opens an order that is already fulfilled, to add its Bosta tracking number
+      const data = await api({ action: isRcv() ? 'getPO' : isRet() ? 'getReturnable' : 'getOrder', query: q, allowDone: !isRcv() && !isRet() });
       if (isRet() && !data.items.length) {
         say('Order ' + data.order.name + ' has nothing to return (not shipped yet, or already returned).', 'bad');
         feedback('bad');
         return;
       }
       state.order = data.order; state.tracking = null;
+      if (data.done) { state.order.done = true; state.order.status = data.status; state.order.existing = data.tracking || []; }
       state.items = data.items.map((i) => Object.assign({ got: 0, rej: 0, can: 0, verified: false }, i)); // verified = its code was scanned; rej / can = rejected / cancelled (Receive)
       state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
       $('orderInput').value = '';
       render();
       if (isRcv()) say(data.order.name + (data.order.supplier ? ' from ' + data.order.supplier : '') + ': scan each item that arrived.', 'ok');
+      else if (data.done) say('Order ' + data.order.name + ' is already fulfilled. Scan its Bosta waybill to add the tracking number.', 'warn');
       else say(isRet()
         ? 'Order ' + data.order.name + ': scan each item being returned.'
         : 'Order ' + data.order.name + ' loaded. Scan the items.', 'ok');
@@ -516,6 +522,7 @@
     // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
     const matches = state.items.filter((i) => (i.barcode && sameCode(code, i.barcode)) || (i.sku && sameCode(code, i.sku)));
     if (!matches.length && !isRcv() && !isRet() && looksLikeWaybill(code)) { checkWaybill(code); return; }
+    if (state.order.done) { say('Order ' + state.order.name + ' is already fulfilled. Scan its Bosta waybill to add the tracking number.', 'bad'); feedback('bad'); return; }
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
       const expected = state.items.filter((i) => (i.barcode || i.sku) && !i.verified).map((i) => i.sku ? (i.barcode ? i.barcode + ' / ' + i.sku : i.sku) : i.barcode)
@@ -572,7 +579,7 @@
       if (!w.matches) { say('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + order.name, 'bad'); feedback('bad'); return; }
       state.tracking = { number: w.tn, state: w.state };
       render();
-      say('Bosta waybill ' + w.tn + ' added. It will be saved with the fulfillment.', 'ok'); feedback('ok');
+      say(order.done ? 'Bosta waybill ' + w.tn + ' scanned. Tap Save tracking.' : 'Bosta waybill ' + w.tn + ' added. It will be saved with the fulfillment.', 'ok'); feedback('ok');
     } catch (e) { say(e.message, 'bad'); feedback('bad'); }
     finally { state.busy = false; }
   }
@@ -627,7 +634,7 @@
       ? (totalGot() ? 'Receive ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Receive')
       : isRet()
       ? (totalGot() ? 'Return ' + totalGot() + (totalGot() === 1 ? ' item' : ' items') : 'Return')
-      : 'Fulfill';
+      : state.order && state.order.done ? 'Save tracking' : 'Fulfill';
     if (!state.order) {
       list.innerHTML = isRet() ? '<div class="empty">Scan or type an order number to start a return.</div>' : '';
       $('fulfillBtn').disabled = true; return;
@@ -715,6 +722,20 @@
       if (!binBox.childNodes.length) binBox.remove();
       list.appendChild(el);
     });
+    if (state.order.done) {   // already fulfilled: only a Bosta tracking number can be added
+      const c = document.createElement('div'); c.className = 'empty donecard';
+      c.textContent = 'Already fulfilled. Scan the Bosta waybill, then tap Save tracking.';
+      list.appendChild(c);
+      if (state.order.existing.length) {
+        const x = document.createElement('div'); x.className = 'donecard existing';
+        const l = document.createElement('span'); l.textContent = 'Tracking already on this order:';
+        const n = document.createElement('b'); n.textContent = state.order.existing.join(', '); n.dir = 'ltr'; n.setAttribute('data-no-i18n', '');
+        x.appendChild(l); x.appendChild(n); list.appendChild(x);
+      }
+      $('orderSummary').textContent = 'Already fulfilled';
+      $('fulfillBtn').disabled = !state.tracking;
+      return;
+    }
     $('fulfillBtn').disabled = isRcv() ? totalGot() + sumOf((i) => i.rej + i.can) === 0 : isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
   }
 
@@ -885,7 +906,26 @@
   });
 
   // ---------- fulfill ----------
-  $('fulfillBtn').addEventListener('click', function () { if (isRcv()) submitReceive(); else if (isRet()) submitReturn(); else submitFulfill(); });
+  $('fulfillBtn').addEventListener('click', function () {
+    if (isRcv()) submitReceive(); else if (isRet()) submitReturn(); else if (state.order && state.order.done) submitTracking(); else submitFulfill();
+  });
+
+  // an order that is already fulfilled: add the scanned Bosta number to its shipment in Shopify
+  async function submitTracking() {
+    if (state.busy || !state.order || !state.tracking) return;
+    const name = state.order.name, tn = state.tracking.number;
+    state.busy = true; $('fulfillBtn').disabled = true;
+    say('Saving tracking ' + tn + ' on ' + name + '...');
+    try {
+      const r = await api({ action: 'addOrderTracking', orderName: name, tracking: tn, notify: $('notify').checked });
+      feedback('ok');
+      state.order = null; state.items = []; state.tracking = null; render();
+      say(r.already ? 'Tracking ' + tn + ' was already on order ' + name + '.' : 'Bosta tracking ' + tn + ' added to order ' + name + '.', 'ok');
+      loadList();
+    } catch (e) {
+      say(e.message, 'bad'); feedback('bad'); $('fulfillBtn').disabled = false;
+    } finally { state.busy = false; }
+  }
 
   async function submitReceive() {
     if (state.busy) return;
