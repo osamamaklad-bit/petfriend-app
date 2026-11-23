@@ -1,12 +1,15 @@
 @echo off
 rem Pet Friend: copy the code edited in the Google Apps Script editor into this repository and push it to GitHub.
-rem Run it from the repository folder:   tools\pull-apps-script.cmd
+rem Run it from the repository folder:   sync      (or tools\pull-apps-script.cmd)
 rem Needs: Node.js, Git, and clasp (npm install -g @google/clasp, then clasp login once).
 rem The Script ID is in Apps Script: Project Settings > IDs > Script ID (it is not a secret).
 setlocal
 cd /d "%~dp0.."
+rem The Script ID is remembered in .pf-script-id (this computer only, not sent to GitHub)
+if "%PF_SCRIPT_ID%"=="" if exist ".pf-script-id" set /p PF_SCRIPT_ID=<".pf-script-id"
 if "%PF_SCRIPT_ID%"=="" set /p PF_SCRIPT_ID=Script ID: 
 if "%PF_SCRIPT_ID%"=="" (echo No Script ID given. & exit /b 1)
+> ".pf-script-id" echo %PF_SCRIPT_ID%
 
 echo.
 echo 1/5  Getting the latest version from GitHub...
@@ -23,7 +26,7 @@ popd
 
 echo 3/5  Copying Code into apps-script\Code.gs...
 copy /Y "%PF_TMP%\Code.js" "apps-script\Code.gs" >nul || (echo Code.js was not found in the Apps Script project. & exit /b 1)
-git diff --quiet -- apps-script/Code.gs && (echo Nothing changed: GitHub already has this code. & exit /b 0)
+git diff --quiet -- apps-script/Code.gs && (echo Already in sync: GitHub and Apps Script have the same code. & exit /b 0)
 
 echo 4/5  Running the server tests...
 call node tests\server-test.js apps-script\Code.gs >"%PF_TMP%\test.log" 2>&1

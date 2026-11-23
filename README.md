@@ -101,10 +101,11 @@ The automatic deploy copies GitHub's `apps-script/Code.gs` over the editor's cod
 editor is lost unless it is saved to GitHub first. On Windows, from the repository folder:
 
 ```
-tools\pull-apps-script.cmd
+sync
 ```
 
-It pulls GitHub, downloads the editor's code with clasp, copies it to `apps-script/Code.gs`, runs the server tests and,
+`sync` (the same as `tools\pull-apps-script.cmd`) asks for the Script ID the first time and remembers it in
+`.pf-script-id` (not sent to GitHub). It pulls GitHub, downloads the editor's code with clasp, copies it to `apps-script/Code.gs`, runs the server tests and,
 if they pass, commits and pushes. Needs Node.js, Git and clasp (`npm install -g @google/clasp`, then `clasp login`).
 
 ## Hosting
