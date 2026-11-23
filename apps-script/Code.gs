@@ -58,7 +58,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.3';
+const SERVER_VERSION = '2026-11-23.4';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -165,27 +165,45 @@ function posApi_(r) {
 }
 
 // POS Shopify app token (client credentials grant, token lasts 24h), cached
+// The POS store: SHOP may be written as "petfriendstores", "petfriendstores.myshopify.com" or a full https:// link
+// (like SHOPIFY_STORE). Before, only the short name worked: anything else made a wrong address and Shopify answered
+// with a web page ("Unexpected token '<' ... is not valid JSON").
+function posHost_() {
+  const raw = String(P.getProperty('SHOP') || P.getProperty('SHOPIFY_STORE') || '').trim()
+    .replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/\.myshopify\.com$/i, '');
+  if (!raw) throw new Error('Set SHOP in Script Properties (the store name, e.g. petfriendstores)');
+  return raw + '.myshopify.com';
+}
+/** Shopify's answer as JSON, or a clear error when it is a web page (wrong store name, app not installed, outage). */
+function posJson_(res, what) {
+  const t = res.getContentText();
+  try { return JSON.parse(t); } catch (e) {
+    throw new Error('Shopify (POS ' + what + ') answered HTTP ' + res.getResponseCode() + ' with a web page, not data. ' +
+      'Check SHOP (' + posHost_() + '), CLIENT_ID and CLIENT_SECRET in Script Properties, and that the POS app is installed in Shopify.');
+  }
+}
 function posToken_(force) {
   const cache = CacheService.getScriptCache();
   if (!force && cache.get('tok')) return cache.get('tok');
-  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOP') + '.myshopify.com/admin/oauth/access_token', {
+  const res = UrlFetchApp.fetch('https://' + posHost_() + '/admin/oauth/access_token', {
     method: 'post', muteHttpExceptions: true,
     payload: { grant_type: 'client_credentials', client_id: P.getProperty('CLIENT_ID'), client_secret: P.getProperty('CLIENT_SECRET') }
   });
-  const j = JSON.parse(res.getContentText());
-  if (!j.access_token) throw new Error('Token request failed: ' + res.getContentText());
+  const j = posJson_(res, 'login');
+  if (!j.access_token) throw new Error('POS login to Shopify failed (HTTP ' + res.getResponseCode() + '): ' + String(j.error_description || j.error || j.errors || '').slice(0, 200));
   cache.put('tok', j.access_token, 21000); // ~5.8h, safely under the 24h expiry
   return j.access_token;
 }
 
 function posGql_(query, variables, retried) {
-  const res = UrlFetchApp.fetch('https://' + P.getProperty('SHOP') + '.myshopify.com/admin/api/' + POS_API + '/graphql.json', {
+  const res = UrlFetchApp.fetch('https://' + posHost_() + '/admin/api/' + POS_API + '/graphql.json', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'X-Shopify-Access-Token': posToken_(retried) },
     payload: JSON.stringify({ query, variables })
   });
-  if (res.getResponseCode() === 401 && !retried) return posGql_(query, variables, true);
-  const j = JSON.parse(res.getContentText());
+  // an old or revoked token: get a fresh one once (Shopify can answer 401 / 403, sometimes with a web page)
+  if ((res.getResponseCode() === 401 || res.getResponseCode() === 403) && !retried) return posGql_(query, variables, true);
+  const j = posJson_(res, 'request');
   if (j.errors) throw new Error(JSON.stringify(j.errors));
   return j.data;
 }

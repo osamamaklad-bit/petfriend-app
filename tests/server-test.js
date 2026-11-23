@@ -549,6 +549,23 @@ ctx.UrlFetchApp.fetch = (url, o) => url.includes('api.telegram.org') ? { getResp
 check('Telegram: a refused message does not break the action', post({ action: 'createPickList', key: 'kkk' }).ok, true);
 ctx.UrlFetchApp.fetch = realF; delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID;
 
+// ---- POS store name in any form; a web page from Shopify gives a clear error
+for (const shop of ['pf', 'pf.myshopify.com', 'https://pf.myshopify.com/admin', ' PF.myshopify.com ']) {
+  props.SHOP = shop; ctx.__cache && delete ctx.__cache.tok; fetches.length = 0;
+  r = post({ action: 'search', pin: '1111', q: 'food' });
+  check('POS: SHOP "' + shop + '" -> the right store', fetches.map(f => f.url), r.ok && fetches.every(f => /^https:\/\/(pf|PF)\.myshopify\.com\/admin\//.test(f.url)));
+}
+props.SHOP = 'pf';
+const realF2 = ctx.UrlFetchApp.fetch;
+ctx.UrlFetchApp.fetch = (url, o) => /\/admin\/api\/.*graphql/.test(url) && url.startsWith('https://pf.') ? { getResponseCode: () => 404, getContentText: () => '<!DOCTYPE html><html>Not found</html>' } : realF2(url, o);
+r = post({ action: 'search', pin: '1111', q: '6723085' });
+check('POS: Shopify web page -> clear message (no "Unexpected token")', r.error, r.ok === false && /answered HTTP 404 with a web page/.test(r.error) && /SHOP \(pf\.myshopify\.com\)/.test(r.error) && !/Unexpected token/.test(r.error));
+ctx.UrlFetchApp.fetch = (url, o) => /oauth\/access_token/.test(url) ? { getResponseCode: () => 400, getContentText: () => '{"error":"invalid_client","error_description":"Client authentication failed"}' } : realF2(url, o);
+ctx.__cache && delete ctx.__cache.tok;
+r = post({ action: 'search', pin: '1111', q: 'x' });
+check('POS: refused login -> says why', r.error, r.ok === false && /POS login to Shopify failed \(HTTP 400\): Client authentication failed/.test(r.error));
+ctx.UrlFetchApp.fetch = realF2; ctx.__cache && delete ctx.__cache.tok;
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;
