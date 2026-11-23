@@ -56,7 +56,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   - Every inventory mutation sends an `@idempotent` key.
 - Bin locations (`custom.bin_location` on the variant and on the product) can be edited **only in Receive** (Purchase
   orders tab: "Edit bin / expiry"; the server only accepts bins with `where: 'receive'`). The product expiry date
-  (`custom.expiry_date`) can be edited in Receive and Check. Every edit is logged in the `Edits` sheet (time, where,
+  (`custom.expiry_date`) and the expiry date of the previous batch (`custom.expiry_date_of_previous_batch`, product
+  metafield, `EXPIRY_PREV_METAFIELD`) can be edited in Receive and Check. Every edit is logged in the `Edits` sheet (time, where,
   product, SKU, field, old value, new value; kept 60 days). Bins are shown in Fulfill, Receive and the Pick list, and
   Fulfill and the Pick list sort by bin.
 - Pick list: **no email**.

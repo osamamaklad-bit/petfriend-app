@@ -239,7 +239,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.2</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.3</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -779,6 +779,7 @@
       if (it.binVariant) bins.push(['Variant bin:', it.binVariant]);
       if (it.binProduct && it.binProduct !== it.binVariant) bins.push(['Product bin:', it.binProduct]);
       if (it.expProduct) bins.push(['Expiry:', it.expProduct, isExpired(it.expProduct)]);
+      if (isRcv() && it.expPrevProduct) bins.push(['Previous batch expiry:', it.expPrevProduct, isExpired(it.expPrevProduct)]);
       const binBox = el.querySelector('.bin');
       bins.forEach(function (b) {
         const w = document.createElement('div'), lab = document.createElement('span'), val = document.createElement('b');
@@ -820,6 +821,8 @@
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return new Date(+m[1], +m[2] - 1, +m[3]) < today;
   }
+  // a date picker when the stored value is a plain date (or empty); otherwise a text box, so odd values are not lost
+  function dateType(v) { return (!v || /^\d{4}-\d{2}-\d{2}$/.test(v)) ? 'date' : 'text'; }
   async function editMeta(idx) {
     const it = state.items[idx];
     if (!it || state.busy) return;
@@ -829,7 +832,8 @@
       { key: 'binVariant', label: 'Variant bin', value: it.binVariant || '' },
       { key: 'binProduct', label: 'Product bin', hint: 'Several bins: separate them with commas.', value: it.binProduct || '' },
       // date picker when the stored value is a plain date (or empty); otherwise keep it as text
-      { key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }
+      { key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp },
+      { key: 'expPrevProduct', label: 'Expiry date of previous batch', type: dateType(it.expPrevProduct), value: it.expPrevProduct || '' }
     ] });
     if (!v) return;
     state.busy = true;
@@ -840,7 +844,7 @@
       // the same variant / product can be on several lines: update them all
       state.items.forEach(function (x) {
         if (x.variantId && x.variantId === it.variantId) x.binVariant = data.values.binVariant;
-        if (x.productId && x.productId === it.productId) { x.binProduct = data.values.binProduct; x.expProduct = data.values.expProduct; }
+        if (x.productId && x.productId === it.productId) { x.binProduct = data.values.binProduct; x.expProduct = data.values.expProduct; x.expPrevProduct = data.values.expPrevProduct; }
       });
       render();
       say(data.changed ? 'Saved for ' + it.title : 'No changes', 'ok');
@@ -942,10 +946,15 @@
       if (it.expProduct) fact('Expiry:', it.expProduct, dl != null && dl < 0 ? 'expired' : dl != null && dl <= 30 ? 'soon' : '',
         dl == null ? '' : dl < 0 ? 'Expired ' + (-dl) + (dl === -1 ? ' day ago' : ' days ago') : dl === 0 ? 'Expires today' : dl + (dl === 1 ? ' day left' : ' days left'));
       else fact('Expiry:', '–');
+      if (it.expPrevProduct) {
+        const dp = daysTo(it.expPrevProduct);
+        fact('Previous batch:', it.expPrevProduct, dp != null && dp < 0 ? 'expired' : dp != null && dp <= 30 ? 'soon' : '',
+          dp == null ? '' : dp < 0 ? 'Expired ' + (-dp) + (dp === -1 ? ' day ago' : ' days ago') : dp === 0 ? 'Expires today' : dp + (dp === 1 ? ' day left' : ' days left'));
+      }
       box.appendChild(facts);
       el.appendChild(box);
       const acts = document.createElement('div'); acts.className = 'acts';
-      const e1 = document.createElement('button'); e1.className = 'ghost'; e1.textContent = 'Edit expiry'; e1.dataset.chkEdit = idx;
+      const e1 = document.createElement('button'); e1.className = 'ghost'; e1.textContent = 'Edit expiry dates'; e1.dataset.chkEdit = idx;
       const e2 = document.createElement('button'); e2.className = 'ghost'; e2.textContent = 'Print label'; e2.dataset.chkLabel = idx;
       acts.appendChild(e1); acts.appendChild(e2); el.appendChild(acts);
       list.appendChild(el);
@@ -961,14 +970,15 @@
     }
     if (!ed || state.busy) return;
     const it = state.check.items[+ed.dataset.chkEdit], exp = it.expProduct || '';
-    const v = await pfSettings({ title: it.title, fields: [{ key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }] });
+    const v = await pfSettings({ title: it.title, fields: [{ key: 'expProduct', label: 'Expiry date', type: dateType(exp), value: exp },
+      { key: 'expPrevProduct', label: 'Expiry date of previous batch', type: dateType(it.expPrevProduct), value: it.expPrevProduct || '' }] });
     if (!v) return;
     state.busy = true; say('Saving ' + it.title + '...');
     try {
       const r = await api({ action: 'setItemMeta', variantId: it.variantId, values: v, where: 'check', title: it.title, sku: it.sku || it.barcode || '' });
-      state.check.items.forEach(function (x) { if (x.productId === it.productId) x.expProduct = r.values.expProduct; });
+      state.check.items.forEach(function (x) { if (x.productId === it.productId) { x.expProduct = r.values.expProduct; x.expPrevProduct = r.values.expPrevProduct; } });
       renderCheck();
-      say(r.changed ? 'Saved expiry date for ' + it.title : 'No changes', 'ok'); feedback('ok');
+      say(r.changed ? 'Saved for ' + it.title : 'No changes', 'ok'); feedback('ok');
     } catch (err) { say(err.message, 'bad'); feedback('bad'); }
     finally { state.busy = false; }
   });

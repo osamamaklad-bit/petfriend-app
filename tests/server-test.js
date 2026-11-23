@@ -65,10 +65,10 @@ function shopifyAnswer(url, body, headers) {
   if (/shop\{currencyCode\}/.test(q)) return { data: { shop: { currencyCode: 'EGP' }, nodes: body.variables.ids.map(id => ({ id, price: '100.00' })) } };
   if (/inventoryShipmentReceive/.test(q)) { ctx.__received = (ctx.__received || []).concat([{ id: body.variables.id, li: body.variables.li, key: body.variables.key, idem: /@idempotent\(key: \$key\)/.test(q) }]); return { data: { inventoryShipmentReceive: { inventoryShipment: { id: body.variables.id, status: 'PARTIALLY_RECEIVED' }, userErrors: [] } } }; }
   if (/productVariant\(id/.test(q)) { const st = ctx.__meta || (ctx.__meta = { vBin: { value: 'A-12', type: 'single_line_text_field' }, pBin: { value: '["B-3"]', type: 'list.single_line_text_field' }, pExp: null });
-    return { data: { productVariant: { id: 'V1', vBin: st.vBin, product: { id: 'P1', pBin: st.pBin, pExp: st.pExp } } } }; }
+    return { data: { productVariant: { id: 'V1', vBin: st.vBin, product: { id: 'P1', pBin: st.pBin, pExp: st.pExp, pExpPrev: st.pExpPrev || null } } } }; }
   if (/metafieldDefinitions/.test(q)) { ctx.__defAsked = (ctx.__defAsked || []).concat([body.variables]); return { data: { metafieldDefinitions: { nodes: body.variables.key === 'expiry_date' ? [{ type: { name: 'date' } }] : [] } } }; }
-  if (/metafieldsSet/.test(q)) { ctx.__sets = body.variables.m; body.variables.m.forEach(m => { const al = m.ownerId === 'V1' ? 'vBin' : (m.key === 'expiry_date' ? 'pExp' : 'pBin'); ctx.__meta[al] = { value: m.value, type: m.type }; }); return { data: { metafieldsSet: { metafields: [], userErrors: [] } } }; }
-  if (/metafieldsDelete/.test(q)) { ctx.__dels = body.variables.m; body.variables.m.forEach(m => { const al = m.ownerId === 'V1' ? 'vBin' : (m.key === 'expiry_date' ? 'pExp' : 'pBin'); ctx.__meta[al] = null; }); return { data: { metafieldsDelete: { userErrors: [] } } }; }
+  if (/metafieldsSet/.test(q)) { ctx.__sets = body.variables.m; body.variables.m.forEach(m => { const al = m.ownerId === 'V1' ? 'vBin' : (m.key === 'expiry_date' ? 'pExp' : m.key === 'expiry_date_of_previous_batch' ? 'pExpPrev' : 'pBin'); ctx.__meta[al] = { value: m.value, type: m.type }; }); return { data: { metafieldsSet: { metafields: [], userErrors: [] } } }; }
+  if (/metafieldsDelete/.test(q)) { ctx.__dels = body.variables.m; body.variables.m.forEach(m => { const al = m.ownerId === 'V1' ? 'vBin' : (m.key === 'expiry_date' ? 'pExp' : m.key === 'expiry_date_of_previous_batch' ? 'pExpPrev' : 'pBin'); ctx.__meta[al] = null; }); return { data: { metafieldsDelete: { userErrors: [] } } }; }
   if (/orders\(first: 10, after: \$cursor, query: \$q, sortKey: \$sort\)/.test(q)) {
     ctx.__pickQ = (ctx.__pickQ || []).concat([body.variables]);
     const V = (id, sku, name, vb, pb, img) => ({ id, sku, title: name, media: { nodes: img ? [{ preview: { image: { url: img } } }] : [] }, metafield: vb ? { value: vb } : null,
@@ -507,6 +507,19 @@ r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive',
 check('Edits log: nothing logged when nothing changed', sheets.Edits.getLastRow() - editsBefore, r.ok && r.changed === 0 && sheets.Edits.getLastRow() === editsBefore + 3);
 r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', title: 'Kitten 2kg', values: { expProduct: 'soon' } });
 check('Edits log: a refused value is not logged', sheets.Edits.getLastRow() - editsBefore, r.ok === false && sheets.Edits.getLastRow() === editsBefore + 3);
+
+// ---- expiry date of the previous batch (product metafield custom.expiry_date_of_previous_batch)
+const eb = sheets.Edits.getLastRow();
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'check', title: 'Kitten 2kg', sku: 'RC2', values: { expPrevProduct: '2026-12-15' } });
+check('Previous batch expiry: saved as a date on the product (from Check too)', ctx.__sets, r.ok && r.changed === 1 && r.values.expPrevProduct === '2026-12-15'
+  && ctx.__sets.some(m => m.ownerId === 'P1' && m.namespace === 'custom' && m.key === 'expiry_date_of_previous_batch' && m.type === 'date' && m.value === '2026-12-15'));
+check('Previous batch expiry: logged in Edits', sheets.Edits.rows[eb], sheets.Edits.getLastRow() === eb + 1 && sheets.Edits.rows[eb].slice(4).join('|') === 'Expiry date of previous batch||2026-12-15');
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', values: { expPrevProduct: 'last month' } });
+check('Previous batch expiry: must be a date', r, r.ok === false && /Expiry date of previous batch must be a date/.test(r.error));
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', title: 'Kitten 2kg', values: { expPrevProduct: '' } });
+check('Previous batch expiry: emptied = removed', ctx.__dels, r.ok && r.values.expPrevProduct === '' && ctx.__dels.some(m => m.key === 'expiry_date_of_previous_batch'));
+r = post({ action: 'getOrder', key: 'kkk', query: '1007' });
+check('Fulfill / Receive / Check items carry expPrevProduct', r.items && Object.keys(r.items[0]), r.ok && 'expPrevProduct' in r.items[0]);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

@@ -30,6 +30,7 @@
  *     BIN_VARIANT_METAFIELD  (optional) variant bin-location metafield shown in Receive, default custom.bin_location
  *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
  *     EXPIRY_METAFIELD       (optional) product expiry-date metafield, default custom.expiry_date
+ *     EXPIRY_PREV_METAFIELD  (optional) expiry date of the previous batch, default custom.expiry_date_of_previous_batch
  *   Shipments
  *     APP_PIN                the Shipments PIN
  *     SHEET_ID               the Google Sheet's ID (only if this script is NOT opened from that sheet)
@@ -56,7 +57,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.1';
+const SERVER_VERSION = '2026-11-23.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -373,7 +374,8 @@ function getOrder_(raw, allowDone) {
         image: li.lineItem.image ? li.lineItem.image.url : '',
         binVariant: binValue_(li.lineItem.variant && li.lineItem.variant.vBin),
         binProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pBin),
-        expProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pExp)
+        expProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pExp),
+        expPrevProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pExpPrev)
       });
     });
   });
@@ -630,7 +632,9 @@ const ITEM_META = {
   // the expiry date can be edited in Receive and Check; bin locations only in Receive (Purchase orders tab)
   binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field', editable: 'receive', label: 'Variant bin' },
   binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field', editable: 'receive', label: 'Product bin' },
-  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date', editable: true, label: 'Expiry date' }
+  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date', editable: true, label: 'Expiry date' },
+  // the expiry date of the batch before the current one (stock of both can be on the shelf)
+  expPrevProduct: { prop: 'EXPIRY_PREV_METAFIELD', def: 'custom.expiry_date_of_previous_batch', owner: 'product', alias: 'pExpPrev', type: 'date', editable: true, label: 'Expiry date of previous batch' }
 };
 function metaKey_(name) {
   const f = ITEM_META[name];
@@ -700,7 +704,7 @@ function setItemMeta_(body) {
     const type = (existing && existing.type) || metaDefType_(f.owner, k) || f.type;
     let value = v;
     if (/^list\./.test(type)) value = JSON.stringify(v.split(',').map(function (x) { return x.trim(); }).filter(Boolean));
-    if (type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('Expiry date must be a date (YYYY-MM-DD)');
+    if (type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error(f.label + ' must be a date (YYYY-MM-DD)');
     sets.push({ ownerId: host.id, namespace: k.namespace, key: k.key, type: type, value: value });
   });
   if (sets.length) {
@@ -1320,7 +1324,7 @@ function lookupProduct_(r) {
         return { name: l.location && l.location.name, available: a ? a.quantity : 0 };
       }),
       status: v.product && v.product.status, image: mediaUrl_(v),
-      binVariant: meta.binVariant, binProduct: meta.binProduct, expProduct: meta.expProduct
+      binVariant: meta.binVariant, binProduct: meta.binProduct, expProduct: meta.expProduct, expPrevProduct: meta.expPrevProduct
     };
   });
   return { ok: true, query: text, by: how, currency: d.shop && d.shop.currencyCode, items: items };
