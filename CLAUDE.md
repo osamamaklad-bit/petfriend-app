@@ -97,6 +97,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   `menuSetOrdersLogin`) checks a Client ID / secret with Shopify (`setShopifyLogin_`) and saves only if accepted.
   `watchSecrets_` (hourly in `syncBosta`, and when the POS login is refused) keeps fingerprints (never values) in
   `SECRET_WATCH` and logs to Errors (+ Telegram) when a watched secret changes or goes back to an older value.
+  Secrets are always read fresh from Script Properties; saved Shopify tokens are keyed by a fingerprint of their
+  Client ID + secret (`tokKey_`), so a changed secret never reuses a token made from the old one, and the POS leaves
+  the Orders app fallback as soon as its own secret changes.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

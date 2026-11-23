@@ -58,7 +58,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.6';
+const SERVER_VERSION = '2026-11-23.7';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -99,8 +99,9 @@ function getToken_() {
     if (fixed) return fixed;
     throw new Error('Set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET in Script Properties');
   }
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get('shopify_token');
+  // the saved token belongs to this Client ID + secret: a changed secret never reuses a token made from the old one
+  const cache = CacheService.getScriptCache(), key = tokKey_('orders');
+  const cached = cache.get(key);
   if (cached) return cached;
   const res = UrlFetchApp.fetch('https://' + storeHost_() + '/admin/oauth/access_token', {
     method: 'post',
@@ -109,7 +110,7 @@ function getToken_() {
   });
   const j = JSON.parse(res.getContentText());
   if (!j.access_token) throw new Error('Token request failed: ' + res.getContentText());
-  cache.put('shopify_token', j.access_token, 20 * 60 * 60); // 20h, token lives 24h
+  cache.put(key, j.access_token, 20 * 60 * 60); // 20h, token lives 24h
   return j.access_token;
 }
 
@@ -134,7 +135,7 @@ function shopifyAt_(version, query, variables, retried) {
   // A cached token keeps the permissions it was issued with: after adding scopes to the Shopify app,
   // "Access denied" means it is out of date, so get a fresh one and try once more.
   if (!retried && (res.getResponseCode() === 401 || /access denied/i.test(JSON.stringify(j.errors || '')))) {
-    CacheService.getScriptCache().remove('shopify_token');
+    CacheService.getScriptCache().remove(tokKey_('orders'));
     return shopifyAt_(version, query, variables, true);
   }
   if (j.errors) throw new Error('Shopify: ' + (Array.isArray(j.errors) ? j.errors.map(function (x) { return x.message; }).join('; ') : JSON.stringify(j.errors)));
@@ -186,16 +187,18 @@ function posJson_(res, what) {
 // the Orders app's login for the same store instead of stopping. Remembered for an hour, then the POS login is tried again.
 function posToken_(force) {
   const cache = CacheService.getScriptCache();
-  if (!force && cache.get('tok')) return cache.get('tok');
-  if (!force && cache.get('pos_use_orders_app')) return getToken_();
+  const own = cache.get(tokKey_('pos'));
+  if (!force && own) return own;
+  // the Orders app login is used only while the POS secret is still the one that was refused
+  if (!force && cache.get('pos_use_orders_app') === tokKey_('pos')) return getToken_();
   try { return posOwnToken_(cache); } catch (e) {
     const sameStore = (function () { try { return storeHost_().toLowerCase() === posHost_().toLowerCase(); } catch (x) { return false; } })();
     if (!sameStore || !(P.getProperty('SHOPIFY_CLIENT_ID') || P.getProperty('SHOPIFY_TOKEN'))) throw e;
     console.warn('POS login refused, using the Orders app login: ' + e.message);
     try { watchSecrets_(); } catch (x) {}
     if (!cache.get('pos_fallback_noted')) { cache.put('pos_fallback_noted', '1', 6 * 3600); logError_('POS', 'login', new Error('POS app login refused, the POS uses the Orders app login for now. ' + e.message)); }
-    cache.put('pos_use_orders_app', '1', 3600);
-    if (force) cache.remove('shopify_token');
+    cache.put('pos_use_orders_app', tokKey_('pos'), 3600);
+    if (force) cache.remove(tokKey_('orders'));
     return getToken_();
   }
 }
@@ -206,7 +209,7 @@ function posOwnToken_(cache) {
   });
   const j = posJson_(res, 'login');
   if (!j.access_token) throw new Error('POS login to Shopify failed (HTTP ' + res.getResponseCode() + '): ' + String(j.error_description || j.error || j.errors || '').slice(0, 200));
-  cache.put('tok', j.access_token, 21000); // ~5.8h, safely under the 24h expiry
+  cache.put(tokKey_('pos'), j.access_token, 21000); // ~5.8h, safely under the 24h expiry
   return j.access_token;
 }
 
@@ -1384,6 +1387,12 @@ const LOGINS = {
   pos:    { name: 'POS',    id: 'CLIENT_ID',         secret: 'CLIENT_SECRET',         host: function () { return posHost_(); },   cache: 'tok' },
   orders: { name: 'Orders', id: 'SHOPIFY_CLIENT_ID', secret: 'SHOPIFY_CLIENT_SECRET', host: function () { return storeHost_(); }, cache: 'shopify_token' }
 };
+/** Cache key of a saved Shopify token: tied to a fingerprint of its Client ID + secret, so when the secret changes in
+ *  Script Properties the token made from the old secret is never used again (a new one is fetched at once). */
+function tokKey_(kind) {
+  const L = LOGINS[kind];
+  return L.cache + '_' + fingerprint_(String(P.getProperty(L.id) || '') + ':' + String(P.getProperty(L.secret) || ''));
+}
 const WATCHED_SECRETS = ['CLIENT_ID', 'CLIENT_SECRET', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET', 'APP_KEY', 'POS_PIN', 'APP_PIN', 'BOSTA_API_KEY', 'TELEGRAM_BOT_TOKEN'];
 function onOpen() {
   try {
@@ -1422,7 +1431,7 @@ function setShopifyLogin_(kind, id, secret) {
   if (!j || !j.access_token) return { ok: false, error: 'Shopify refused this Client ID / secret (HTTP ' + res.getResponseCode() + '). Nothing was changed.' };
   P.setProperties((function () { const o = {}; o[L.id] = id; o[L.secret] = secret; return o; })());
   const c = CacheService.getScriptCache();
-  c.put(L.cache, j.access_token, kind === 'pos' ? 21000 : 20 * 3600);
+  c.put(tokKey_(kind), j.access_token, kind === 'pos' ? 21000 : 20 * 3600);
   if (kind === 'pos') c.remove('pos_use_orders_app');
   watchSecrets_('saved from the menu');
   return { ok: true };
@@ -1903,7 +1912,7 @@ function testAll() {
 
 /** Run after changing a Shopify app's scopes: forgets the saved Shopify tokens so new ones are fetched. */
 function resetTokens() {
-  CacheService.getScriptCache().removeAll(['shopify_token', 'tok']);
+  CacheService.getScriptCache().removeAll([tokKey_('orders'), tokKey_('pos'), 'pos_use_orders_app']);
   Logger.log('Saved Shopify tokens cleared. The next request gets fresh ones.');
 }
 

@@ -136,6 +136,7 @@ const ctx = {
   HtmlService: {}
 };
 vm.createContext(ctx); vm.runInContext(code, ctx);
+const clearTok = () => Object.keys(ctx.__cache || {}).filter(k => /^(tok|shopify_token)/.test(k)).forEach(k => delete ctx.__cache[k]);
 const post = b => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(b) } }).getContent());
 let failed = 0;
 const check = (label, got, ok) => { if (!ok) failed++; console.log((ok ? 'PASS ' : 'FAIL ') + label, ok ? '' : JSON.stringify(got)); };
@@ -551,7 +552,7 @@ ctx.UrlFetchApp.fetch = realF; delete props.TELEGRAM_BOT_TOKEN; delete props.TEL
 
 // ---- POS store name in any form; a web page from Shopify gives a clear error
 for (const shop of ['pf', 'pf.myshopify.com', 'https://pf.myshopify.com/admin', ' PF.myshopify.com ']) {
-  props.SHOP = shop; ctx.__cache && delete ctx.__cache.tok; fetches.length = 0;
+  props.SHOP = shop; clearTok(); fetches.length = 0;
   r = post({ action: 'search', pin: '1111', q: 'food' });
   check('POS: SHOP "' + shop + '" -> the right store', fetches.map(f => f.url), r.ok && fetches.every(f => /^https:\/\/(pf|PF)\.myshopify\.com\/admin\//.test(f.url)));
 }
@@ -561,19 +562,19 @@ ctx.UrlFetchApp.fetch = (url, o) => /\/admin\/api\/.*graphql/.test(url) && url.s
 r = post({ action: 'search', pin: '1111', q: '6723085' });
 check('POS: Shopify web page -> clear message (no "Unexpected token")', r.error, r.ok === false && /answered HTTP 404 with a web page/.test(r.error) && /SHOP \(pf\.myshopify\.com\)/.test(r.error) && !/Unexpected token/.test(r.error));
 const posLogin = (url, o) => /oauth\/access_token/.test(url) && /client_id=c\b|"client_id":"c"/.test(JSON.stringify(o.payload)) ? { getResponseCode: () => 400, getContentText: () => '<!DOCTYPE html><html>Oauth error invalid_request</html>' } : realF2(url, o);
-ctx.UrlFetchApp.fetch = posLogin; ['tok', 'pos_use_orders_app', 'pos_fallback_noted', 'shopify_token'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
+ctx.UrlFetchApp.fetch = posLogin; clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
 const errB = sheets.Errors.getLastRow(); fetches.length = 0;
 r = post({ action: 'search', pin: '1111', q: 'food' });
 check('POS: its own login refused -> uses the Orders app login, the search works', r, r.ok === true && Array.isArray(r.data));
 check('POS: one Errors line says the POS app login is refused', sheets.Errors.rows.slice(errB).map(x => x[3]), sheets.Errors.getLastRow() === errB + 1 && /POS app login refused, the POS uses the Orders app login/.test(sheets.Errors.rows[errB][3]));
 r = post({ action: 'search', pin: '1111', q: 'food' });
 check('POS: next searches use the Orders app straight away, no new Errors line', sheets.Errors.getLastRow() - errB, r.ok && sheets.Errors.getLastRow() === errB + 1);
-['tok', 'pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
+clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
 const keepStore = props.SHOPIFY_STORE; props.SHOPIFY_STORE = 'other-store';
 r = post({ action: 'search', pin: '1111', q: 'x' });
 check('POS: login refused and no Orders app for this store -> clear error', r.error, r.ok === false && /POS login\) answered HTTP 400 with a web page/.test(r.error));
 props.SHOPIFY_STORE = keepStore;
-ctx.UrlFetchApp.fetch = realF2; ['tok', 'pos_use_orders_app', 'pos_fallback_noted', 'shopify_token'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
+ctx.UrlFetchApp.fetch = realF2; clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
 
 // ---- Shopify logins set from the sheet menu (checked first) and watched for changes
 const realF3 = ctx.UrlFetchApp.fetch;
@@ -596,15 +597,37 @@ const lastErr = () => sheets.Errors.rows[sheets.Errors.getLastRow() - 1][3];
 check('Secret watch: any watched pass that changes is reported', lastErr(), /APP_KEY changed/.test(lastErr()) && !/kkk2/.test(lastErr()));
 props.APP_KEY = 'kkk'; ctx.watchSecrets_();
 
+// ---- a changed secret never reuses the token made from the old one
+clearTok(); props.CLIENT_SECRET = 'SECRET-A';
+let tokFetches = () => fetches.filter(f => /oauth\/access_token/.test(f.url)).length;
+fetches.length = 0; post({ action: 'search', pin: '1111', q: 'a' }); post({ action: 'search', pin: '1111', q: 'b' });
+check('Token: fetched once, then reused while the secret is the same', tokFetches(), tokFetches() === 1);
+props.CLIENT_SECRET = 'SECRET-B'; fetches.length = 0; post({ action: 'search', pin: '1111', q: 'c' });
+check('Token: secret changed in Script Properties -> a new token at once', tokFetches(), tokFetches() === 1);
+props.SHOPIFY_CLIENT_SECRET = 'os2'; fetches.length = 0; post({ action: 'listOrders', key: 'kkk' });
+check('Token: Orders secret changed -> a new Orders token at once', tokFetches(), tokFetches() === 1);
+props.SHOPIFY_CLIENT_SECRET = 'os'; props.CLIENT_SECRET = 's'; clearTok();
+
+// ---- after the POS secret is fixed, the POS goes back to its own login at once
+const realF4 = ctx.UrlFetchApp.fetch;
+ctx.UrlFetchApp.fetch = (url, o) => /oauth\/access_token/.test(url) && o && o.payload && o.payload.client_secret === 'BAD' ? { getResponseCode: () => 400, getContentText: () => '<!DOCTYPE html>' } : realF4(url, o);
+clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
+props.CLIENT_SECRET = 'BAD'; post({ action: 'search', pin: '1111', q: 'a' });
+check('POS fallback: refused secret -> Orders app login', !!ctx.__cache.pos_use_orders_app, !!ctx.__cache.pos_use_orders_app);
+props.CLIENT_SECRET = 'GOOD'; fetches.length = 0; post({ action: 'search', pin: '1111', q: 'b' });
+check('POS fallback: secret fixed -> its own login straight away (no 1-hour wait)', fetches.filter(f => /oauth/.test(f.url)).length, fetches.some(f => /oauth\/access_token/.test(f.url)) && !!ctx.__cache[ctx.tokKey_('pos')]);
+ctx.UrlFetchApp.fetch = realF4; props.CLIENT_SECRET = 's'; clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;
 ctx.UrlFetchApp.fetch = (url, o) => { if (denied && url.includes('/graphql.json') && /returnableFulfillments/.test((o && o.payload) || '')) { denied--; return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) }; } return orig(url, o); };
-ctx.__cache.shopify_token = 'old';
-r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Access denied -> fresh token + retry', r, r.ok && ctx.__cache.shopify_token !== 'old');
+ctx.__cache[ctx.tokKey_('orders')] = 'old';
+r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Access denied -> fresh token + retry', r, r.ok && ctx.__cache[ctx.tokKey_('orders')] !== 'old');
 ctx.UrlFetchApp.fetch = (url, o) => (url.includes('/graphql.json') && /returnableFulfillments/.test((o && o.payload) || '')) ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: 'Access denied for returnableFulfillments field.' }] }) } : orig(url, o);
 r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Still denied -> clear error, no endless retry', r, r.ok === false && /Access denied/.test(r.error));
-ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache.shopify_token && !ctx.__cache.tok);
+ctx.__cache[ctx.tokKey_('pos')] = 'p'; ctx.__cache[ctx.tokKey_('orders')] = 'o';
+ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ctx.tokKey_('orders')] && !ctx.__cache[ctx.tokKey_('pos')]);
 
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));
 process.exit(failed ? 1 : 0);
