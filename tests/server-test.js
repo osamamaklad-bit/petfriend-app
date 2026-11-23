@@ -560,11 +560,20 @@ const realF2 = ctx.UrlFetchApp.fetch;
 ctx.UrlFetchApp.fetch = (url, o) => /\/admin\/api\/.*graphql/.test(url) && url.startsWith('https://pf.') ? { getResponseCode: () => 404, getContentText: () => '<!DOCTYPE html><html>Not found</html>' } : realF2(url, o);
 r = post({ action: 'search', pin: '1111', q: '6723085' });
 check('POS: Shopify web page -> clear message (no "Unexpected token")', r.error, r.ok === false && /answered HTTP 404 with a web page/.test(r.error) && /SHOP \(pf\.myshopify\.com\)/.test(r.error) && !/Unexpected token/.test(r.error));
-ctx.UrlFetchApp.fetch = (url, o) => /oauth\/access_token/.test(url) ? { getResponseCode: () => 400, getContentText: () => '{"error":"invalid_client","error_description":"Client authentication failed"}' } : realF2(url, o);
-ctx.__cache && delete ctx.__cache.tok;
+const posLogin = (url, o) => /oauth\/access_token/.test(url) && /client_id=c\b|"client_id":"c"/.test(JSON.stringify(o.payload)) ? { getResponseCode: () => 400, getContentText: () => '<!DOCTYPE html><html>Oauth error invalid_request</html>' } : realF2(url, o);
+ctx.UrlFetchApp.fetch = posLogin; ['tok', 'pos_use_orders_app', 'pos_fallback_noted', 'shopify_token'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
+const errB = sheets.Errors.getLastRow(); fetches.length = 0;
+r = post({ action: 'search', pin: '1111', q: 'food' });
+check('POS: its own login refused -> uses the Orders app login, the search works', r, r.ok === true && Array.isArray(r.data));
+check('POS: one Errors line says the POS app login is refused', sheets.Errors.rows.slice(errB).map(x => x[3]), sheets.Errors.getLastRow() === errB + 1 && /POS app login refused, the POS uses the Orders app login/.test(sheets.Errors.rows[errB][3]));
+r = post({ action: 'search', pin: '1111', q: 'food' });
+check('POS: next searches use the Orders app straight away, no new Errors line', sheets.Errors.getLastRow() - errB, r.ok && sheets.Errors.getLastRow() === errB + 1);
+['tok', 'pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
+const keepStore = props.SHOPIFY_STORE; props.SHOPIFY_STORE = 'other-store';
 r = post({ action: 'search', pin: '1111', q: 'x' });
-check('POS: refused login -> says why', r.error, r.ok === false && /POS login to Shopify failed \(HTTP 400\): Client authentication failed/.test(r.error));
-ctx.UrlFetchApp.fetch = realF2; ctx.__cache && delete ctx.__cache.tok;
+check('POS: login refused and no Orders app for this store -> clear error', r.error, r.ok === false && /POS login\) answered HTTP 400 with a web page/.test(r.error));
+props.SHOPIFY_STORE = keepStore;
+ctx.UrlFetchApp.fetch = realF2; ['tok', 'pos_use_orders_app', 'pos_fallback_noted', 'shopify_token'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

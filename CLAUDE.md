@@ -65,7 +65,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   - Automatic: 10:00–14:00, not on Fridays. The 10:00 list collects everything waiting, then a new list whenever
     new orders qualify. A manual "Create pick list now" button also exists.
   - Eligible order: open, not cancelled, unfulfilled, and either paid, or tagged `confirmed` without `not confirmed yet`.
-- POS: every sale carries a `saleId`, so a retried sale never creates a second order.
+- POS: every sale carries a `saleId`, so a retried sale never creates a second order. The POS logs in with its own app
+  (`SHOP`, `CLIENT_ID`, `CLIENT_SECRET`; SHOP in any form); if Shopify refuses that login it uses the Orders app login for
+  the same store (one Errors line, retried after an hour). Shopify web pages give a clear error, never "Unexpected token".
 - Check (Orders tab): `lookupProduct` finds variants by barcode or SKU (numeric codes also with 12/13/14-digit
   zero padding), then by name; read-only except the expiry date. Shopify 2026 variants can have several
   barcodes (`barcodes`); `barcode` is deprecated but still returns the first one.

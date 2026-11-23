@@ -58,7 +58,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.4';
+const SERVER_VERSION = '2026-11-23.5';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -182,9 +182,23 @@ function posJson_(res, what) {
       'Check SHOP (' + posHost_() + '), CLIENT_ID and CLIENT_SECRET in Script Properties, and that the POS app is installed in Shopify.');
   }
 }
+// When the POS app's own login is refused (wrong / regenerated CLIENT_ID / CLIENT_SECRET, app removed), the POS uses
+// the Orders app's login for the same store instead of stopping. Remembered for an hour, then the POS login is tried again.
 function posToken_(force) {
   const cache = CacheService.getScriptCache();
   if (!force && cache.get('tok')) return cache.get('tok');
+  if (!force && cache.get('pos_use_orders_app')) return getToken_();
+  try { return posOwnToken_(cache); } catch (e) {
+    const sameStore = (function () { try { return storeHost_().toLowerCase() === posHost_().toLowerCase(); } catch (x) { return false; } })();
+    if (!sameStore || !(P.getProperty('SHOPIFY_CLIENT_ID') || P.getProperty('SHOPIFY_TOKEN'))) throw e;
+    console.warn('POS login refused, using the Orders app login: ' + e.message);
+    if (!cache.get('pos_fallback_noted')) { cache.put('pos_fallback_noted', '1', 6 * 3600); logError_('POS', 'login', new Error('POS app login refused, the POS uses the Orders app login for now. ' + e.message)); }
+    cache.put('pos_use_orders_app', '1', 3600);
+    if (force) cache.remove('shopify_token');
+    return getToken_();
+  }
+}
+function posOwnToken_(cache) {
   const res = UrlFetchApp.fetch('https://' + posHost_() + '/admin/oauth/access_token', {
     method: 'post', muteHttpExceptions: true,
     payload: { grant_type: 'client_credentials', client_id: P.getProperty('CLIENT_ID'), client_secret: P.getProperty('CLIENT_SECRET') }
