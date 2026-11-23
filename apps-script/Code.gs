@@ -58,7 +58,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.5';
+const SERVER_VERSION = '2026-11-23.6';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -192,6 +192,7 @@ function posToken_(force) {
     const sameStore = (function () { try { return storeHost_().toLowerCase() === posHost_().toLowerCase(); } catch (x) { return false; } })();
     if (!sameStore || !(P.getProperty('SHOPIFY_CLIENT_ID') || P.getProperty('SHOPIFY_TOKEN'))) throw e;
     console.warn('POS login refused, using the Orders app login: ' + e.message);
+    try { watchSecrets_(); } catch (x) {}
     if (!cache.get('pos_fallback_noted')) { cache.put('pos_fallback_noted', '1', 6 * 3600); logError_('POS', 'login', new Error('POS app login refused, the POS uses the Orders app login for now. ' + e.message)); }
     cache.put('pos_use_orders_app', '1', 3600);
     if (force) cache.remove('shopify_token');
@@ -1371,6 +1372,88 @@ function lookupProduct_(r) {
 }
 
 /* =====================================================================================
+ * Shopify logins: set from a menu in the spreadsheet, and watched for changes
+ * The Project Settings page of Apps Script saves ALL Script Properties at once, with the values it showed when it was
+ * opened: saving from a stale page (or a second tab) puts old secrets back. So:
+ *  - menu "بتفريند" in the spreadsheet: enter a new Client ID / secret; it is checked with Shopify first and saved
+ *    only if Shopify accepts it (no Project Settings page involved)
+ *  - watchSecrets_ (every hour, with the Bosta check, and when a login is refused) keeps a short fingerprint of each
+ *    secret (never the secret) and logs to Errors (and Telegram) when one changes, or goes back to an older value.
+ * ===================================================================================== */
+const LOGINS = {
+  pos:    { name: 'POS',    id: 'CLIENT_ID',         secret: 'CLIENT_SECRET',         host: function () { return posHost_(); },   cache: 'tok' },
+  orders: { name: 'Orders', id: 'SHOPIFY_CLIENT_ID', secret: 'SHOPIFY_CLIENT_SECRET', host: function () { return storeHost_(); }, cache: 'shopify_token' }
+};
+const WATCHED_SECRETS = ['CLIENT_ID', 'CLIENT_SECRET', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET', 'APP_KEY', 'POS_PIN', 'APP_PIN', 'BOSTA_API_KEY', 'TELEGRAM_BOT_TOKEN'];
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi().createMenu('بتفريند')
+      .addItem('تحديث بيانات دخول شوبيفاي للكاشير', 'menuSetPosLogin')
+      .addItem('تحديث بيانات دخول شوبيفاي للطلبات', 'menuSetOrdersLogin')
+      .addSeparator()
+      .addItem('فحص كل الإعدادات', 'testAll')
+      .addToUi();
+  } catch (e) { /* not opened from the spreadsheet */ }
+}
+function menuSetPosLogin() { menuSetLogin_('pos'); }
+function menuSetOrdersLogin() { menuSetLogin_('orders'); }
+function menuSetLogin_(kind) {
+  const ui = SpreadsheetApp.getUi(), L = LOGINS[kind];
+  const a = ui.prompt('Shopify ' + L.name + ': Client ID', 'From Shopify: Settings > Apps > Develop apps > the ' + L.name + ' app > API credentials.\nLeave empty to keep the current Client ID.', ui.ButtonSet.OK_CANCEL);
+  if (a.getSelectedButton() !== ui.Button.OK) return;
+  const b = ui.prompt('Shopify ' + L.name + ': Client secret', 'Paste the Client secret. It is checked with Shopify before it is saved.', ui.ButtonSet.OK_CANCEL);
+  if (b.getSelectedButton() !== ui.Button.OK) return;
+  const r = setShopifyLogin_(kind, a.getResponseText(), b.getResponseText());
+  ui.alert(r.ok ? '✅ تم: شوبيفاي قبل البيانات واتحفظت.' : '❌ ما اتحفظش: ' + r.error);
+}
+/** Checks a Client ID / secret with Shopify (client credentials) and saves them only if Shopify gives a token. */
+function setShopifyLogin_(kind, id, secret) {
+  const L = LOGINS[kind];
+  if (!L) return { ok: false, error: 'Unknown login' };
+  id = String(id || '').trim() || String(P.getProperty(L.id) || '');
+  secret = String(secret || '').trim();
+  if (!id || !secret) return { ok: false, error: 'Client ID and Client secret are needed' };
+  let res;
+  try {
+    res = UrlFetchApp.fetch('https://' + L.host() + '/admin/oauth/access_token', { method: 'post', muteHttpExceptions: true,
+      payload: { grant_type: 'client_credentials', client_id: id, client_secret: secret } });
+  } catch (e) { return { ok: false, error: 'Shopify could not be reached: ' + e.message }; }
+  let j = null; try { j = JSON.parse(res.getContentText()); } catch (e) {}
+  if (!j || !j.access_token) return { ok: false, error: 'Shopify refused this Client ID / secret (HTTP ' + res.getResponseCode() + '). Nothing was changed.' };
+  P.setProperties((function () { const o = {}; o[L.id] = id; o[L.secret] = secret; return o; })());
+  const c = CacheService.getScriptCache();
+  c.put(L.cache, j.access_token, kind === 'pos' ? 21000 : 20 * 3600);
+  if (kind === 'pos') c.remove('pos_use_orders_app');
+  watchSecrets_('saved from the menu');
+  return { ok: true };
+}
+/** Short fingerprint of a secret (FNV-1a, 8 hex characters): shows that a value changed, never what it is. */
+function fingerprint_(v) {
+  let h = 2166136261; const s = String(v);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16);
+}
+function watchSecrets_(why) {
+  let seen = {};
+  try { seen = JSON.parse(P.getProperty('SECRET_WATCH') || '{}'); } catch (e) { seen = {}; }
+  const now = new Date().toISOString(), notes = [];
+  WATCHED_SECRETS.forEach(function (k) {
+    const v = P.getProperty(k), fp = v ? fingerprint_(v) : '-', h = seen[k] || (seen[k] = []);
+    if (!h.length) { h.push({ fp: fp, at: now }); return; }
+    if (h[h.length - 1].fp === fp) return;
+    const older = h.slice(0, -1).filter(function (x) { return x.fp === fp; })[0];
+    notes.push(k + (older ? ' went BACK to an older value (first seen ' + older.at.slice(0, 16).replace('T', ' ') + ' UTC)' : fp === '-' ? ' was deleted' : ' changed') +
+      (why === 'saved from the menu' ? ' (saved from the menu)' : ''));
+    h.push({ fp: fp, at: now });
+    if (h.length > 6) h.shift();
+  });
+  try { P.setProperty('SECRET_WATCH', JSON.stringify(seen)); } catch (e) {}
+  if (notes.length && why !== 'saved from the menu') logError_('Settings', 'secret changed', new Error(notes.join('; ') + '. Did someone save the Project Settings page? Use the بتفريند menu in the sheet instead.'));
+  else if (notes.length) logActivity_('Settings', 'login saved', notes.join('; '), 0);
+  return notes;
+}
+
+/* =====================================================================================
  * Telegram notifications to the store's group
  * Script Properties: TELEGRAM_BOT_TOKEN (from @BotFather, secret: never in the code), TELEGRAM_CHAT_ID (the group,
  * found with telegramFindChat), TELEGRAM_OFF (optional, comma list of kinds to silence: picklist, bulky, errors,
@@ -1733,6 +1816,7 @@ function importFromShopify_() {
 }
 function syncBosta(only) {
   if (typeof only !== 'string') only = '';        // a time trigger passes an event object here
+  if (!only) watchSecrets_();
   const st = { at: new Date().toISOString(), fees: null, shopify: null, checked: 0, bulkyNew: 0, bulkyUpdated: 0, failed: 0, firstError: '' };
   if (!only) {
     try { st.fees = importFromFees(); } catch (e) { st.fees = { error: e.message }; logError_('Shipments', 'Bosta fees import', e); }

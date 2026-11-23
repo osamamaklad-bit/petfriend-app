@@ -89,6 +89,12 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   excluded) and the 21:00 daily report (`dailyTelegramReport`, trigger from `installTelegramTrigger`). Setup helpers:
   `telegramFindChat`, `testTelegram`. `TELEGRAM_OFF` silences kinds (picklist, bulky, errors, daily). A failed send
   never breaks an action and is never logged to Errors (it would notify again).
+- Secrets: the Apps Script Project Settings page saves ALL Script Properties at once, so a stale page / second tab puts
+  old secrets back (seen with CLIENT_SECRET, also in the owner's other projects; the live project only has Code.js and
+  appsscript.json, and the code never writes secrets). The spreadsheet menu "بتفريند" (`onOpen`, `menuSetPosLogin`,
+  `menuSetOrdersLogin`) checks a Client ID / secret with Shopify (`setShopifyLogin_`) and saves only if accepted.
+  `watchSecrets_` (hourly in `syncBosta`, and when the POS login is refused) keeps fingerprints (never values) in
+  `SECRET_WATCH` and logs to Errors (+ Telegram) when a watched secret changes or goes back to an older value.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

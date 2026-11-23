@@ -112,7 +112,7 @@ function shopifyAnswer(url, body, headers) {
 }
 const ctx = {
   console, JSON, Date, Math, Number, String, Object, Array, RegExp, Error,
-  PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => props[k] = v }) },
+  PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => props[k] = v, setProperties: o => Object.assign(props, o) }) },
   CacheService: { getScriptCache: () => { const c = ctx.__cache || (ctx.__cache = {}); return { get: k => c[k] || null, put: (k, v) => c[k] = v, remove: k => { delete c[k]; }, removeAll: ks => ks.forEach(k => delete c[k]) }; } },
   UrlFetchApp: { fetch(url, o = {}) { const body = o.payload && typeof o.payload === 'string' ? JSON.parse(o.payload) : (o.payload || {});
     fetches.push({ ver: (url.match(/api\/([\d-]+)\//) || [])[1], url, token: (o.headers || {})['X-Shopify-Access-Token'], q: (body.query || '') });
@@ -574,6 +574,27 @@ r = post({ action: 'search', pin: '1111', q: 'x' });
 check('POS: login refused and no Orders app for this store -> clear error', r.error, r.ok === false && /POS login\) answered HTTP 400 with a web page/.test(r.error));
 props.SHOPIFY_STORE = keepStore;
 ctx.UrlFetchApp.fetch = realF2; ['tok', 'pos_use_orders_app', 'pos_fallback_noted', 'shopify_token'].forEach(k => ctx.__cache && delete ctx.__cache[k]);
+
+// ---- Shopify logins set from the sheet menu (checked first) and watched for changes
+const realF3 = ctx.UrlFetchApp.fetch;
+ctx.UrlFetchApp.fetch = (url, o) => /oauth\/access_token/.test(url) && o && o.payload && o.payload.client_secret === 'WRONG' ? { getResponseCode: () => 400, getContentText: () => '<!DOCTYPE html>oauth error' } : realF3(url, o);
+const secretBefore = props.CLIENT_SECRET;
+r = ctx.setShopifyLogin_('pos', 'c', 'WRONG');
+check('Login menu: a secret Shopify refuses is NOT saved', r, r.ok === false && /refused/.test(r.error) && props.CLIENT_SECRET === secretBefore);
+r = ctx.setShopifyLogin_('pos', '', 'NEW-SECRET');
+check('Login menu: an accepted secret is saved (empty Client ID keeps the current one)', [props.CLIENT_ID, props.CLIENT_SECRET], r.ok && props.CLIENT_SECRET === 'NEW-SECRET' && props.CLIENT_ID === 'c' && !ctx.__cache.pos_use_orders_app);
+check('Login menu: the save is noted in Activity, not as an error', sheets.Activity.rows.at(-1).slice(1, 4), sheets.Activity.rows.at(-1)[2] === 'login saved' && /CLIENT_SECRET changed/.test(sheets.Activity.rows.at(-1)[3]));
+check('Secret watch: stores fingerprints, never the secret', props.SECRET_WATCH, !/NEW-SECRET|kkk|1111/.test(props.SECRET_WATCH) && JSON.parse(props.SECRET_WATCH).CLIENT_SECRET.length >= 1);
+ctx.UrlFetchApp.fetch = realF3;
+let eb2 = sheets.Errors.getLastRow();
+props.CLIENT_SECRET = secretBefore; ctx.watchSecrets_();
+check('Secret watch: going back to an older value is reported', sheets.Errors.rows[eb2] && sheets.Errors.rows[eb2][3], sheets.Errors.getLastRow() === eb2 + 1 && /CLIENT_SECRET went BACK to an older value/.test(sheets.Errors.rows[eb2][3]) && !/NEW-SECRET/.test(sheets.Errors.rows[eb2][3]));
+eb2 = sheets.Errors.getLastRow(); ctx.watchSecrets_();
+check('Secret watch: nothing new when nothing changed', sheets.Errors.getLastRow() - eb2, sheets.Errors.getLastRow() === eb2);
+props.APP_KEY = 'kkk2'; ctx.watchSecrets_();
+const lastErr = () => sheets.Errors.rows[sheets.Errors.getLastRow() - 1][3];
+check('Secret watch: any watched pass that changes is reported', lastErr(), /APP_KEY changed/.test(lastErr()) && !/kkk2/.test(lastErr()));
+props.APP_KEY = 'kkk'; ctx.watchSecrets_();
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
