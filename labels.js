@@ -2,8 +2,9 @@
  *
  *   pfLabels.open([{ title, barcode, sku, binVariant, binProduct, expiry, copies }], { name: 'PO-1003', save: fn })
  *
- * Each label: SKU and expiry date, the item's barcode (bars + number) and both bin locations. Every item must have
- * a barcode (otherwise the items without one are listed and nothing is printed). "Save PDF to Drive" makes a PDF
+ * Each label (values only, no captions): product / variant name on one line (start ... end when too long), SKU and
+ * expiry date, the item's barcode (bars + number) and both bin locations. Every item must have a barcode AND both bins
+ * (otherwise the items missing one are listed and nothing is printed). "Save PDF to Drive" makes a PDF
  * (one 50 x 25 mm page per label) and hands it to opts.save, which uploads it; "Print here" uses the browser.
  */
 (function () {
@@ -59,10 +60,20 @@
   var W = 50, H = 25;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function T(s) { return window.pfT ? window.pfT(s) : s; }
+  // both bins, values only: "variant bin | product bin" (once when they are the same)
   function binsText(it) {
-    var v = it.binVariant || '', p = it.binProduct && it.binProduct !== it.binVariant ? it.binProduct : '';
-    if (!v && !p && it.bin) v = it.bin;
-    return [v && 'V: ' + v, p && 'P: ' + p].filter(Boolean).join('  |  ') || 'Bin: -';
+    var v = String(it.binVariant || '').trim(), p = String(it.binProduct || '').trim();
+    return v && p && v !== p ? v + '  |  ' + p : v || p;
+  }
+  // the product / variant name on ONE line: when too long, its start ... its end (the end keeps the variant, e.g. 100 ml)
+  function shortTitle(title, fits) {
+    title = String(title || '').replace(/\s+/g, ' ').trim();
+    if (fits(title)) return title;
+    var cut = title.lastIndexOf(' - '), tail = cut > 0 ? title.slice(cut + 3) : title.split(' ').slice(-2).join(' ');
+    if (!fits('... ' + tail)) { while (tail.length > 1 && !fits('...' + tail)) tail = tail.slice(1); return '...' + tail; }
+    var head = cut > 0 ? title.slice(0, cut) : title.slice(0, title.length - tail.length).trim();
+    while (head.length > 1 && !fits(head + '... ' + tail)) head = head.slice(0, -1).trim();
+    return head + '... ' + tail;
   }
   function codeOf(it) { return String(it.barcode || '').trim(); }
 
@@ -78,6 +89,7 @@
     '.pflab .r .t small{color:#6b5f62;font-size:12px;display:block}' +
     '.pflab .r input{width:64px;font:inherit;font-size:17px;text-align:center;padding:8px 4px;border:2px solid #b9ecf1;border-radius:10px;background:#fff;color:inherit}' +
     '.pflab .sum{color:#6b5f62;font-size:13px;margin-top:8px}' +
+    '.pflab .fixed{color:#6b5f62;font-size:12px;margin:-4px 0 8px}' +
     '.pflab .b{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}' +
     '.pflab .b button{font:inherit;font-weight:600;padding:11px 14px;border-radius:10px;cursor:pointer}' +
     '.pflab .c{background:#fff;color:inherit;border:2px solid #b9ecf1}.pflab .ok{background:#e3031b;color:#fff;border:2px solid #e3031b}' +
@@ -90,9 +102,10 @@
     '@media print{body>*:not(#pflabPrint){display:none!important}#pflabPrint{display:block}' +
     '#pflabPrint .lb{box-sizing:border-box;width:50mm;height:25mm;overflow:hidden;display:flex;flex-direction:column;padding:1.2mm 2mm 1mm;' +
     'font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;page-break-after:always;break-after:page}' +
-    '#pflabPrint .lb .top{display:flex;justify-content:space-between;gap:2mm;font-size:6.5pt;font-weight:700;line-height:1.1;white-space:nowrap}' +
+    '#pflabPrint .lb .nm{font-size:6.5pt;font-weight:700;line-height:1.1;white-space:nowrap;overflow:hidden}' +
+    '#pflabPrint .lb .top{display:flex;justify-content:space-between;gap:2mm;font-size:6.5pt;line-height:1.1;white-space:nowrap}' +
     '#pflabPrint .lb .top span{overflow:hidden;text-overflow:clip}' +
-    '#pflabPrint .lb svg{display:block;width:100%;height:10.5mm;margin-top:.6mm;fill:#000}' +
+    '#pflabPrint .lb svg{display:block;width:100%;height:9.3mm;margin-top:.4mm;fill:#000}' +
     '#pflabPrint .lb .cd{font-size:7.5pt;text-align:center;letter-spacing:.4px;line-height:1.1}' +
     '#pflabPrint .lb .bin{font-size:6.5pt;font-weight:700;text-align:center;line-height:1.1;white-space:nowrap;overflow:hidden}}' +
     '@media print{@page{size:50mm 25mm;margin:0}html,body{margin:0!important;padding:0!important;background:#fff!important}}';
@@ -106,9 +119,11 @@
   function printLabels(list) {
     var box = document.getElementById('pflabPrint');
     if (!box) { box = document.createElement('div'); box.id = 'pflabPrint'; box.setAttribute('data-no-i18n', ''); document.body.appendChild(box); }
-    var html = '';
+    var html = '', meas = document.createElement('canvas').getContext('2d');
+    meas.font = 'bold 6.5pt Arial';   // 46 mm of text at 96 dpi = 174 px
+    list = list.map(function (it) { return Object.assign({}, it, { short: shortTitle(it.title || '', function (t) { return meas.measureText(t).width <= 172; }) }); });
     list.forEach(function (it) {
-      var one = '<div class="lb"><div class="top"><span>SKU ' + esc(it.sku || '-') + '</span><span>' + (it.expiry ? 'EXP ' + esc(it.expiry) : '') + '</span></div>' +
+      var one = '<div class="lb"><div class="nm">' + esc(it.short || it.title || '') + '</div><div class="top"><span>' + esc(it.sku || '') + '</span><span>' + esc(it.expiry || '') + '</span></div>' +
         svgFor(codeOf(it)) + '<div class="cd">' + esc(codeOf(it)) + '</div><div class="bin">' + esc(binsText(it)) + '</div></div>';
       for (var i = 0; i < it.copies; i++) html += one;
     });
@@ -134,22 +149,26 @@
     return text;
   }
   function drawLabel(doc, it) {
-    var m = 2, code = codeOf(it), widths = code128(code);
+    var m = 2, code = codeOf(it), widths = code128(code), wmax = W - 2 * m;
     doc.setTextColor(0); doc.setFillColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold');
-    var exp = it.expiry ? 'EXP ' + latin(it.expiry) : '';
-    fitText(doc, exp, 20, 7, 5); var ew = exp ? doc.getTextWidth(exp) : 0;
-    if (exp) doc.text(exp, W - m, 3.6, { align: 'right' });
-    var sku = 'SKU ' + latin(it.sku || '-');
-    fitText(doc, sku, W - 2 * m - ew - 2, 7, 5); doc.text(sku, m, 3.6);
-    // bars: quiet zone of 10 modules on both sides, inside the 46 mm between the margins
+    // 1: product / variant name, one line
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+    var name = shortTitle(latin(it.title || it.sku || ''), function (t) { return doc.getTextWidth(t) <= wmax; });
+    doc.text(name, m, 2.9);
+    // 2: SKU (left) and expiry date (right), values only
+    var exp = latin(it.expiry || ''); doc.setFont('helvetica', 'normal');
+    fitText(doc, exp, 18, 6.5, 5); var ew = exp ? doc.getTextWidth(exp) : 0;
+    if (exp) doc.text(exp, W - m, 5.6, { align: 'right' });
+    var sku = latin(it.sku || ''); fitText(doc, sku, wmax - ew - 2, 6.5, 4.5); if (sku) doc.text(sku, m, 5.6);
+    // 3: bars (quiet zone of 10 modules on both sides) and the barcode number
     var n = 20; for (var i = 0; i < widths.length; i++) n += +widths[i];
-    var mod = (W - 2 * m) / n, x = m + 10 * mod, y = 4.6, bh = 10.8;
+    var mod = wmax / n, x = m + 10 * mod, y = 6.6, bh = 9.6;
     for (var j = 0; j < widths.length; j++) { var w = +widths[j] * mod; if (j % 2 === 0) doc.rect(x, y, w, bh, 'F'); x += w; }
-    doc.setFont('helvetica', 'normal'); fitText(doc, latin(code), W - 2 * m, 8, 5);
-    doc.text(latin(code), W / 2, 18.4, { align: 'center' });
-    doc.setFont('helvetica', 'bold'); var b = latin(binsText(it)); fitText(doc, b, W - 2 * m, 7, 4.5);
-    doc.text(b, W / 2, 22.6, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); fitText(doc, latin(code), wmax, 7.5, 5);
+    doc.text(latin(code), W / 2, 19.1, { align: 'center' });
+    // 4: both bins, values only
+    doc.setFont('helvetica', 'bold'); var b = latin(binsText(it)); fitText(doc, b, wmax, 7.5, 4.5);
+    doc.text(b, W / 2, 23, { align: 'center' });
   }
   function makePdf(list) {
     return loadJsPdf().then(function (JsPDF) {
@@ -167,17 +186,25 @@
   function open(items, opts) {
     opts = opts || {};
     addStyle();
-    var missing = items.filter(function (it) { return !codeOf(it) || !code128(codeOf(it)); });
+    // every item must have a barcode AND both bin locations (variant and product)
+    var missing = items.map(function (it) {
+      var why = [];
+      if (!codeOf(it) || !code128(codeOf(it))) why.push(T('barcode'));
+      if (!String(it.binVariant || '').trim()) why.push(T('variant bin'));
+      if (!String(it.binProduct || '').trim()) why.push(T('product bin'));
+      return why.length ? '• ' + (it.title || it.sku || '?') + ' (' + T('missing') + ': ' + why.join(', ') + ')' : '';
+    }).filter(Boolean);
     if (missing.length) {
-      var msg = T('Every item needs a barcode in Shopify before labels can be printed. Without a barcode:') + '\n' +
-        missing.slice(0, 12).map(function (it) { return '• ' + (it.title || it.sku || '?'); }).join('\n') + (missing.length > 12 ? '\n• +' + (missing.length - 12) : '');
+      var msg = T('Every item needs a barcode, a variant bin and a product bin in Shopify before labels can be printed:') + '\n' +
+        missing.slice(0, 12).join('\n') + (missing.length > 12 ? '\n• +' + (missing.length - 12) : '');
       return (window.pfAlert ? window.pfAlert(msg, { title: 'Print labels' }) : Promise.resolve(alert(msg))).then(function () { return false; });
     }
     return new Promise(function (resolve) {
       var d = document.createElement('dialog'); d.className = 'pflab';
       var f = document.createElement('form');
       var h = document.createElement('h2'); h.textContent = 'Print labels'; f.appendChild(h);
-      var sz = document.createElement('div'); sz.className = 'size'; sz.textContent = 'Label 50 × 25 mm · barcode, SKU, expiry date and bins'; f.appendChild(sz);
+      var sz = document.createElement('div'); sz.className = 'size'; sz.textContent = 'Label 50 × 25 mm · name, SKU, expiry date, barcode and bins'; f.appendChild(sz);
+      if (opts.fixedCopies) { var fx = document.createElement('div'); fx.className = 'fixed'; fx.textContent = opts.fixedCopies; f.appendChild(fx); }
       var rows = document.createElement('div'); rows.className = 'rows'; f.appendChild(rows);
       var inputs = [];
       items.forEach(function (it) {
@@ -189,6 +216,7 @@
         r.appendChild(t);
         var n = document.createElement('input'); n.type = 'number'; n.min = 0; n.max = 500; n.inputMode = 'numeric';
         n.value = Math.max(0, Math.min(500, it.copies | 0)); n.setAttribute('aria-label', 'Copies');
+        if (opts.fixedCopies) { n.readOnly = true; n.tabIndex = -1; n.style.opacity = '.75'; }
         r.appendChild(n); rows.appendChild(r); inputs.push({ it: it, n: n });
       });
       var sum = document.createElement('div'); sum.className = 'sum'; f.appendChild(sum);
@@ -224,5 +252,5 @@
     });
   }
 
-  window.pfLabels = { open: open, svg: svgFor, code128: code128, makePdf: makePdf };
+  window.pfLabels = { open: open, svg: svgFor, code128: code128, makePdf: makePdf, shortTitle: shortTitle };
 })();

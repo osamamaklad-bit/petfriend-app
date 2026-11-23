@@ -239,7 +239,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.4</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.5</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -985,8 +985,8 @@
   });
 
   // Labels: "Save PDF to Drive" uploads the PDF to the Google Drive folder "PetFriend Labels" (to print from the computer)
-  async function openLabels(items, name, where) {
-    const r = await pfLabels.open(items, { name: name, save: function (pdf, fileName, count) {
+  async function openLabels(items, name, where, fixedCopies) {
+    const r = await pfLabels.open(items, { name: name, fixedCopies: fixedCopies, save: function (pdf, fileName, count) {
       return api({ action: 'saveLabels', pdf: pdf, name: fileName, count: count, where: where });
     } });
     if (r && r.url) {
@@ -1000,11 +1000,16 @@
   // ---------- barcode labels (Receive): one per unit received, else per unit expected ----------
   $('labelsBtn').addEventListener('click', function () {
     if (!state.order) return;
-    // every item of the purchase order must have a barcode (labels.js lists the ones without and stops)
-    openLabels(state.items.map(function (it) {
-      return { title: it.title, barcode: it.barcode || '', sku: it.sku || '', binVariant: it.binVariant || '', binProduct: it.binProduct || '',
-        expiry: it.expProduct || '', copies: it.got > 0 ? it.got : Math.max(0, it.need - it.rej - it.can) };
-    }), state.order.name, 'receive');
+    // one label per unit in the purchase order: exactly the PO quantity of each product variant (several lines of
+    // the same variant are added up); every item must have a barcode and both bins (labels.js lists what is missing)
+    const byVariant = {}, items = [];
+    state.items.forEach(function (it) {
+      const k = it.variantId || it.inventoryItemId || it.sku || it.title;
+      if (!byVariant[k]) { byVariant[k] = { title: it.title, barcode: it.barcode || '', sku: it.sku || '', binVariant: it.binVariant || '',
+        binProduct: it.binProduct || '', expiry: it.expProduct || '', copies: 0 }; items.push(byVariant[k]); }
+      byVariant[k].copies += Math.max(0, Number(it.need) || 0);
+    });
+    openLabels(items, state.order.name, 'receive', 'Labels = the quantity of each product in the purchase order.');
   });
 
   // ---------- fulfill ----------

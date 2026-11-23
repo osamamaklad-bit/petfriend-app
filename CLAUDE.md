@@ -23,11 +23,14 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (all fit at once on
   phones with smaller icons and wrapping names, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
 - `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
-  Each label: SKU, expiry date (`custom.expiry_date`, never the previous batch's), the item's **barcode** as Code 128
-  bars + number, and both bins (V: variant, P: product). Every item must have a barcode, otherwise nothing is printed
-  and the items without one are listed. "Save PDF to Drive" builds the PDF in the browser (jsPDF from cdnjs, one
-  50x25 mm page per label) and `saveLabels` stores it in the Drive folder "PetFriend Labels" (`LABELS_FOLDER_ID`) to
-  print from the computer; "Print here" uses the browser. Tests decode the printed barcodes with html5-qrcode.
+  Each label shows values only, no captions (no "SKU", "EXP", "V:", "P:"): the product / variant name on ONE line (when
+  too long: its start + "... " + its end, the end being the variant part after " - ", e.g. "... 100 ml"), SKU and expiry
+  date (`custom.expiry_date`, never the previous batch's), the item's **barcode** as Code 128 bars + number, and
+  "variant bin | product bin". Every item must have a barcode AND both bins, otherwise nothing is printed and what is
+  missing is listed. Purchase orders: one label per unit, exactly the PO quantity of each variant (lines of the same
+  variant added up), not editable. "Save PDF to Drive" builds the PDF in the browser (jsPDF from cdnjs, Latin text only,
+  one 50x25 mm page per label) and `saveLabels` stores it in the Drive folder "PetFriend Labels" (`LABELS_FOLDER_ID`);
+  "Print here" uses the browser. Tests decode the printed barcodes with html5-qrcode.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
 - `apps-script/Code.gs`: the ONE Google Apps Script server for every tab. Bump `SERVER_VERSION` on every change.
 - `tests/server-test.js`: runs `Code.gs` in Node with fake Google, Shopify and Bosta services:
