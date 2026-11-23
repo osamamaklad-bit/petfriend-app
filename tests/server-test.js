@@ -117,7 +117,9 @@ const ctx = {
   UrlFetchApp: { fetch(url, o = {}) { const body = o.payload && typeof o.payload === 'string' ? JSON.parse(o.payload) : (o.payload || {});
     fetches.push({ ver: (url.match(/api\/([\d-]+)\//) || [])[1], url, token: (o.headers || {})['X-Shopify-Access-Token'], q: (body.query || '') });
     let ans, code = 200;
-    if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
+    if (url.includes('api.telegram.org')) { if (url.endsWith('/getUpdates')) ans = { ok: true, result: [{ message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' } } }, { message: { chat: { id: 5, type: 'private' } } }] };
+      else { ctx.__tg = (ctx.__tg || []).concat([{ url, body }]); ans = { ok: true }; } }
+    else if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
     else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : tn === '8888888888' || tn === '8888888889' ? 'petsfriend-5972:#1008' : '#1001' } }; }
@@ -520,6 +522,32 @@ r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive',
 check('Previous batch expiry: emptied = removed', ctx.__dels, r.ok && r.values.expPrevProduct === '' && ctx.__dels.some(m => m.key === 'expiry_date_of_previous_batch'));
 r = post({ action: 'getOrder', key: 'kkk', query: '1007' });
 check('Fulfill / Receive / Check items carry expPrevProduct', r.items && Object.keys(r.items[0]), r.ok && 'expPrevProduct' in r.items[0]);
+
+// ---- Telegram group notifications
+ctx.__tg = [];
+post({ action: 'createPickList', key: 'kkk' });
+check('Telegram: nothing sent without a token / chat id', ctx.__tg.length, ctx.__tg.length === 0);
+props.TELEGRAM_BOT_TOKEN = '123:abc';
+ctx.telegramFindChat();
+check('Telegram: telegramFindChat saves the only group and sends a test', props.TELEGRAM_CHAT_ID, props.TELEGRAM_CHAT_ID === '-100777' && ctx.__tg.length === 1 && /bot123:abc\/sendMessage/.test(ctx.__tg[0].url));
+ctx.__tg = []; sheets.PickLists.rows.length = 1; if (sheets.PickListsDone) sheets.PickListsDone.rows.length = 1;
+r = post({ action: 'createPickList', key: 'kkk' });
+check('Telegram: new pick list -> message with orders and products', ctx.__tg.map(x => x.body.text), r.created && ctx.__tg.length === 1 && ctx.__tg[0].body.chat_id === '-100777' && /قائمة تجميع جديدة \(يدوية\)/.test(ctx.__tg[0].body.text) && /طلب · \d+ منتج/.test(ctx.__tg[0].body.text));
+ctx.__tg = []; ctx.__cache && Object.keys(ctx.__cache).filter(k => /^tg_err_/.test(k)).forEach(k => delete ctx.__cache[k]);
+post({ action: 'receivePO', key: 'kkk', items: [] }); post({ action: 'receivePO', key: 'kkk', items: [] });
+check('Telegram: an error -> one message, the same error again within 30 min -> none', ctx.__tg.map(x => x.body.text), ctx.__tg.length === 1 && /خطأ في التطبيق[\s\S]*Orders \/ receivePO/.test(ctx.__tg[0].body.text));
+ctx.__tg = []; post({ action: 'listOrders', key: 'wrong' });
+check('Telegram: a wrong pass is not reported', ctx.__tg.length, ctx.__tg.length === 0);
+ctx.__tg = []; props.TELEGRAM_OFF = 'picklist, errors'; sheets.PickLists.rows.length = 1;
+post({ action: 'createPickList', key: 'kkk' });
+check('Telegram: TELEGRAM_OFF silences chosen kinds', ctx.__tg.length, ctx.__tg.length === 0);
+delete props.TELEGRAM_OFF; ctx.__tg = [];
+check('Telegram: daily report sent', ctx.dailyTelegramReport(), ctx.__tg.length === 1 && /ملخص اليوم/.test(ctx.__tg[0].body.text) && /طلبات اتجهزت/.test(ctx.__tg[0].body.text));
+check('Telegram: daily report lists stock expired or expiring within 7 days', ctx.__tg[0].body.text, /منتهي الصلاحية وموجود بالمخزون: 1[\s\S]*Expired/.test(ctx.__tg[0].body.text));
+ctx.__tg = []; props.TELEGRAM_CHAT_ID = '-1'; const realF = ctx.UrlFetchApp.fetch;
+ctx.UrlFetchApp.fetch = (url, o) => url.includes('api.telegram.org') ? { getResponseCode: () => 403, getContentText: () => '{"ok":false,"description":"bot was kicked"}' } : realF(url, o);
+check('Telegram: a refused message does not break the action', post({ action: 'createPickList', key: 'kkk' }).ok, true);
+ctx.UrlFetchApp.fetch = realF; delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID;
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

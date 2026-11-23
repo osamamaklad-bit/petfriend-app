@@ -82,6 +82,11 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
 - Return shipments (own tab): `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
   never touches `Tracking`; logged as `return photo`.
+- Telegram group notifications (server only): `tgNotify_` sends to `TELEGRAM_CHAT_ID` with `TELEGRAM_BOT_TOKEN` (Script
+  Properties, never in code): new pick list, new bulky shipment, errors (once per part/action per 30 min; wrong passes
+  excluded) and the 21:00 daily report (`dailyTelegramReport`, trigger from `installTelegramTrigger`). Setup helpers:
+  `telegramFindChat`, `testTelegram`. `TELEGRAM_OFF` silences kinds (picklist, bulky, errors, daily). A failed send
+  never breaks an action and is never logged to Errors (it would notify again).
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

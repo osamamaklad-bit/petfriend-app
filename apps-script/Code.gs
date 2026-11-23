@@ -30,6 +30,7 @@
  *     BIN_VARIANT_METAFIELD  (optional) variant bin-location metafield shown in Receive, default custom.bin_location
  *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
  *     EXPIRY_METAFIELD       (optional) product expiry-date metafield, default custom.expiry_date
+ *     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (optional) Telegram group notifications; TELEGRAM_OFF to silence kinds
  *     EXPIRY_PREV_METAFIELD  (optional) expiry date of the previous batch, default custom.expiry_date_of_previous_batch
  *   Shipments
  *     APP_PIN                the Shipments PIN
@@ -57,7 +58,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.2';
+const SERVER_VERSION = '2026-11-23.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1083,6 +1084,8 @@ function createPickList_(kind) {
     // the leading apostrophe makes Sheets keep each chunk as plain text (it is not part of the stored value)
     s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, "'" + pl.orderIds.join(',')].concat(chunks.map(function (c) { return "'" + c; })));
     logActivity_('Pick list', kind, id, pl.orderIds.length, { products: pl.products.length });
+    tgNotify_('picklist', '🧾 قائمة تجميع جديدة (' + (kind === 'manual' ? 'يدوية' : 'تلقائية') + ')\n' + pl.orderIds.length + ' طلب · ' + pl.products.length + ' منتج' +
+      (pl.truncated ? '\n⚠️ فيه أكتر من 1000 طلب مستني: اعمل قائمة تانية للباقي' : '') + '\nافتح التطبيق ← قائمة التجميع');
     return { ok: true, created: true, truncated: pl.truncated, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
   } finally { lock.releaseLock(); }
 }
@@ -1217,6 +1220,11 @@ function logError_(part, action, err) {
   if (/^Wrong (PIN|app key)$/.test(msg)) return;     // someone typing a wrong login is not a fault
   try { logSheet_('Errors').appendRow([new Date(), part, action || '', "'" + msg.slice(0, 1000)]); }
   catch (e) { console.error('logError_', e.message); }
+  // Telegram: at most one message per part / action every 30 minutes, so a repeating error does not flood the group
+  try {
+    const c = CacheService.getScriptCache(), k = 'tg_err_' + String(part + '_' + (action || '')).slice(0, 200);
+    if (!c.get(k)) { c.put(k, '1', 1800); tgNotify_('errors', '⚠️ خطأ في التطبيق\n' + part + (action ? ' / ' + action : '') + '\n' + msg.slice(0, 500)); }
+  } catch (e) { console.error('tg error notice', e.message); }
 }
 /** The last `max` rows of a log sheet (newest last). */
 function logRows_(name, max) {
@@ -1328,6 +1336,83 @@ function lookupProduct_(r) {
     };
   });
   return { ok: true, query: text, by: how, currency: d.shop && d.shop.currencyCode, items: items };
+}
+
+/* =====================================================================================
+ * Telegram notifications to the store's group
+ * Script Properties: TELEGRAM_BOT_TOKEN (from @BotFather, secret: never in the code), TELEGRAM_CHAT_ID (the group,
+ * found with telegramFindChat), TELEGRAM_OFF (optional, comma list of kinds to silence: picklist, bulky, errors,
+ * daily). Without a token or chat id nothing is sent. Run installTelegramTrigger once for the 9 pm daily report.
+ * ===================================================================================== */
+const TG_KINDS = ['picklist', 'bulky', 'errors', 'daily'];
+function tgNotify_(kind, text) {
+  const off = String(P.getProperty('TELEGRAM_OFF') || '').toLowerCase().split(/[\s,]+/);
+  if (off.indexOf(kind) !== -1) return false;
+  return tgSend_(text);
+}
+function tgSend_(text) {
+  const token = P.getProperty('TELEGRAM_BOT_TOKEN'), chat = P.getProperty('TELEGRAM_CHAT_ID');
+  if (!token || !chat) return false;
+  try {
+    const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ chat_id: chat, text: String(text).slice(0, 4000), disable_web_page_preview: true })
+    });
+    if (res.getResponseCode() !== 200) { console.error('Telegram ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300)); return false; }
+    return true;
+  } catch (e) { console.error('Telegram', e.message); return false; }   // never logError_ here: it would notify again
+}
+/** Editor, once: after adding the bot to the group and writing any message there, finds the group and saves its id. */
+function telegramFindChat() {
+  const token = P.getProperty('TELEGRAM_BOT_TOKEN');
+  if (!token) { Logger.log('Set TELEGRAM_BOT_TOKEN in Script Properties first (the token @BotFather gave you).'); return; }
+  const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getUpdates', { muteHttpExceptions: true });
+  const j = JSON.parse(res.getContentText());
+  if (!j.ok) { Logger.log('Telegram refused the token: ' + (j.description || res.getResponseCode())); return; }
+  const chats = {};
+  (j.result || []).forEach(function (u) {
+    const m = u.message || u.my_chat_member || u.channel_post || {}, c = m.chat;
+    if (c && (c.type === 'group' || c.type === 'supergroup')) chats[c.id] = c.title || String(c.id);
+  });
+  const ids = Object.keys(chats);
+  if (!ids.length) { Logger.log('No group found. Add the bot to the group, write any message in the group, then run this again.'); return; }
+  ids.forEach(function (id) { Logger.log('Group: ' + chats[id] + '  id: ' + id); });
+  if (ids.length === 1) {
+    P.setProperty('TELEGRAM_CHAT_ID', ids[0]);
+    Logger.log('Saved TELEGRAM_CHAT_ID. Sending a test message...');
+    Logger.log(tgSend_('✅ بتفريند: الإشعارات شغالة في الجروب ده.') ? 'Test message sent.' : 'Test message failed: see the log above.');
+  } else Logger.log('More than one group: copy the right id into TELEGRAM_CHAT_ID yourself.');
+}
+/** Editor: sends a test message to the group. */
+function testTelegram() { Logger.log(tgSend_('✅ بتفريند: رسالة تجربة.') ? 'Sent.' : 'Not sent: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.'); }
+/** Editor, once: the daily report at 21:00 (script time zone). */
+function installTelegramTrigger() {
+  ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyTelegramReport'; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('dailyTelegramReport').timeBased().atHour(21).everyDays(1).create();
+  Logger.log('Daily Telegram report: every day around 21:00.');
+}
+/** Time trigger: the day in one message (same numbers as the Today tab) + products expired / expiring in 7 days. */
+function dailyTelegramReport() {
+  const d = dailySummary_(), L = [];
+  L.push('📊 ملخص اليوم ' + d.date);
+  if (d.pos && !d.pos.error) L.push('🛒 الكاشير: ' + d.pos.count + ' عملية · ' + d.pos.total + ' جنيه');
+  L.push('✅ طلبات اتجهزت: ' + d.fulfilled.count + ' (' + d.fulfilled.qty + ' قطعة)');
+  if (d.openOrders != null) L.push('⏳ طلبات مفتوحة: ' + d.openOrders);
+  L.push('↩️ مرتجعات: ' + d.returns.count + ' (' + d.returns.qty + ' قطعة)');
+  L.push('📥 استلام من الموردين: ' + d.received.qty + ' قطعة' + (d.received.extra ? ' · زيادة ' + d.received.extra : '') +
+    (d.received.rejected ? ' · مرفوض ' + d.received.rejected : ''));
+  L.push('🧾 قوائم تجميع: ' + d.pickLists.count);
+  L.push('📷 صور شحنات: ' + d.photos.qty + (d.returnPhotos && d.returnPhotos.qty ? ' · صور مرتجعات: ' + d.returnPhotos.qty : ''));
+  if (d.bulky && d.bulky.count) L.push('📦 شحنات بالكي: ' + d.bulky.count);
+  try {
+    const ex = expiryReport_({}).items.filter(function (x) { return x.stock > 0 && x.daysLeft <= 7; });
+    const past = ex.filter(function (x) { return x.daysLeft < 0; }), soon = ex.filter(function (x) { return x.daysLeft >= 0; });
+    if (past.length) L.push('⛔ منتهي الصلاحية وموجود بالمخزون: ' + past.length + '\n' + past.slice(0, 5).map(function (x) { return '  • ' + x.title + ' (' + x.expiry + ')'; }).join('\n'));
+    if (soon.length) L.push('⚠️ صلاحيته بتخلص خلال 7 أيام: ' + soon.length + '\n' + soon.slice(0, 5).map(function (x) { return '  • ' + x.title + ' (' + x.expiry + ')'; }).join('\n'));
+  } catch (e) { L.push('⚠️ تعذر فحص الصلاحية'); }
+  L.push(d.errors.count ? '❗ أخطاء اليوم: ' + d.errors.count : '👍 مفيش أخطاء النهارده');
+  return tgNotify_('daily', L.join('\n'));
 }
 
 /* =====================================================================================
@@ -1639,7 +1724,9 @@ function syncBosta(only) {
         d.state && d.state.value, items_(d), links, now, p.final !== '' ? now : '', p.final !== '' ? 'Charged' : 'Flagged' ];
       if (r) { const cur = B.getRange(r, 1, 1, 14).getValues()[0]; row[11] = cur[11]; if (!row[12]) row[12] = cur[12];
         B.getRange(r, 1, 1, 14).setValues([row]); st.bulkyUpdated++; }
-      else { B.appendRow(row); st.bulkyNew++; logActivity_('Shipments', 'bulky', tn, 1, { size: p.size, order: d.businessReference }); }
+      else { B.appendRow(row); st.bulkyNew++; logActivity_('Shipments', 'bulky', tn, 1, { size: p.size, order: d.businessReference });
+        tgNotify_('bulky', '📦 شحنة بالكي\nالبوليصة: ' + tn + '\nالطلب: ' + (d.businessReference || '-') + '\nالمقاس: ' + p.size +
+          '\nالرسوم: ' + (p.final !== '' ? p.final + ' جنيه (اتخصمت)' : (p.vat || '?') + ' جنيه (متوقعة)')); }
     } catch (e) {
       console.error(tn, e.message);
       if (/Bosta (400|404)/.test(e.message))             // not a Bosta shipment (misread): mark & stop retrying
@@ -1680,6 +1767,9 @@ function testAll() {
   });
   Logger.log((SpreadsheetApp.getActive() || P.getProperty('SHEET_ID') ? 'OK       ' : 'MISSING  ') + 'Shipments: sheet (open from the sheet, or set SHEET_ID)');
   Logger.log('Hourly Bosta sync trigger: ' + (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'syncBosta') ? 'installed' : 'NOT installed, run installTrigger()'));
+  Logger.log('Telegram: ' + (!P.getProperty('TELEGRAM_BOT_TOKEN') ? 'off (no TELEGRAM_BOT_TOKEN)' : !P.getProperty('TELEGRAM_CHAT_ID') ? 'token set, no group yet: run telegramFindChat()'
+    : 'on' + (P.getProperty('TELEGRAM_OFF') ? ' (silenced: ' + P.getProperty('TELEGRAM_OFF') + ')' : '')) +
+    ' | daily report trigger: ' + (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'dailyTelegramReport') ? 'installed' : 'NOT installed, run installTelegramTrigger()'));
 
   try { Logger.log('Orders Shopify: ' + shopify_('{ shop { name } }').shop.name); } catch (e) { Logger.log('Orders Shopify FAILED: ' + e.message); }
   try { Logger.log('Receiving: ' + listPOs_().orders.length + ' purchase order(s) waiting'); } catch (e) { Logger.log('Receiving FAILED (scopes?): ' + e.message); }
