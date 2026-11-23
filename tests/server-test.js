@@ -127,9 +127,10 @@ const ctx = {
     return { getResponseCode: () => code, getContentText: () => JSON.stringify(ans) }; } },
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
   SpreadsheetApp: { getActive: () => ({ getSheetByName: n => sheets[n] || null, insertSheet: n => sheet(n) }) },
-  DriveApp: { createFolder: () => ({ getId: () => 'F' }), getFolderById: () => ({ createFile: b => ({ getId: () => 'file1', getUrl: () => 'https://drive/file1' }) }), getFileById: () => ({ getBlob: () => ({ getBytes: () => [1] }) }) },
+  DriveApp: { createFolder: (n) => { ctx.__folders = (ctx.__folders || []).concat([n]); return { getId: () => 'F', getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }; },
+    getFolderById: () => ({ getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }), getFileById: () => ({ getBlob: () => ({ getBytes: () => [1] }) }) },
   Session: { getActiveUser: () => ({ getEmail: () => 'me@x' }), getScriptTimeZone: () => 'Africa/Cairo' },
-  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? '2026-11-15' : '20261115', newBlob: () => ({}), base64Decode: () => [], base64Encode: () => 'AA==', sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
+  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? '2026-11-15' : '20261115', newBlob: (bytes, type, name) => ({ type, name }), base64Decode: () => [], base64Encode: () => 'AA==', sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create() {} }) }) }) },
   Logger: { log: (...a) => console.log('   LOG', ...a) },
@@ -351,7 +352,7 @@ check('Logs: rows older than 60 days removed', sheets.Activity.rows.some(x => x[
 r = post({ action: 'expiryReport', key: 'kkk' });
 check('Expiry: past and soon (<=90 days) only, soonest first, all pages', r.items && r.items.map(i => i.title + ':' + i.daysLeft),
   r.ok && r.items.map(i => i.title + ':' + i.daysLeft).join() === 'Expired:-14,Today:0,In 30:30' && r.scanned === 5 && r.withDate === 4 && !r.truncated);
-check('Expiry: stock, SKU and bin (variant first, then product list)', r.items, r.items[0].stock === 3 && r.items[0].sku === 'E' && r.items[0].bin === 'A-1' && r.items[2].bin === 'C-1, C-2');
+check('Expiry: stock, SKU and bin (variant first, then product list)', r.items, r.items[0].stock === 3 && r.items[0].sku === 'E' && r.items[0].bin === 'A-1' && r.items[2].bin === 'C-1, C-2' && r.items[0].binVariant === 'A-1' && r.items[2].binProduct === 'C-1, C-2' && r.items[2].binVariant === '');
 const pagesRead = ctx.__expPages; r = post({ action: 'expiryReport', key: 'kkk' });
 check('Expiry: cached (no new Shopify reads)', ctx.__expPages - pagesRead, r.ok && r.cached && ctx.__expPages === pagesRead);
 r = post({ action: 'expiryReport', key: 'kkk', refresh: true });
@@ -617,6 +618,18 @@ check('POS fallback: refused secret -> Orders app login', !!ctx.__cache.pos_use_
 props.CLIENT_SECRET = 'GOOD'; fetches.length = 0; post({ action: 'search', pin: '1111', q: 'b' });
 check('POS fallback: secret fixed -> its own login straight away (no 1-hour wait)', fetches.filter(f => /oauth/.test(f.url)).length, fetches.some(f => /oauth\/access_token/.test(f.url)) && !!ctx.__cache[ctx.tokKey_('pos')]);
 ctx.UrlFetchApp.fetch = realF4; props.CLIENT_SECRET = 's'; clearTok(); ['pos_use_orders_app', 'pos_fallback_noted'].forEach(k => delete ctx.__cache[k]);
+
+// ---- label PDFs saved to Google Drive
+delete props.LABELS_FOLDER_ID; ctx.__folders = []; ctx.__files = [];
+r = post({ action: 'saveLabels', key: 'kkk', pdf: 'JVBERi0xLjMK', name: 'Labels PO-1003 2026-11-23 14-05 (6).pdf', count: 6, where: 'receive' });
+check('Labels: PDF saved in the "PetFriend Labels" Drive folder, link returned', [r, ctx.__folders, ctx.__files], r.ok && r.url === 'https://drive/file1' && ctx.__folders[0] === 'PetFriend Labels' && props.LABELS_FOLDER_ID === 'F'
+  && ctx.__files[0].type === 'application/pdf' && ctx.__files[0].name === 'Labels PO-1003 2026-11-23 14-05 (6).pdf');
+r = post({ action: 'saveLabels', key: 'kkk', pdf: 'JVBERi0xLjMK', name: 'x', count: 1 });
+check('Labels: the folder is made once, then reused', ctx.__folders, ctx.__folders.length === 1 && r.name === 'x.pdf');
+r = post({ action: 'saveLabels', key: 'kkk', pdf: 'PGh0bWw+', name: 'x.pdf' }); check('Labels: only a PDF is accepted', r, r.ok === false && /Not a PDF/.test(r.error));
+r = post({ action: 'saveLabels', key: 'kkk', pdf: 'JVBERi0xLjMK', name: '../../evil<>.pdf' }); check('Labels: file name cleaned', r.name, r.ok && !/[\/<>]/.test(r.name));
+check('Labels: logged', sheets.Activity.rows.filter(x => x[1] === 'Labels').length, sheets.Activity.rows.filter(x => x[1] === 'Labels').length >= 3);
+r = post({ action: 'saveLabels', key: 'bad', pdf: 'JVBERi0xLjMK' }); check('Labels: wrong key refused', r, r.ok === false);
 
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry

@@ -1,10 +1,11 @@
 // One service worker for all three tools: makes the app installable and lets the screens open offline.
 // Bump CACHE when you release, so phones drop old copies.
-const CACHE = 'petfriend-v46';
+const CACHE = 'petfriend-v48';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './config.js', './i18n.js', './settings.js', './labels.js',
   './pos/index.html', './orders/index.html', './picklist/index.html', './shipments/index.html', './today/index.html',
-  'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
 ];
 
 self.addEventListener('install', (e) => {

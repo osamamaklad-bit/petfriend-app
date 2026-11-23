@@ -22,8 +22,12 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
   home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (all fit at once on
   phones with smaller icons and wrapping names, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
-- `labels.js`: barcode label printing (Code 128 of the SKU, else the barcode), used by Receive and Today.
-  Printed barcodes are checked by decoding them with html5-qrcode in a test.
+- `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
+  Each label: SKU, expiry date (`custom.expiry_date`, never the previous batch's), the item's **barcode** as Code 128
+  bars + number, and both bins (V: variant, P: product). Every item must have a barcode, otherwise nothing is printed
+  and the items without one are listed. "Save PDF to Drive" builds the PDF in the browser (jsPDF from cdnjs, one
+  50x25 mm page per label) and `saveLabels` stores it in the Drive folder "PetFriend Labels" (`LABELS_FOLDER_ID`) to
+  print from the computer; "Print here" uses the browser. Tests decode the printed barcodes with html5-qrcode.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
 - `apps-script/Code.gs`: the ONE Google Apps Script server for every tab. Bump `SERVER_VERSION` on every change.
 - `tests/server-test.js`: runs `Code.gs` in Node with fake Google, Shopify and Bosta services:

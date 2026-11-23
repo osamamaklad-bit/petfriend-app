@@ -1,11 +1,10 @@
-/* Pet Friend: print barcode labels (Code 128), shared by the tabs.
+/* Pet Friend: barcode labels (Code 128), shared by the tabs. Labels are 50 mm wide x 25 mm tall.
  *
- *   pfLabels.open([{ title: 'Royal Canin Kitten 2kg', code: '6723085', sub: 'A-10 · exp 2027-01-31', copies: 4 }])
+ *   pfLabels.open([{ title, barcode, sku, binVariant, binProduct, expiry, copies }], { name: 'PO-1003', save: fn })
  *
- * Opens a window to choose the label size and the number of copies per item, then prints with the
- * browser's print window (works with label printers and with A4 sticker sheets). The barcode holds
- * the item's SKU (or barcode), so the printed label scans in Fulfill, Returns, Receive and POS.
- * Text is in English and is translated by i18n.js like the rest of the page.
+ * Each label: SKU and expiry date, the item's barcode (bars + number) and both bin locations. Every item must have
+ * a barcode (otherwise the items without one are listed and nothing is printed). "Save PDF to Drive" makes a PDF
+ * (one 50 x 25 mm page per label) and hands it to opts.save, which uploads it; "Print here" uses the browser.
  */
 (function () {
   'use strict';
@@ -54,122 +53,176 @@
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + (x + q) + ' 50" preserveAspectRatio="none" shape-rendering="crispEdges">' + bars + '</svg>';
   }
 
-  var SIZES = {
-    '50x25': { w: 50, h: 25, label: 'Label 50 × 25 mm' },
-    '40x30': { w: 40, h: 30, label: 'Label 40 × 30 mm' },
-    '58x40': { w: 58, h: 40, label: 'Label 58 × 40 mm' },
-    'a4': { w: 63.5, h: 38.1, sheet: true, label: 'A4 sheet (3 × 7)' }
-  };
-  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, v); } catch (e) { return ''; } }
+  // ---------- labels: 50 mm wide x 25 mm tall ----------
+  // Each label: SKU and expiry date on top, the item's barcode (bars + number), then both bin locations
+  // (variant / product). The expiry date of the previous batch is NOT printed. Every item must have a barcode.
+  var W = 50, H = 25;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function T(s) { return window.pfT ? window.pfT(s) : s; }
+  function binsText(it) {
+    var v = it.binVariant || '', p = it.binProduct && it.binProduct !== it.binVariant ? it.binProduct : '';
+    if (!v && !p && it.bin) v = it.bin;
+    return [v && 'V: ' + v, p && 'P: ' + p].filter(Boolean).join('  |  ') || 'Bin: -';
+  }
+  function codeOf(it) { return String(it.barcode || '').trim(); }
 
   var css =
     '.pflab{border:0;border-radius:14px;padding:0;width:min(520px,calc(100vw - 24px));max-height:calc(100dvh - 40px);color:#2a1417;background:#fff;box-shadow:0 12px 40px #0004}' +
     '.pflab::backdrop{background:#0006}' +
     '.pflab form{padding:16px;margin:0;font:16px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}' +
-    '.pflab h2{margin:0 0 10px;font-size:19px}' +
-    '.pflab select{width:100%;font:inherit;padding:10px;border:2px solid #b9ecf1;border-radius:10px;background:#fff;color:inherit;margin-bottom:10px}' +
-    '.pflab .rows{max-height:50dvh;overflow:auto;border:1px solid #b9ecf1;border-radius:10px}' +
+    '.pflab h2{margin:0 0 4px;font-size:19px}.pflab .size{color:#6b5f62;font-size:13px;margin-bottom:10px}' +
+    '.pflab .rows{max-height:46dvh;overflow:auto;border:1px solid #b9ecf1;border-radius:10px}' +
     '.pflab .r{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #b9ecf1}' +
     '.pflab .r:last-child{border-bottom:0}' +
     '.pflab .r .t{flex:1;min-width:0}.pflab .r .t b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-    '.pflab .r .t small{color:#6b5f62;font-size:12px}' +
+    '.pflab .r .t small{color:#6b5f62;font-size:12px;display:block}' +
     '.pflab .r input{width:64px;font:inherit;font-size:17px;text-align:center;padding:8px 4px;border:2px solid #b9ecf1;border-radius:10px;background:#fff;color:inherit}' +
-    '.pflab .r.no{opacity:.6}.pflab .r.no small{color:#c00018}' +
     '.pflab .sum{color:#6b5f62;font-size:13px;margin-top:8px}' +
-    '.pflab .b{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}' +
-    '.pflab .b button{font:inherit;font-weight:600;padding:11px 18px;border-radius:10px;cursor:pointer}' +
+    '.pflab .b{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}' +
+    '.pflab .b button{font:inherit;font-weight:600;padding:11px 14px;border-radius:10px;cursor:pointer}' +
     '.pflab .c{background:#fff;color:inherit;border:2px solid #b9ecf1}.pflab .ok{background:#e3031b;color:#fff;border:2px solid #e3031b}' +
-    '.pflab .ok:disabled{opacity:.5}' +
-    '@media (prefers-color-scheme:dark){.pflab{background:#17282b;color:#eaf7f8}.pflab .r .t small,.pflab .sum{color:#8fb0b3}' +
-    '.pflab select,.pflab .r input,.pflab .c{background:#0f1c1e;border-color:#27403f}.pflab .rows,.pflab .r{border-color:#27403f}' +
+    '.pflab .pr{background:#fff;color:inherit;border:2px solid #b9ecf1}' +
+    '.pflab button:disabled{opacity:.5}' +
+    '@media (prefers-color-scheme:dark){.pflab{background:#17282b;color:#eaf7f8}.pflab .r .t small,.pflab .sum,.pflab .size{color:#8fb0b3}' +
+    '.pflab .r input,.pflab .c,.pflab .pr{background:#0f1c1e;border-color:#27403f}.pflab .rows,.pflab .r{border-color:#27403f}' +
     '.pflab .ok{background:#ff4a5c;border-color:#ff4a5c;color:#1a0508}}' +
     '#pflabPrint{display:none}' +
     '@media print{body>*:not(#pflabPrint){display:none!important}#pflabPrint{display:block}' +
-    '#pflabPrint .lb{box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;padding:1.2mm 2mm;' +
-    'font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;page-break-inside:avoid;break-inside:avoid}' +
-    '#pflabPrint .lb .n{font-size:7pt;font-weight:700;line-height:1.15;max-height:2.3em;overflow:hidden}' +
-    '#pflabPrint .lb svg{display:block;width:100%;flex:1;min-height:6mm;fill:#000}' +
-    '#pflabPrint .lb .cd{font-size:8pt;text-align:center;letter-spacing:.5px;line-height:1.1}' +
-    '#pflabPrint .lb .s{font-size:6.5pt;text-align:center;line-height:1.1}' +
-    '#pflabPrint.roll .lb{page-break-after:always;break-after:page}' +
-    '#pflabPrint.sheet{display:grid;grid-template-columns:repeat(3,63.5mm);grid-auto-rows:38.1mm;column-gap:2.5mm}}';
+    '#pflabPrint .lb{box-sizing:border-box;width:50mm;height:25mm;overflow:hidden;display:flex;flex-direction:column;padding:1.2mm 2mm 1mm;' +
+    'font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;page-break-after:always;break-after:page}' +
+    '#pflabPrint .lb .top{display:flex;justify-content:space-between;gap:2mm;font-size:6.5pt;font-weight:700;line-height:1.1;white-space:nowrap}' +
+    '#pflabPrint .lb .top span{overflow:hidden;text-overflow:clip}' +
+    '#pflabPrint .lb svg{display:block;width:100%;height:10.5mm;margin-top:.6mm;fill:#000}' +
+    '#pflabPrint .lb .cd{font-size:7.5pt;text-align:center;letter-spacing:.4px;line-height:1.1}' +
+    '#pflabPrint .lb .bin{font-size:6.5pt;font-weight:700;text-align:center;line-height:1.1;white-space:nowrap;overflow:hidden}}' +
+    '@media print{@page{size:50mm 25mm;margin:0}html,body{margin:0!important;padding:0!important;background:#fff!important}}';
 
   function addStyle() {
     if (document.getElementById('pflab-css')) return;
     var s = document.createElement('style'); s.id = 'pflab-css'; s.textContent = css; document.head.appendChild(s);
   }
 
-  function printLabels(items, sizeKey) {
-    var size = SIZES[sizeKey] || SIZES['50x25'];
+  // print on this device (the browser's print window, 50 x 25 mm pages)
+  function printLabels(list) {
     var box = document.getElementById('pflabPrint');
     if (!box) { box = document.createElement('div'); box.id = 'pflabPrint'; box.setAttribute('data-no-i18n', ''); document.body.appendChild(box); }
-    box.className = size.sheet ? 'sheet' : 'roll';
-    var page = document.getElementById('pflab-page');
-    if (!page) { page = document.createElement('style'); page.id = 'pflab-page'; document.head.appendChild(page); }
-    page.textContent = size.sheet ? '@media print{@page{size:A4;margin:12mm 7mm}}'
-      : '@media print{@page{size:' + size.w + 'mm ' + size.h + 'mm;margin:0}html,body{margin:0!important;padding:0!important;background:#fff!important}}';
     var html = '';
-    items.forEach(function (it) {
-      var one = '<div class="lb" style="width:' + size.w + 'mm;height:' + size.h + 'mm">' +
-        '<div class="n">' + esc(it.title) + '</div>' + svgFor(it.code) +
-        '<div class="cd">' + esc(it.code) + '</div>' + (it.sub ? '<div class="s">' + esc(it.sub) + '</div>' : '') + '</div>';
+    list.forEach(function (it) {
+      var one = '<div class="lb"><div class="top"><span>SKU ' + esc(it.sku || '-') + '</span><span>' + (it.expiry ? 'EXP ' + esc(it.expiry) : '') + '</span></div>' +
+        svgFor(codeOf(it)) + '<div class="cd">' + esc(codeOf(it)) + '</div><div class="bin">' + esc(binsText(it)) + '</div></div>';
       for (var i = 0; i < it.copies; i++) html += one;
     });
     box.innerHTML = html;
     window.print();
   }
 
-  /** items: [{ title, code, sub, copies }]. Resolves true when printed, false when cancelled. */
-  function open(items) {
+  // ---------- PDF for Google Drive (jsPDF, vector bars, one 50 x 25 mm page per label) ----------
+  var JSPDF = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+  function loadJsPdf() {
+    if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+    return new Promise(function (ok, bad) {
+      var s = document.createElement('script'); s.src = JSPDF;
+      s.onload = function () { window.jspdf && window.jspdf.jsPDF ? ok(window.jspdf.jsPDF) : bad(new Error('PDF maker did not load')); };
+      s.onerror = function () { bad(new Error("Can't load the PDF maker. Check the internet and try again.")); };
+      document.head.appendChild(s);
+    });
+  }
+  function latin(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7e]/g, '?'); }   // the PDF font has no Arabic
+  function fitText(doc, text, maxW, size, min) {
+    doc.setFontSize(size);
+    while (size > min && doc.getTextWidth(text) > maxW) { size -= 0.25; doc.setFontSize(size); }
+    return text;
+  }
+  function drawLabel(doc, it) {
+    var m = 2, code = codeOf(it), widths = code128(code);
+    doc.setTextColor(0); doc.setFillColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold');
+    var exp = it.expiry ? 'EXP ' + latin(it.expiry) : '';
+    fitText(doc, exp, 20, 7, 5); var ew = exp ? doc.getTextWidth(exp) : 0;
+    if (exp) doc.text(exp, W - m, 3.6, { align: 'right' });
+    var sku = 'SKU ' + latin(it.sku || '-');
+    fitText(doc, sku, W - 2 * m - ew - 2, 7, 5); doc.text(sku, m, 3.6);
+    // bars: quiet zone of 10 modules on both sides, inside the 46 mm between the margins
+    var n = 20; for (var i = 0; i < widths.length; i++) n += +widths[i];
+    var mod = (W - 2 * m) / n, x = m + 10 * mod, y = 4.6, bh = 10.8;
+    for (var j = 0; j < widths.length; j++) { var w = +widths[j] * mod; if (j % 2 === 0) doc.rect(x, y, w, bh, 'F'); x += w; }
+    doc.setFont('helvetica', 'normal'); fitText(doc, latin(code), W - 2 * m, 8, 5);
+    doc.text(latin(code), W / 2, 18.4, { align: 'center' });
+    doc.setFont('helvetica', 'bold'); var b = latin(binsText(it)); fitText(doc, b, W - 2 * m, 7, 4.5);
+    doc.text(b, W / 2, 22.6, { align: 'center' });
+  }
+  function makePdf(list) {
+    return loadJsPdf().then(function (JsPDF) {
+      var doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: [H, W], compress: true }), first = true;
+      list.forEach(function (it) {
+        for (var i = 0; i < it.copies; i++) { if (!first) doc.addPage([H, W], 'landscape'); first = false; drawLabel(doc, it); }
+      });
+      return doc.output('datauristring').split(',')[1];
+    });
+  }
+
+  /** items: [{ title, barcode, sku, binVariant, binProduct, expiry, copies }]
+   *  opts: { name: 'PO-1003' (used in the file name), save: function (base64Pdf, fileName, labelCount) -> Promise({ url }) }
+   *  Every item must have a barcode: otherwise nothing is printed and the items without one are listed. */
+  function open(items, opts) {
+    opts = opts || {};
     addStyle();
+    var missing = items.filter(function (it) { return !codeOf(it) || !code128(codeOf(it)); });
+    if (missing.length) {
+      var msg = T('Every item needs a barcode in Shopify before labels can be printed. Without a barcode:') + '\n' +
+        missing.slice(0, 12).map(function (it) { return '• ' + (it.title || it.sku || '?'); }).join('\n') + (missing.length > 12 ? '\n• +' + (missing.length - 12) : '');
+      return (window.pfAlert ? window.pfAlert(msg, { title: 'Print labels' }) : Promise.resolve(alert(msg))).then(function () { return false; });
+    }
     return new Promise(function (resolve) {
       var d = document.createElement('dialog'); d.className = 'pflab';
       var f = document.createElement('form');
       var h = document.createElement('h2'); h.textContent = 'Print labels'; f.appendChild(h);
-      var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Label size');
-      Object.keys(SIZES).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SIZES[k].label; sel.appendChild(o); });
-      sel.value = SIZES[store('pf_label_size')] ? store('pf_label_size') : '50x25';
-      f.appendChild(sel);
+      var sz = document.createElement('div'); sz.className = 'size'; sz.textContent = 'Label 50 × 25 mm · barcode, SKU, expiry date and bins'; f.appendChild(sz);
       var rows = document.createElement('div'); rows.className = 'rows'; f.appendChild(rows);
       var inputs = [];
       items.forEach(function (it) {
         var r = document.createElement('div'); r.className = 'r';
         var t = document.createElement('div'); t.className = 't';
-        var b = document.createElement('b'); b.textContent = it.title; b.setAttribute('data-no-i18n', ''); t.appendChild(b);
-        var sm = document.createElement('small');
-        var ok = it.code && code128(String(it.code));
-        if (ok) { sm.textContent = it.code; sm.dir = 'ltr'; sm.setAttribute('data-no-i18n', ''); }
-        else sm.textContent = 'No SKU or barcode: add one in Shopify';
-        t.appendChild(sm); r.appendChild(t);
+        var b = document.createElement('b'); b.textContent = it.title || it.sku; b.setAttribute('data-no-i18n', ''); t.appendChild(b);
+        var sm = document.createElement('small'); sm.dir = 'ltr'; sm.setAttribute('data-no-i18n', '');
+        sm.textContent = codeOf(it) + (it.sku ? '  ·  SKU ' + it.sku : ''); t.appendChild(sm);
+        r.appendChild(t);
         var n = document.createElement('input'); n.type = 'number'; n.min = 0; n.max = 500; n.inputMode = 'numeric';
-        n.value = ok ? Math.max(0, Math.min(500, it.copies | 0)) : 0; n.disabled = !ok; n.setAttribute('aria-label', 'Copies');
-        if (!ok) r.className = 'r no';
-        r.appendChild(n); rows.appendChild(r);
-        inputs.push({ it: it, n: n, ok: ok });
+        n.value = Math.max(0, Math.min(500, it.copies | 0)); n.setAttribute('aria-label', 'Copies');
+        r.appendChild(n); rows.appendChild(r); inputs.push({ it: it, n: n });
       });
       var sum = document.createElement('div'); sum.className = 'sum'; f.appendChild(sum);
       var bb = document.createElement('div'); bb.className = 'b';
       var c = document.createElement('button'); c.type = 'button'; c.className = 'c'; c.textContent = 'Cancel';
-      var p = document.createElement('button'); p.type = 'submit'; p.className = 'ok'; p.textContent = 'Print';
-      bb.appendChild(c); bb.appendChild(p); f.appendChild(bb);
-      function count() { return inputs.reduce(function (t, x) { return t + (x.ok ? Math.max(0, Math.min(500, x.n.value | 0)) : 0); }, 0); }
-      function upd() { var n = count(); sum.textContent = n + (n === 1 ? ' label' : ' labels'); p.disabled = !n; }
+      var pr = document.createElement('button'); pr.type = 'button'; pr.className = 'pr'; pr.textContent = 'Print here';
+      var sv = document.createElement('button'); sv.type = 'submit'; sv.className = 'ok'; sv.textContent = 'Save PDF to Drive';
+      bb.appendChild(c); bb.appendChild(pr); if (opts.save) bb.appendChild(sv); f.appendChild(bb);
+      function list() { return inputs.filter(function (x) { return (x.n.value | 0) > 0; }).map(function (x) { return Object.assign({}, x.it, { copies: Math.min(500, x.n.value | 0) }); }); }
+      function count() { return list().reduce(function (t, x) { return t + x.copies; }, 0); }
+      function upd() { var n = count(); sum.textContent = n + (n === 1 ? ' label' : ' labels'); pr.disabled = sv.disabled = !n; }
       rows.addEventListener('input', upd); upd();
-      function done(v) { d.close(); d.remove(); resolve(v); }
-      c.addEventListener('click', function () { done(false); });
-      d.addEventListener('cancel', function (e) { e.preventDefault(); done(false); });
+      var result = false;
+      function done() { d.close(); d.remove(); resolve(result); }
+      c.addEventListener('click', done);
+      d.addEventListener('cancel', function (e) { e.preventDefault(); done(); });
+      pr.addEventListener('click', function () { var l = list(); result = 'printed'; done(); setTimeout(function () { printLabels(l); }, 50); });
       f.addEventListener('submit', function (e) {
         e.preventDefault();
-        var list = inputs.filter(function (x) { return x.ok && (x.n.value | 0) > 0; })
-          .map(function (x) { return { title: x.it.title, code: String(x.it.code), sub: x.it.sub || '', copies: Math.min(500, x.n.value | 0) }; });
-        store('pf_label_size', sel.value);
-        done(true);
-        setTimeout(function () { printLabels(list, sel.value); }, 50);   // after the window has closed
+        var l = list(), n = count();
+        sv.disabled = pr.disabled = true; sv.textContent = 'Saving...';
+        var stamp = new Date(), pad = function (x) { return ('0' + x).slice(-2); };
+        var fname = 'Labels ' + String(opts.name || 'items').replace(/[^\w\- ]/g, '') + ' ' + stamp.getFullYear() + '-' + pad(stamp.getMonth() + 1) + '-' + pad(stamp.getDate()) +
+          ' ' + pad(stamp.getHours()) + '-' + pad(stamp.getMinutes()) + ' (' + n + ').pdf';
+        makePdf(l).then(function (b64) { return opts.save(b64, fname, n); }).then(function (r) {
+          result = r || true; done();
+        }).catch(function (err) {
+          sv.disabled = pr.disabled = false; sv.textContent = 'Save PDF to Drive';
+          sum.textContent = err.message || String(err);
+        });
       });
       d.appendChild(f); document.body.appendChild(d); d.showModal();
     });
   }
 
-  window.pfLabels = { open: open, svg: svgFor, code128: code128 };
+  window.pfLabels = { open: open, svg: svgFor, code128: code128, makePdf: makePdf };
 })();

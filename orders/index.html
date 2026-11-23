@@ -239,7 +239,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.3</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.4</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -965,7 +965,8 @@
     const lb = e.target.closest('button[data-chk-label]'), ed = e.target.closest('button[data-chk-edit]');
     if (lb) {
       const it = state.check.items[+lb.dataset.chkLabel];
-      pfLabels.open([{ title: it.title, code: it.sku || it.barcode || '', sub: [it.binVariant || it.binProduct, it.expProduct && 'EXP ' + it.expProduct].filter(Boolean).join(' · '), copies: 1 }]);
+      openLabels([{ title: it.title, barcode: it.barcode || (it.barcodes && it.barcodes[0]) || '', sku: it.sku || '', binVariant: it.binVariant || '',
+        binProduct: it.binProduct || '', expiry: it.expProduct || '', copies: 1 }], it.sku || 'item', 'check');
       return;
     }
     if (!ed || state.busy) return;
@@ -983,14 +984,27 @@
     finally { state.busy = false; }
   });
 
+  // Labels: "Save PDF to Drive" uploads the PDF to the Google Drive folder "PetFriend Labels" (to print from the computer)
+  async function openLabels(items, name, where) {
+    const r = await pfLabels.open(items, { name: name, save: function (pdf, fileName, count) {
+      return api({ action: 'saveLabels', pdf: pdf, name: fileName, count: count, where: where });
+    } });
+    if (r && r.url) {
+      say('Labels saved to Google Drive: ' + r.name, 'ok'); feedback('ok');
+      const a = document.createElement('a'); a.href = r.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open in Drive';
+      a.style.cssText = 'margin-inline-start:10px;color:inherit;text-decoration:underline';
+      $('banner').appendChild(a);
+    }
+  }
+
   // ---------- barcode labels (Receive): one per unit received, else per unit expected ----------
   $('labelsBtn').addEventListener('click', function () {
     if (!state.order) return;
-    pfLabels.open(state.items.map(function (it) {
-      return { title: it.title, code: it.sku || it.barcode || '',
-        sub: [it.binVariant || it.binProduct, it.expProduct && 'EXP ' + it.expProduct].filter(Boolean).join(' · '),
-        copies: it.got > 0 ? it.got : Math.max(0, it.need - it.rej - it.can) };
-    }));
+    // every item of the purchase order must have a barcode (labels.js lists the ones without and stops)
+    openLabels(state.items.map(function (it) {
+      return { title: it.title, barcode: it.barcode || '', sku: it.sku || '', binVariant: it.binVariant || '', binProduct: it.binProduct || '',
+        expiry: it.expProduct || '', copies: it.got > 0 ? it.got : Math.max(0, it.need - it.rej - it.can) };
+    }), state.order.name, 'receive');
   });
 
   // ---------- fulfill ----------

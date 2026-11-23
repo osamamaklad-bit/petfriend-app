@@ -30,6 +30,7 @@
  *     BIN_VARIANT_METAFIELD  (optional) variant bin-location metafield shown in Receive, default custom.bin_location
  *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
  *     EXPIRY_METAFIELD       (optional) product expiry-date metafield, default custom.expiry_date
+ *     LABELS_FOLDER_ID       (made automatically) the Drive folder for label PDFs
  *     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (optional) Telegram group notifications; TELEGRAM_OFF to silence kinds
  *     EXPIRY_PREV_METAFIELD  (optional) expiry date of the previous batch, default custom.expiry_date_of_previous_batch
  *   Shipments
@@ -58,7 +59,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.7';
+const SERVER_VERSION = '2026-11-23.9';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -318,7 +319,8 @@ const ORDER_ACTIONS = {
   setPickListDone: function (r) { return setPickListDone_(r); },
   dailySummary: function () { return dailySummary_(); },
   expiryReport: function (r) { return expiryReport_(r); },
-  lookupProduct: function (r) { return lookupProduct_(r); }
+  lookupProduct: function (r) { return lookupProduct_(r); },
+  saveLabels: function (r) { return saveLabels_(r); }
 };
 
 function ordersApi_(r) {
@@ -1328,6 +1330,30 @@ function dailySummary_() {
 }
 
 /* =====================================================================================
+ * Barcode labels: the app makes the PDF (one 50 x 25 mm page per label) and this saves it in the Google Drive folder
+ * "PetFriend Labels" (LABELS_FOLDER_ID), to open and print from the computer.
+ * ===================================================================================== */
+function labelsFolder_() {
+  const id = P.getProperty('LABELS_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* deleted: make a new one */ } }
+  const f = DriveApp.createFolder('PetFriend Labels');
+  P.setProperty('LABELS_FOLDER_ID', f.getId());
+  return f;
+}
+function saveLabels_(r) {
+  const b64 = String((r && r.pdf) || '');
+  if (!/^JVBERi0/.test(b64)) throw new Error('Not a PDF');                 // "%PDF-" in base64
+  if (b64.length > 14 * 1024 * 1024) throw new Error('Too many labels in one file: print fewer at a time');
+  const name = (String(r.name || 'Labels.pdf').replace(/[^\w\- ().]/g, '').slice(0, 120) || 'Labels') .replace(/(\.pdf)?$/i, '.pdf');
+  const folder = labelsFolder_();
+  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(b64), 'application/pdf', name));
+  logActivity_('Labels', 'pdf', name, Number(r.count) || 0, { where: String(r.where || '') });
+  let folderUrl = '';
+  try { folderUrl = folder.getUrl(); } catch (e) {}
+  return { ok: true, url: file.getUrl(), name: name, folderUrl: folderUrl };
+}
+
+/* =====================================================================================
  * Check a product (Orders tab, "Check" mode): scan or type a barcode, SKU or name and see the
  * picture, price, stock per location, bin locations and expiry date. Read-only.
  * ===================================================================================== */
@@ -1577,6 +1603,7 @@ function expiryReport_(r) {
       const v = (p.variants && p.variants.nodes[0]) || {};
       items.push({ productId: p.id, title: p.title, expiry: exp.slice(0, 10), daysLeft: left, stock: Number(p.totalInventory) || 0,
         sku: v.sku || '', barcode: v.barcode || '', bin: binValue_(v.vBin) || binValue_(p.pBin),
+        binVariant: binValue_(v.vBin), binProduct: binValue_(p.pBin),
         image: (p.featuredMedia && p.featuredMedia.preview && p.featuredMedia.preview.image && p.featuredMedia.preview.image.url) || '' });
     });
     more = page.pageInfo.hasNextPage; after = page.pageInfo.endCursor;
