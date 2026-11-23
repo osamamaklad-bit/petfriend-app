@@ -56,7 +56,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-22.3';
+const SERVER_VERSION = '2026-11-23.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -627,10 +627,10 @@ const RECEIVE_API = '2026-10';
 // expiry date on the product. Each is "namespace.key"; defaults below (they match the store's
 // definitions), change with the Script Properties named here.
 const ITEM_META = {
-  // bin locations are shown only (not editable from the app); the expiry date can be edited
-  binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field', editable: false },
-  binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field', editable: false },
-  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date', editable: true }
+  // the expiry date can be edited in Receive and Check; bin locations only in Receive (Purchase orders tab)
+  binVariant: { prop: 'BIN_VARIANT_METAFIELD',    def: 'custom.bin_location', owner: 'variant', alias: 'vBin', type: 'single_line_text_field', editable: 'receive', label: 'Variant bin' },
+  binProduct: { prop: 'BIN_PRODUCT_METAFIELD',    def: 'custom.bin_location', owner: 'product', alias: 'pBin', type: 'single_line_text_field', editable: 'receive', label: 'Product bin' },
+  expProduct: { prop: 'EXPIRY_METAFIELD',         def: 'custom.expiry_date',  owner: 'product', alias: 'pExp', type: 'date', editable: true, label: 'Expiry date' }
 };
 function metaKey_(name) {
   const f = ITEM_META[name];
@@ -687,13 +687,15 @@ function setItemMeta_(body) {
   const cur = shopifyAt_(RECEIVE_API, 'query($id: ID!) { productVariant(id: $id) { id ' + metaQuery_('variant') +
     ' product { id ' + metaQuery_('product') + ' } } }', { id: body.variantId }).productVariant;
   if (!cur) throw new Error('Item not found in Shopify');
-  const sets = [], dels = [];
+  const sets = [], dels = [], changes = [];
   Object.keys(ITEM_META).forEach(function (n) {
     if (!Object.prototype.hasOwnProperty.call(vals, n)) return;
-    if (!ITEM_META[n].editable) return;                       // bin locations are read-only in the app
+    const ed = ITEM_META[n].editable;
+    if (!ed || (ed !== true && ed !== body.where)) return;   // bin locations: only from Receive (Purchase orders)
     const f = ITEM_META[n], k = metaKey_(n), host = f.owner === 'variant' ? cur : cur.product;
     const existing = host[f.alias], v = String(vals[n] == null ? '' : vals[n]).trim();
     if (v === binValue_(existing)) return;                        // unchanged
+    changes.push({ field: f.label, from: binValue_(existing), to: v });
     if (!v) { if (existing) dels.push({ ownerId: host.id, namespace: k.namespace, key: k.key }); return; }
     const type = (existing && existing.type) || metaDefType_(f.owner, k) || f.type;
     let value = v;
@@ -711,7 +713,23 @@ function setItemMeta_(body) {
   }
   const now = shopifyAt_(RECEIVE_API, 'query($id: ID!) { productVariant(id: $id) { id ' + metaQuery_('variant') +
     ' product { id ' + metaQuery_('product') + ' } } }', { id: body.variantId }).productVariant;
+  if (changes.length) logEdits_(body, changes);
   return { ok: true, values: metaValues_(now), changed: sets.length + dels.length };
+}
+
+/* Change log of bin locations and expiry dates edited from the app: one row per changed value, with the old and the
+ * new value (sheet "Edits", kept like the other logs). */
+const EDITS_HEAD = ['Time', 'Where', 'Product', 'SKU', 'Field', 'Old value', 'New value'];
+function logEdits_(body, changes) {
+  try {
+    const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+    let s = ss.getSheetByName('Edits');
+    if (!s) { s = ss.insertSheet('Edits'); s.appendRow(EDITS_HEAD); s.setFrozenRows(1); }
+    const where = body.where === 'receive' ? 'Purchase orders' + (body.po ? ' ' + String(body.po).slice(0, 30) : '') : body.where === 'check' ? 'Check' : 'App';
+    const now = new Date(), txt = function (v) { return "'" + String(v == null ? '' : v).slice(0, 200); };
+    const rows = changes.map(function (c) { return [now, where, txt(body.title || ''), txt(body.sku || ''), c.field, txt(c.from), txt(c.to)]; });
+    s.getRange(s.getLastRow() + 1, 1, rows.length, EDITS_HEAD.length).setValues(rows);
+  } catch (e) { console.error('logEdits_', e.message); }
 }
 // Type of the store's metafield definition (e.g. "date", "single_line_text_field", "list.single_line_text_field")
 function metaDefType_(owner, k) {
@@ -1208,9 +1226,11 @@ function pruneLogs_() {
   const cache = CacheService.getScriptCache();
   if (cache.get('logs_pruned')) return;
   const cutoff = Date.now() - LOG_KEEP_DAYS * 864e5;
-  ['Activity', 'Errors'].forEach(function (name) {
+  ['Activity', 'Errors', 'Edits'].forEach(function (name) {
     try {
-      const s = logSheet_(name), n = s.getLastRow();
+      const s = name === 'Edits' ? (SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'))).getSheetByName('Edits') : logSheet_(name);
+      if (!s) return;
+      const n = s.getLastRow();
       if (n < 2) return;
       const times = s.getRange(2, 1, n - 1, 1).getValues();
       let old = 0;

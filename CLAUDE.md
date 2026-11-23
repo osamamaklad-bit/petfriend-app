@@ -12,6 +12,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   Search), `today/`.
   The main page passes messages between tabs: `pf-hide` (camera off), `pf-show` (refresh) and `pf-open-order`
   (from the Pick list, opens an order in Fulfill).
+- Pages put `[hidden] { display: none !important; }` first in their CSS, so `hidden` beats classes that set display.
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
   live. Data (product names, customers, codes, bins, dates) must carry `data-no-i18n` and `dir="ltr"`.
 - `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
@@ -46,15 +47,18 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   the SKU). Matching is exact (ignoring spaces, dashes, case and leading zeros); real GTINs (valid check digit) also
   match across EAN-13 / UPC-A / UPC-E / ITF-14 / GS1 (01). Different codes must never match.
 - Receive (supplier purchase orders, Admin API 2026-10):
-  - POs are listed newest first. "Remove" only hides a PO in the app (`setPOHidden`, sheet `HiddenPOs`): Shopify's API
+  - POs are listed newest first. No visible remove button: a long press on a PO selects it and shows Remove /
+    Cancel. "Remove" only hides a PO in the app (`setPOHidden`, sheet `HiddenPOs`): Shopify's API
     cannot delete or cancel a purchase order. "Show removed purchase orders" brings it back.
   - Over-receiving is allowed: the extra is added with `inventoryAdjustQuantities`, reason `received`.
   - Rejected and Cancelled counts per item; Rejected needs the item scanned.
   - Draft shipments are marked in transit, then received.
   - Every inventory mutation sends an `@idempotent` key.
-- Bin locations (`custom.bin_location` on the variant and on the product) are **read-only** in the app. Only the
-  product expiry date (`custom.expiry_date`) can be edited. Bins are shown in Fulfill, Receive and the Pick list,
-  and Fulfill and the Pick list sort by bin.
+- Bin locations (`custom.bin_location` on the variant and on the product) can be edited **only in Receive** (Purchase
+  orders tab: "Edit bin / expiry"; the server only accepts bins with `where: 'receive'`). The product expiry date
+  (`custom.expiry_date`) can be edited in Receive and Check. Every edit is logged in the `Edits` sheet (time, where,
+  product, SKU, field, old value, new value; kept 60 days). Bins are shown in Fulfill, Receive and the Pick list, and
+  Fulfill and the Pick list sort by bin.
 - Pick list: **no email**.
   - It is published in the app only, saved in the `PickLists` sheet.
   - Automatic: 10:00–14:00, not on Fridays. The 10:00 list collects everything waiting, then a new list whenever

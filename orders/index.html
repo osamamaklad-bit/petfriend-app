@@ -14,6 +14,8 @@
 <script src="../labels.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
+  /* "hidden" must always win over a class that sets display (e.g. .ordertitle, .bar, .modes) */
+  [hidden] { display: none !important; }
   /* Pet Friend brand: same palette as the Shipments and POS tabs */
   :root {
     --ink: #2a1417;
@@ -94,11 +96,15 @@
   .ordertitle strong { font-size: 20px; }
   .ordertitle span { color: var(--muted); font-size: 14px; }
   #labelsBtn { width: 100%; margin: 0 0 8px; }
-  .ordwrap { display: flex; gap: 6px; align-items: stretch; }
-  .ordwrap .ord { flex: 1; min-width: 0; }
+  .ordwrap { margin-bottom: 8px; border-radius: 14px; }
+  .ordwrap .ord { width: 100%; margin-bottom: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .ordwrap.gone .ord { opacity: .55; border-style: dashed; }
-  .podel { flex: none; align-self: stretch; margin-bottom: 8px; border: 2px solid var(--line); background: var(--card); color: var(--bad); border-radius: 12px; padding: 0 12px; font: inherit; font-size: 13px; font-weight: 700; }
-  .podel.back { color: var(--ok); }
+  .ordwrap.sel .ord { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-bg); }
+  .poacts { display: flex; gap: 8px; justify-content: flex-end; padding: 8px 2px 0; }
+  .poacts button, .poback { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px 14px; font: inherit; font-size: 14px; font-weight: 700; }
+  .poacts .podel { background: var(--bad); border-color: var(--bad); color: var(--on); }
+  .poback { margin-top: 6px; color: var(--ok); font-size: 13px; padding: 4px 10px; }
+  #poHint { color: var(--muted); font-size: 12px; text-align: center; margin: 2px 0 4px; }
   #showHiddenBtn { width: 100%; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; padding: 10px; }
   .trackline { margin: -2px 2px 8px; font-size: 13px; color: var(--muted); }
   .donecard { background: var(--warn-bg); border: 2px solid var(--warn); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-weight: 600; margin-bottom: 8px; }
@@ -233,7 +239,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-22.10</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -263,6 +269,7 @@
       <button id="refreshBtn" aria-label="Refresh">&#8635; Refresh</button>
     </div>
     <div id="orderList"></div>
+    <div id="poHint" hidden>Long-press a purchase order to remove it from the list.</div>
     <button id="showHiddenBtn" type="button" hidden></button>
   </div>
 
@@ -450,6 +457,7 @@
     box.innerHTML = '';
     const hb = $('showHiddenBtn');
     hb.hidden = !nHidden;
+    $('poHint').hidden = !isRcv() || !rows.some((o) => !o.hidden);
     hb.textContent = state.showHidden ? 'Hide removed purchase orders' : 'Show removed purchase orders (' + nHidden + ')';
     if (!rows.length) { box.innerHTML = '<div class="empty">' + (isRcv() ? 'No purchase orders waiting for stock.' : 'No orders to show.') + '</div>'; return; }
     rows.forEach(function (o) {
@@ -462,16 +470,46 @@
       b.querySelector('.a').textContent = o.name;
       b.querySelector('.b').textContent = [o.customer, o.city, o.createdAt && fmtDate(o.createdAt)].filter(Boolean).join(' · ');
       b.querySelector('.q b').textContent = o.qty;
-      b.addEventListener('click', function () { loadOrder(o.name); });
+      b.addEventListener('click', function () {
+        if (Date.now() - (state.lpAt || 0) < 800) return;                 // the tap that ended a long press
+        if (state.selPO) { state.selPO = null; renderOrders(); return; }  // a tap elsewhere cancels the selection
+        loadOrder(o.name);
+      });
       if (!isRcv()) { box.appendChild(b); return; }
-      // purchase orders: Remove (hide from the app on every phone) / Show again
-      const w = document.createElement('div'); w.className = 'ordwrap' + (o.hidden ? ' gone' : '');
-      const d = document.createElement('button'); d.type = 'button'; d.className = 'podel' + (o.hidden ? ' back' : '');
-      d.textContent = o.hidden ? 'Show again' : 'Remove';
-      d.setAttribute('aria-label', (o.hidden ? 'Show again ' : 'Remove ') + o.name);
-      d.addEventListener('click', function () { setPOHidden(o, !o.hidden); });
-      w.appendChild(b); w.appendChild(d); box.appendChild(w);
+      // purchase orders: no remove button in sight. A LONG PRESS selects the order and shows Remove / Cancel;
+      // removed ones (Show removed) get a small Show again.
+      longPress(b, function () { state.selPO = o.id; renderOrders(); feedback('warn'); });
+      const w = document.createElement('div'); w.className = 'ordwrap' + (o.hidden ? ' gone' : '') + (state.selPO === o.id ? ' sel' : '');
+      w.appendChild(b);
+      if (o.hidden) {
+        const d = document.createElement('button'); d.type = 'button'; d.className = 'poback'; d.textContent = 'Show again';
+        d.setAttribute('aria-label', 'Show again ' + o.name);
+        d.addEventListener('click', function () { setPOHidden(o, false); });
+        w.appendChild(d);
+      } else if (state.selPO === o.id) {
+        const bar = document.createElement('div'); bar.className = 'poacts';
+        const del = document.createElement('button'); del.type = 'button'; del.className = 'podel'; del.textContent = 'Remove';
+        del.setAttribute('aria-label', 'Remove ' + o.name);
+        del.addEventListener('click', function () { setPOHidden(o, true); });
+        const no = document.createElement('button'); no.type = 'button'; no.className = 'pocancel'; no.textContent = 'Cancel';
+        no.addEventListener('click', function () { state.selPO = null; renderOrders(); });
+        bar.appendChild(no); bar.appendChild(del); w.appendChild(bar);
+      }
+      box.appendChild(w);
     });
+  }
+
+  // long press (touch or mouse): fires after 600 ms held still; the click that follows is ignored by the card
+  function longPress(el, fn) {
+    let t = null, x = 0, y = 0;
+    const stop = function () { if (t) { clearTimeout(t); t = null; } };
+    el.addEventListener('pointerdown', function (e) {
+      x = e.clientX; y = e.clientY; stop();
+      t = setTimeout(function () { t = null; state.lpAt = Date.now(); fn(); }, 600);
+    });
+    el.addEventListener('pointermove', function (e) { if (Math.abs(e.clientX - x) > 10 || Math.abs(e.clientY - y) > 10) stop(); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) { el.addEventListener(ev, stop); });
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // no browser menu on a long press
   }
 
   async function setPOHidden(o, hide) {
@@ -480,7 +518,7 @@
     state.busy = true;
     try {
       await api({ action: 'setPOHidden', id: o.id, name: o.name, hidden: hide });
-      o.hidden = hide;
+      o.hidden = hide; state.selPO = null;
       renderOrders();
       say(hide ? o.name + ' removed from the list.' : o.name + ' is back in the list.', 'ok');
     } catch (e) { say(e.message, 'bad'); feedback('bad'); }
@@ -752,7 +790,7 @@
       });
       if (isRcv() && it.variantId) {
         const e = document.createElement('button');
-        e.className = 'edit'; e.dataset.edit = idx; e.textContent = 'Edit expiry';
+        e.className = 'edit'; e.dataset.edit = idx; e.textContent = 'Edit bin / expiry';
         binBox.appendChild(e);
       }
       if (!binBox.childNodes.length) binBox.remove();
@@ -786,8 +824,10 @@
     const it = state.items[idx];
     if (!it || state.busy) return;
     const exp = it.expProduct || '';
+    // Purchase orders: bin locations (variant and product) and the expiry date; every change goes to the Edits log
     const v = await pfSettings({ title: it.title, fields: [
-      // only the expiry date can be changed; bin locations are shown but not editable
+      { key: 'binVariant', label: 'Variant bin', value: it.binVariant || '' },
+      { key: 'binProduct', label: 'Product bin', hint: 'Several bins: separate them with commas.', value: it.binProduct || '' },
       // date picker when the stored value is a plain date (or empty); otherwise keep it as text
       { key: 'expProduct', label: 'Expiry date', type: (!exp || /^\d{4}-\d{2}-\d{2}$/.test(exp)) ? 'date' : 'text', value: exp }
     ] });
@@ -795,13 +835,15 @@
     state.busy = true;
     say('Saving ' + it.title + '...');
     try {
-      const data = await api({ action: 'setItemMeta', variantId: it.variantId, values: v });
+      const data = await api({ action: 'setItemMeta', variantId: it.variantId, values: v, where: 'receive',
+        po: state.order && state.order.name, title: it.title, sku: it.sku || it.barcode || '' });
       // the same variant / product can be on several lines: update them all
       state.items.forEach(function (x) {
-        if (x.productId && x.productId === it.productId) x.expProduct = data.values.expProduct;
+        if (x.variantId && x.variantId === it.variantId) x.binVariant = data.values.binVariant;
+        if (x.productId && x.productId === it.productId) { x.binProduct = data.values.binProduct; x.expProduct = data.values.expProduct; }
       });
       render();
-      say(data.changed ? 'Saved expiry date for ' + it.title : 'No changes', 'ok');
+      say(data.changed ? 'Saved for ' + it.title : 'No changes', 'ok');
       feedback('ok');
     } catch (e) {
       say(e.message, 'bad'); feedback('bad');
@@ -923,7 +965,7 @@
     if (!v) return;
     state.busy = true; say('Saving ' + it.title + '...');
     try {
-      const r = await api({ action: 'setItemMeta', variantId: it.variantId, values: v });
+      const r = await api({ action: 'setItemMeta', variantId: it.variantId, values: v, where: 'check', title: it.title, sku: it.sku || it.barcode || '' });
       state.check.items.forEach(function (x) { if (x.productId === it.productId) x.expProduct = r.values.expProduct; });
       renderCheck();
       say(r.changed ? 'Saved expiry date for ' + it.title : 'No changes', 'ok'); feedback('ok');

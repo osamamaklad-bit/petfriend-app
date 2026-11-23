@@ -492,6 +492,22 @@ r = post({ action: 'listPOs', key: 'kkk' });
 check('PO list: a hidden PO is marked hidden (the app leaves it out)', r.orders.map(o => o.name + ':' + o.hidden), r.ok && r.orders.find(o => o.id === 'PO1').hidden === true && r.orders.filter(o => o.hidden).length === 1);
 sheets.HiddenPOs.rows.length = 1;
 
+// ---- bin locations editable from Receive (Purchase orders) only, and every edit logged in "Edits"
+ctx.__meta = { vBin: { value: 'A-12', type: 'single_line_text_field' }, pBin: { value: '["B-3"]', type: 'list.single_line_text_field' }, pExp: { value: '2027-01-01', type: 'date' } };
+const editsBefore = sheets.Edits ? sheets.Edits.getLastRow() : 1;
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'check', title: 'Kitten 2kg', sku: 'RC2', values: { binVariant: 'Z-1', expProduct: '2027-02-02' } });
+check('Edit from Check: expiry saved, bin ignored', ctx.__meta, r.ok && r.changed === 1 && ctx.__meta.vBin.value === 'A-12' && ctx.__meta.pExp.value === '2027-02-02');
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', po: 'PO-1003', title: 'Kitten 2kg', sku: 'RC2', values: { binVariant: 'C-7', binProduct: 'B-3, B-9', expProduct: '2027-02-02' } });
+check('Edit from Purchase orders: variant and product bins saved (list kept as a list)', ctx.__meta, r.ok && r.changed === 2 && ctx.__meta.vBin.value === 'C-7' && ctx.__meta.pBin.value === JSON.stringify(['B-3', 'B-9']));
+const ed = sheets.Edits.rows.slice(editsBefore);
+check('Edits log: one row per changed value, with where, product, SKU, old and new', ed.map(x => x.slice(1).join('|')),
+  ed.length === 3 && ed[0].join('|').includes('Check|Kitten 2kg|RC2|Expiry date|2027-01-01|2027-02-02')
+  && ed[1].slice(1).join('|') === 'Purchase orders PO-1003|Kitten 2kg|RC2|Variant bin|A-12|C-7' && ed[2].slice(4).join('|') === 'Product bin|B-3|B-3, B-9');
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', title: 'Kitten 2kg', values: { binVariant: 'C-7' } });
+check('Edits log: nothing logged when nothing changed', sheets.Edits.getLastRow() - editsBefore, r.ok && r.changed === 0 && sheets.Edits.getLastRow() === editsBefore + 3);
+r = post({ action: 'setItemMeta', key: 'kkk', variantId: 'V1', where: 'receive', title: 'Kitten 2kg', values: { expProduct: 'soon' } });
+check('Edits log: a refused value is not logged', sheets.Edits.getLastRow() - editsBefore, r.ok === false && sheets.Edits.getLastRow() === editsBefore + 3);
+
 console.log('\n--- testAll() output:'); ctx.testAll();
 // access denied once (stale token) -> fresh token + retry
 let denied = 1; const orig = ctx.UrlFetchApp.fetch;

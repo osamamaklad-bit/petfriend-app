@@ -10,6 +10,8 @@
 <script src="../settings.js"></script>
 <script src="../labels.js"></script>
 <style>
+  /* "hidden" must always win over a class that sets display (e.g. .ordertitle, .bar, .modes) */
+  [hidden] { display: none !important; }
   :root {
     --ink: #2a1417; --paper: #e9fcfd; --card: #ffffff; --line: #b9ecf1; --muted: #6b5f62;
     --ok: #15803d; --ok-bg: #dcfce7; --bad: #c00018; --bad-bg: #ffe4e7; --warn: #9a4a00; --accent: #e3031b; --on: #ffffff; --teal: #0f766e;
