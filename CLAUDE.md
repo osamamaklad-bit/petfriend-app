@@ -36,6 +36,8 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   pushes `Code.gs` with clasp to the live project (Script ID and Deployment ID are repo variables, the login is the
   `CLASPRC_JSON` secret), publishes a new version on the same web-app URL, and checks the URL reports the new
   `SERVER_VERSION`. Never paste secrets into code: the repository is public.
+- Edits made in the Apps Script editor are overwritten by the next deploy unless saved to GitHub first:
+  `tools\pull-apps-script.cmd` (Windows: clasp pull, copy to apps-script/Code.gs, run the tests, commit, push).
 
 ## Rules agreed with the owner
 

@@ -95,6 +95,18 @@ One-time setup:
 
 Until the secret and variables exist, the workflow only runs the tests.
 
+### Editing in the Apps Script editor? Save it to GitHub
+
+The automatic deploy copies GitHub's `apps-script/Code.gs` over the editor's code on every push, so a change made in the
+editor is lost unless it is saved to GitHub first. On Windows, from the repository folder:
+
+```
+tools\pull-apps-script.cmd
+```
+
+It pulls GitHub, downloads the editor's code with clasp, copies it to `apps-script/Code.gs`, runs the server tests and,
+if they pass, commits and pushes. Needs Node.js, Git and clasp (`npm install -g @google/clasp`, then `clasp login`).
+
 ## Hosting
 
 The app is static files, so any https host works (GitHub Pages included). Camera scanning needs https.
