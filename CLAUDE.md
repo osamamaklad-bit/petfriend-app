@@ -104,6 +104,15 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   goes to the group). The long Bosta runs use their own cache flag `bosta_busy` (`bostaBusy_`), never the script lock for
   minutes (that blocked adding an employee: "Lock timeout"); the hourly run skips while the job runs. Found 2026-11-25: Tracking only got photographed shipments after 11/11 (wallet feed added nothing). Dated by Bosta's
   shipment date (`ShipmentDate`, column 15 of `Bulky`), else the day it was found.
+- Fulfill, Returns and "Save tracking" (order already fulfilled) REQUIRE two steps (owner's rule), shown as a 2-step panel
+  (`#trackLine.steps`): 1. scan the shipment barcode (Bosta waybill; in Returns the return shipment's barcode, any order;
+  another carrier's label → "Other carrier" asks the carrier name and keeps the code as typed), 2. take its photo
+  (`#photoIn`, camera, shrunk to 1600 px JPEG). The action button stays disabled until both are done, and the server
+  refuses without them (`needShipmentPhoto_`, "Step 1/2" messages, not logged). After Shopify accepts, `saveOrderPhoto_`
+  saves the photo like a Shipments photo (Drive + `Shipments` sheet, note "Order #…"; carrier `Bosta` / `<carrier>` /
+  `… return`; a Bosta fulfill photo also counts in `Tracking`). A photo that fails to save never fails the action.
+- Today (home) starts with big buttons to Orders, Pick list, Shipments, POS, Purchase orders, Return shipments
+  (`pf-go` message to the main page).
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with
   `fulfill` (checked again on the server) as trackingInfo company `Bosta` (+ `BOSTA_TRACK_URL` if set) and added

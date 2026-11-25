@@ -107,6 +107,21 @@
   #poHint { color: var(--muted); font-size: 12px; text-align: center; margin: 2px 0 4px; }
   #showHiddenBtn { width: 100%; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; padding: 10px; }
   .trackline { margin: -2px 2px 8px; font-size: 13px; color: var(--muted); }
+  /* the 2 required steps before Fulfill / Return: 1 scan the shipment barcode, 2 take its photo */
+  .steps { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
+  .steps .st { display: flex; align-items: center; gap: 8px; background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 14px; min-height: 48px; }
+  .steps .st .n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--line); color: var(--ink); }
+  .steps .st.now { border-color: var(--accent); }
+  .steps .st.now .n { background: var(--accent); color: var(--on); }
+  .steps .st.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+  .steps .st.ok .n { background: var(--ok); color: #fff; }
+  .steps .st.off { opacity: .55; }
+  .steps .st .tx { flex: 1; min-width: 0; font-weight: 600; }
+  .steps .st .tx b { font-size: 16px; color: var(--ink); }
+  .steps .st button { flex: none; border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 9px; padding: 6px 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .steps .st button.big { background: var(--accent); border-color: var(--accent); color: var(--on); padding: 9px 14px; }
+  .steps .st button:disabled { opacity: .45; }
+  .steps .st img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; }
   .donecard { background: var(--warn-bg); border: 2px solid var(--warn); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-weight: 600; margin-bottom: 8px; }
   .donecard.existing { background: var(--card); border-color: var(--line); color: var(--muted); font-weight: 400; display: flex; gap: 6px; flex-wrap: wrap; }
   .donecard.existing b { color: var(--ink); }
@@ -244,7 +259,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-27.4</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-28.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -282,7 +297,8 @@
     <strong id="orderName"></strong><span id="orderSummary"></span>
   </div>
   <button class="ghost" id="labelsBtn" hidden>Print labels</button>
-  <div id="trackLine" class="trackline" hidden></div>
+  <div id="trackLine" class="steps" hidden></div>
+  <input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
   <div id="list"></div>
 </main>
 
@@ -409,7 +425,7 @@
         feedback('bad');
         return;
       }
-      state.order = data.order; state.tracking = null;
+      state.order = data.order; state.tracking = null; state.photo = null; state.pendingRef = '';
       if (data.done) { state.order.done = true; state.order.status = data.status; state.order.existing = data.tracking || []; }
       state.items = data.items.map((i) => Object.assign({ got: 0, rej: 0, can: 0, verified: false }, i)); // verified = its code was scanned; rej / can = rejected / cancelled (Receive)
       state.requestId = newRequestId(); // same id if Receive is tapped twice, so stock is never added twice
@@ -601,7 +617,14 @@
     // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
     // A variant can have several barcodes (Shopify 2026): any of them counts
     const matches = state.items.filter((i) => codesOf(i).some((b) => sameCode(code, b)) || (i.sku && sameCode(code, i.sku)));
-    if (!matches.length && !isRcv() && !isRet() && looksLikeWaybill(code)) { checkWaybill(code); return; }
+    if (!matches.length && !isRcv() && !state.tracking) {
+      if (looksLikeWaybill(code)) { checkWaybill(code); return; }
+      // not a product of this order and not a Bosta-like number: maybe another carrier's label (offer it)
+      if (/^[A-Za-z0-9-]{5,40}$/.test(code) && !(/^\d{12,14}$/.test(code) && gtinValid(code))) {
+        state.pendingRef = code; render();
+        say(T('Not a product of this order:') + ' ' + code + '\n' + T('If it is another carrier\'s label, tap Other carrier.'), 'warn'); feedback('warn'); return;
+      }
+    }
     if (state.order.done) { say('Order ' + state.order.name + ' is already fulfilled. Scan its Bosta waybill to add the tracking number.', 'bad'); feedback('bad'); return; }
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
@@ -635,7 +658,7 @@
     } else if (isRet()) {
       say(item.title + ': returning ' + item.got + ' of ' + item.need + (left === 0 ? '. Every returnable item scanned.' : ''), 'ok');
       feedback('ok');
-    } else if (left === 0) { say('All items scanned. Ready to fulfill.', 'ok'); feedback('ok'); }
+    } else if (left === 0) { say(T('All items scanned.') + ' ' + T(readyMsg()), 'ok'); feedback('ok'); }
     else { say(item.title + ': ' + item.got + ' of ' + item.need, item.got === item.need ? 'ok' : 'warn'); feedback(item.got === item.need ? 'ok' : 'warn'); }
   }
 
@@ -660,11 +683,15 @@
     try {
       const w = await api({ action: 'checkWaybill', code: code, orderName: order.name });
       if (state.order !== order) return;
-      if (!w.bosta) { say('Not in this order, and not a Bosta waybill: ' + code, 'bad'); feedback('bad'); return; }
-      if (!w.matches) { say('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + order.name, 'bad'); feedback('bad'); return; }
-      state.tracking = { number: w.tn, state: w.state };
-      render();
-      say(order.done ? 'Bosta waybill ' + w.tn + ' scanned. Tap Save tracking.' : 'Bosta waybill ' + w.tn + ' added. It will be saved with the fulfillment.', 'ok'); feedback('ok');
+      if (!w.bosta) {
+        state.pendingRef = order.done ? '' : code; render();
+        say('Not in this order, and not a Bosta waybill: ' + code + (order.done ? '' : '\n' + T('If it is another carrier\'s label, tap Other carrier.')), 'bad'); feedback('bad'); return;
+      }
+      // a return can come back on its own waybill, so only Fulfill checks that the waybill is this order's
+      if (!w.matches && !isRet()) { say('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + order.name, 'bad'); feedback('bad'); return; }
+      state.tracking = { number: w.tn, state: w.state }; state.pendingRef = '';
+      render(); feedback('ok');
+      say(T('Bosta waybill scanned:') + ' ' + w.tn + '\n' + T(readyMsg()), 'ok');
     } catch (e) { say(e.message, 'bad'); feedback('bad'); }
     finally { state.busy = false; }
   }
@@ -725,16 +752,7 @@
       $('fulfillBtn').disabled = true; return;
     }
     $('orderName').textContent = state.order.name;
-    const tl = $('trackLine');
-    tl.hidden = isRcv() || isRet();
-    tl.className = 'trackline' + (state.tracking ? ' on' : '');
-    tl.innerHTML = '';
-    if (state.tracking) {
-      const t = document.createElement('span'); t.textContent = 'Bosta tracking:';
-      const n = document.createElement('b'); n.textContent = state.tracking.number; n.dir = 'ltr'; n.setAttribute('data-no-i18n', '');
-      const x = document.createElement('button'); x.type = 'button'; x.id = 'trackClear'; x.textContent = '✕'; x.setAttribute('aria-label', 'Remove tracking');
-      tl.appendChild(t); tl.appendChild(n); tl.appendChild(x);
-    } else tl.textContent = 'Scan the Bosta waybill to save its tracking number (optional).';
+    renderSteps();
     $('orderSummary').textContent = isRcv()
       ? [totalGot() + ' received', sumOf((i) => i.rej) && sumOf((i) => i.rej) + ' rejected', sumOf((i) => i.can) && sumOf((i) => i.can) + ' cancelled', totalNeed() + ' expected'].filter(Boolean).join(' · ')
       : isRet()
@@ -828,11 +846,87 @@
         x.appendChild(l); x.appendChild(n); list.appendChild(x);
       }
       $('orderSummary').textContent = 'Already fulfilled';
-      $('fulfillBtn').disabled = !state.tracking;
+      $('fulfillBtn').disabled = !state.tracking || !state.photo;
       return;
     }
-    $('fulfillBtn').disabled = isRcv() ? totalGot() + sumOf((i) => i.rej + i.can) === 0 : isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed());
+    $('fulfillBtn').disabled = isRcv() ? totalGot() + sumOf((i) => i.rej + i.can) === 0
+      : (isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed())) || !state.tracking || !state.photo;   // + the 2 steps
   }
+
+  // ---------- the 2 required steps: 1 scan the shipment barcode, 2 take its photo (Fulfill, Returns, tracking) ----------
+  function renderSteps() {
+    const tl = $('trackLine');
+    tl.hidden = !state.order || isRcv() || isChk();
+    tl.innerHTML = '';
+    if (tl.hidden) return;
+    const ret = isRet(), tr = state.tracking;
+    const mk = function (n, cls) { const d = document.createElement('div'); d.className = 'st ' + cls; const c = document.createElement('span'); c.className = 'n'; c.textContent = n; d.appendChild(c); return d; };
+    const btn = function (text, id, cls) { const b = document.createElement('button'); b.type = 'button'; b.id = id; b.textContent = text; if (cls) b.className = cls; return b; };
+    // step 1
+    const s1 = mk(tr ? '✓' : '1', tr ? 'ok' : 'now'), t1 = document.createElement('div'); t1.className = 'tx';
+    if (tr) {
+      const l = document.createElement('span'); l.textContent = (ret ? 'Return shipment:' : tr.carrier ? 'Shipment (' + tr.carrier + '):' : 'Bosta waybill:') + ' ';
+      const v = document.createElement('b'); v.textContent = tr.number; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
+      t1.appendChild(l); t1.appendChild(v); s1.appendChild(t1); s1.appendChild(btn('✕', 'trackClear'));
+    } else {
+      t1.textContent = ret ? 'Step 1: scan the barcode of the return shipment' : 'Step 1: scan the shipment waybill barcode';
+      s1.appendChild(t1);
+      if (state.pendingRef && !(state.order && state.order.done)) s1.appendChild(btn('Other carrier', 'otherBtn'));
+    }
+    tl.appendChild(s1);
+    // step 2
+    const s2 = mk(state.photo ? '✓' : '2', state.photo ? 'ok' : tr ? 'now' : 'off'), t2 = document.createElement('div'); t2.className = 'tx';
+    if (state.photo) {
+      const im = document.createElement('img'); im.src = state.photo; im.alt = '';
+      s2.appendChild(im); t2.textContent = 'Photo taken'; s2.appendChild(t2); s2.appendChild(btn('Take again', 'photoBtn'));
+    } else {
+      t2.textContent = ret ? 'Step 2: photo of the return shipment' : 'Step 2: photo of the shipment';
+      s2.appendChild(t2);
+      const b = btn('📷 Take photo', 'photoBtn', 'big'); b.disabled = !tr; s2.appendChild(b);
+    }
+    tl.appendChild(s2);
+  }
+  // a photo, made smaller (longest side 1600 px, JPEG) so it uploads fast on mobile data
+  function shrinkPhoto(file) {
+    return new Promise(function (ok, bad) {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); bad(new Error('Could not read the photo. Take it again.')); };
+      img.src = url;
+    });
+  }
+  $('photoIn').addEventListener('change', async function () {
+    const f = this.files && this.files[0]; this.value = '';
+    if (!f || !state.order) return;
+    try {
+      state.photo = await shrinkPhoto(f);
+      render(); feedback('ok');
+      say(readyMsg(), 'ok');
+    } catch (e) { say(e.message, 'bad'); feedback('bad'); }
+  });
+  function readyMsg() {
+    if (!state.tracking) return isRet() ? 'Step 1: scan the barcode of the return shipment' : 'Step 1: scan the shipment waybill barcode';
+    if (!state.photo) return isRet() ? 'Step 2: photo of the return shipment' : 'Step 2: photo of the shipment';
+    if (isRet()) return totalGot() ? 'Ready: tap Return.' : 'Scan the items being returned.';
+    if (state.order && state.order.done) return 'Ready: tap Save tracking.';
+    return totalGot() === totalNeed() ? 'Ready: tap Fulfill.' : 'Scan the remaining items.';
+  }
+  $('trackLine').addEventListener('click', async function (e) {
+    if (e.target.closest('#photoBtn')) { if (state.tracking) $('photoIn').click(); return; }
+    if (e.target.closest('#trackClear')) { state.tracking = null; state.photo = null; state.pendingRef = ''; state.photo = null; render(); say(readyMsg(), 'warn'); return; }
+    if (e.target.closest('#otherBtn')) {
+      const ref = state.pendingRef;
+      const v = await pfSettings({ title: T('Other carrier'), fields: [{ key: 'carrier', label: 'Carrier (Aramex, J&T, courier...)', value: isRet() ? 'Customer' : '' }] });
+      if (!v || !v.carrier) return;
+      state.tracking = { number: ref, carrier: v.carrier.slice(0, 40) }; state.pendingRef = '';
+      render(); feedback('ok'); say(readyMsg(), 'ok');
+    }
+  });
 
   // ---------- bin locations / expiry date (Receive) ----------
   function isExpired(v) {
@@ -1044,9 +1138,9 @@
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Saving tracking ' + tn + ' on ' + name + '...');
     try {
-      const r = await api({ action: 'addOrderTracking', orderName: name, tracking: tn, notify: $('notify').checked });
+      const r = await api({ action: 'addOrderTracking', orderName: name, tracking: tn, photo: state.photo, notify: $('notify').checked });
       feedback('ok');
-      state.order = null; state.items = []; state.tracking = null; render();
+      state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = ''; render();
       say(r.already ? 'Tracking ' + tn + ' was already on order ' + name + '.' : 'Bosta tracking ' + tn + ' added to order ' + name + '.', 'ok');
       loadList();
     } catch (e) {
@@ -1076,7 +1170,7 @@
         items: rcvItems
       });
       feedback('ok');
-      state.order = null; state.items = []; state.tracking = null; render();
+      state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = ''; render();
       say('Received ' + data.received + (data.received === 1 ? ' item' : ' items') + ' from ' + name + ' into stock.' +
         (data.extra ? '\n' + data.extra + ' extra' : '') + (data.rejected ? '\n' + data.rejected + ' rejected.' : '') + (data.canceled ? '\n' + data.canceled + ' cancelled.' : ''), 'ok');
       loadList();
@@ -1100,10 +1194,11 @@
         notify: $('notify').checked,
         restock: restock,
         reason: $('reason').value,
+        orderName: name, shipment: state.tracking.number, carrier: state.tracking.carrier || '', photo: state.photo,
         items: state.items.filter((i) => i.verified && i.got > 0).map((i) => ({ fliId: i.fliId, qty: i.got, locationId: i.locationId || '' }))
       });
       feedback('ok');
-      state.order = null; state.items = []; state.tracking = null; render();
+      state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = ''; render();
       say('Return ' + (data.returnName || '') + ' created for ' + name + (restock ? ', items restocked' : '') +
         '. Issue the refund in Shopify admin.', 'ok');
     } catch (e) {
@@ -1114,6 +1209,7 @@
   async function submitFulfill() {
     if (state.busy) return;
     if (state.items.some((i) => !i.verified)) { say('Scan the barcode of every item first', 'bad'); feedback('bad'); return; }
+    if (!state.tracking || !state.photo) { say(readyMsg(), 'bad'); feedback('bad'); return; }
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Fulfilling ' + state.order.name + '...');
     try {
@@ -1121,12 +1217,12 @@
         action: 'fulfill',
         orderName: state.order.name,
         notify: $('notify').checked,
-        tracking: state.tracking ? state.tracking.number : '',
+        tracking: state.tracking ? state.tracking.number : '', carrier: (state.tracking && state.tracking.carrier) || '', photo: state.photo,
         items: state.items.map((i) => ({ foId: i.foId, foliId: i.foliId, qty: i.got }))
       });
       feedback('ok');
       const name = state.order.name, tn = state.tracking && state.tracking.number;
-      state.order = null; state.items = []; state.tracking = null; render();
+      state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = ''; render();
       say(tn ? 'Order ' + name + ' fulfilled with Bosta tracking ' + tn + '. Scan the next order.' : 'Order ' + name + ' fulfilled. Scan the next order.', 'ok');
       loadList();
     } catch (e) {
@@ -1134,11 +1230,8 @@
     } finally { state.busy = false; }
   }
 
-  $('trackLine').addEventListener('click', function (e) {
-    if (e.target.closest('#trackClear')) { state.tracking = null; render(); say('Tracking removed.', 'warn'); }
-  });
   $('resetBtn').addEventListener('click', function () {
-    state.order = null; state.items = []; state.tracking = null; render();
+    state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = ''; render();
     say(idleMsg());
     renderOrders();
   });
@@ -1160,7 +1253,7 @@
     $('modeLabel').textContent = m === 'return' ? 'Returns' : m === 'receive' ? 'Receive' : m === 'check' ? 'Check' : 'Fulfill';
     state.check = null;
     document.querySelectorAll('#modes button').forEach(function (x) { x.classList.toggle('on', x.dataset.m === m); });
-    state.order = null; state.items = []; state.tracking = null;
+    state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = '';
     render();
     if (!initial) {
       say(idleMsg());
@@ -1205,7 +1298,7 @@
   window.addEventListener('message', async function (e) {
     if (ONLY || e.origin !== location.origin || !e.data || e.data.type !== 'pf-open-order' || state.busy) return;
     if (state.order && hasScans() && !await pfConfirm(T('Discard the scans for ' + state.order.name + '?'), { ok: 'Discard', danger: true })) return;
-    state.order = null; state.items = []; state.tracking = null;
+    state.order = null; state.items = []; state.tracking = null; state.photo = null; state.pendingRef = '';
     if (state.mode !== 'fulfill') setMode('fulfill', true); else render();
     loadOrder(String(e.data.order || ''));
   });

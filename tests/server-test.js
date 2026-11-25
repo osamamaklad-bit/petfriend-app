@@ -149,6 +149,7 @@ const ctx = {
 vm.createContext(ctx); vm.runInContext(code, ctx);
 const clearTok = () => Object.keys(ctx.__cache || {}).filter(k => /^(tok|shopify_token)/.test(k)).forEach(k => delete ctx.__cache[k]);
 const post = b => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(b) } }).getContent());
+const PH = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';   // a shipment photo
 let failed = 0;
 const check = (label, got, ok) => { if (!ok) failed++; console.log((ok ? 'PASS ' : 'FAIL ') + label, ok ? '' : JSON.stringify(got)); };
 let r;
@@ -159,8 +160,16 @@ r = post({ action: 'listOrders', key: 'kkk' }); check('Orders list', r, r.ok && 
 check('Orders uses client-credential token, not SHOPIFY_TOKEN', fetches.at(-1), fetches.at(-1).token !== 'shpat_ship_only');
 r = post({ action: 'listOrders', key: 'nope' }); check('Orders wrong key', r, r.ok === false && r.error === 'Wrong app key');
 r = post({ action: 'getReturnable', key: 'kkk', query: '1001' }); check('Returns: returnable items', r, r.ok && r.items[0].fliId === 'FLI1' && r.items[0].need === 2);
-r = post({ action: 'processReturn', key: 'kkk', orderId: 'gid://Order/1', restock: true, reason: 'DEFECTIVE', items: [{ fliId: 'FLI1', qty: 1, locationId: 'L1' }] });
+r = post({ action: 'processReturn', key: 'kkk', orderId: 'gid://Order/1', orderName: '#1001', restock: true, reason: 'DEFECTIVE', shipment: '2222222222', photo: PH, items: [{ fliId: 'FLI1', qty: 1, locationId: 'L1' }] });
 check('Returns: create + restock', r, r.ok && r.returnName === '#1001-R1' && fetches.some(f => f.q.includes('reverseFulfillmentOrderDispose')));
+check('Returns: the return shipment photo is saved as a return photo (not followed in Tracking)', sheets.Shipments && sheets.Shipments.rows.at(-1),
+  r.photo === true && sheets.Shipments.rows.at(-1)[6] === 'Bosta return' && String(sheets.Shipments.rows.at(-1)[1]) === '2222222222' && !(sheets.Tracking && sheets.Tracking.rows.some(x => String(x[0]) === '2222222222' && x[2] > 0 && false)));
+r = post({ action: 'processReturn', key: 'kkk', orderId: 'gid://Order/1', restock: true, reason: 'DEFECTIVE', photo: PH, items: [{ fliId: 'FLI1', qty: 1, locationId: 'L1' }] });
+check('Returns: refused without the return shipment barcode', r, r.ok === false && /Step 1/.test(r.error));
+r = post({ action: 'processReturn', key: 'kkk', orderId: 'gid://Order/1', restock: true, reason: 'DEFECTIVE', shipment: '2222222222', items: [{ fliId: 'FLI1', qty: 1, locationId: 'L1' }] });
+check('Returns: refused without the photo', r, r.ok === false && /Step 2/.test(r.error));
+r = post({ action: 'processReturn', key: 'kkk', orderId: 'gid://Order/1', restock: false, reason: 'OTHER', shipment: 'RET-77', carrier: 'Customer', photo: PH, items: [{ fliId: 'FLI1', qty: 1, locationId: 'L1' }] });
+check('Returns: another carrier (e.g. brought by the customer) kept as typed', sheets.Shipments.rows.at(-1), r.ok && sheets.Shipments.rows.at(-1)[6] === 'Customer return' && String(sheets.Shipments.rows.at(-1)[1]) === 'RET-77');
 r = post({ fn: 'checkPin', args: ['2222'] }); check('Shipments PIN ok', r, r.result === true);
 r = post({ fn: 'checkPin', args: ['0'] }); check('Shipments wrong PIN', r, r.error === 'Wrong PIN');
 r = post({ fn: 'saveShipment', args: ['2222', '9022895919', ['data:image/jpeg;base64,AA'], 'note', false] }); check('Shipments save photo', r, r.result && r.result.saved === 1);
@@ -344,9 +353,10 @@ check('Fulfill: every barcode of a variant is sent (first one first, no repeats)
 ctx.__bcFail = true; const rbf = post({ action: 'getOrder', key: 'kkk', query: '1007' }); ctx.__bcFail = false;
 check('Fulfill: barcode list failing -> order still opens with the first barcode', rbf, rbf.ok && JSON.stringify(rbf.items.find(i => i.title === 'Shelf A-10').barcodes) === '["3"]');
 check('Fulfill: items sorted by bin (A-2, A-10, B-2, no bin last)', r.items && r.items.map(i => i.title), r.items.map(i => i.title).join() === 'Shelf A-2,Shelf A-10,Shelf B-2,No bin');
-r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 2 }, { foId: 'FO7', foliId: 'L2', qty: 1 }] });
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 2 }, { foId: 'FO7', foliId: 'L2', qty: 1 }] });
 const actRows = (sheets.Activity && sheets.Activity.rows) || [];
-check('Activity: fulfill logged with order and units', actRows.at(-1), r.ok && actRows.at(-1)[1] === 'Orders' && actRows.at(-1)[2] === 'fulfill' && actRows.at(-1)[3] === '#1007' && actRows.at(-1)[4] === 3);
+const fulRow = actRows.filter(x => x[2] === 'fulfill').at(-1) || [];
+check('Activity: fulfill logged with order and units', fulRow, r.ok && fulRow[1] === 'Orders' && fulRow[3] === '#1007' && fulRow[4] === 3);
 check('Activity: returns, receives, pick lists and photos were logged too', [...new Set(actRows.slice(1).map(x => x[1] + '/' + x[2]))],
   ['Orders/return', 'Orders/receive', 'Pick list/manual', 'Shipments/photo'].every(k => actRows.some(x => x[1] + '/' + x[2] === k)));
 const errBefore = (sheets.Errors && sheets.Errors.rows.length) || 0;
@@ -455,7 +465,7 @@ post({ fn: 'saveShipment', args: ['2222', '4444444444', ['data:image/jpeg;base64
 r = post({ fn: 'getShipment', args: ['2222', '4444444444'] });
 check('Search: return photos flagged, carrier stays Bosta', r.result, r.result.returned === true && r.result.carrier === 'Bosta' && r.result.photos.filter(p => p.ret).length === 3 && r.result.photos.filter(p => !p.ret).length === 1);
 r = post({ action: 'dailySummary', key: 'kkk' });
-check('Today: return photos counted apart', r.returnPhotos, r.ok && r.returnPhotos.count === 3 && r.returnPhotos.qty === 4);
+check('Today: return photos counted apart (incl. the 2 from Returns above)', r.returnPhotos, r.ok && r.returnPhotos.count === 5 && r.returnPhotos.qty === 6);
 
 // ---- Fulfill with a Bosta waybill
 r = post({ action: 'checkWaybill', key: 'kkk', code: '2222222222', orderName: '#1007' });
@@ -469,33 +479,46 @@ check('Waybill: a product barcode (13 digits) is looked up by its last 10 digits
 r = post({ action: 'checkWaybill', key: 'kkk', code: 'ABC12', orderName: '#1007' });
 check('Waybill: short or non-number codes are not Bosta (no Bosta call)', r, r.ok && r.bosta === false && !r.tn);
 props.BOSTA_TRACK_URL = 'https://track.example/?n={tn}';
-r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: true, tracking: '2222222222', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: true, tracking: '2222222222', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
 check('Fulfill: Bosta tracking saved on the fulfillment', ctx.__ful.trackingInfo, r.ok && r.tracking === '2222222222' && ctx.__ful.trackingInfo.company === 'Bosta'
   && ctx.__ful.trackingInfo.number === '2222222222' && ctx.__ful.trackingInfo.url === 'https://track.example/?n=2222222222' && ctx.__ful.notifyCustomer === true);
 check('Fulfill: the waybill is followed by the bulky check (Tracking)', sheets.Tracking.rows.some(x => String(x[0]) === '2222222222'), sheets.Tracking.rows.some(x => String(x[0]) === '2222222222'));
-check('Fulfill: tracking in the Activity log', sheets.Activity.rows.at(-1), /2222222222/.test(sheets.Activity.rows.at(-1)[5]));
+check('Fulfill: tracking in the Activity log', sheets.Activity.rows.filter(x => x[2] === 'fulfill').at(-1), /2222222222/.test(sheets.Activity.rows.filter(x => x[2] === 'fulfill').at(-1)[5]));
 delete props.BOSTA_TRACK_URL; ctx.__ful = null;
-r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '3333333333', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '3333333333', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
 check('Fulfill: waybill of another order refused, nothing fulfilled', r, r.ok === false && /for order #1001/.test(r.error) && ctx.__ful === null);
-r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
-check('Fulfill: without a waybill still works (no tracking sent)', ctx.__ful, r.ok && !('trackingInfo' in ctx.__ful));
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: refused without the shipment barcode (step 1), nothing fulfilled', r, r.ok === false && /Step 1/.test(r.error) && ctx.__ful === null);
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: refused without the shipment photo (step 2), not logged as an error', r, r.ok === false && /Step 2/.test(r.error) && ctx.__ful === null && !sheets.Errors.rows.some(x => /Step 2/.test(x[3])));
+const shBefore = (sheets.Shipments ? sheets.Shipments.rows.length : 0);
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+const phRow = sheets.Shipments.rows.at(-1);
+check('Fulfill: the photo is saved with the shipment photos (Drive + Shipments, carrier Bosta, order in the note)', phRow,
+  r.ok && r.photo === true && sheets.Shipments.rows.length === shBefore + 1 && String(phRow[1]) === '2222222222' && phRow[4] === 'Order #1007' && phRow[6] === 'Bosta');
+ctx.__ful = null;
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: 'JD014600003', carrier: 'Aramex', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: another carrier is kept as typed (no Bosta check), photo saved with that carrier, not in Tracking', [ctx.__ful && ctx.__ful.trackingInfo, sheets.Shipments.rows.at(-1)],
+  r.ok && ctx.__ful.trackingInfo.company === 'Aramex' && ctx.__ful.trackingInfo.number === 'JD014600003' && sheets.Shipments.rows.at(-1)[6] === 'Aramex' && !sheets.Tracking.rows.some(x => String(x[0]) === 'JD014600003'));
 
 // ---- Bosta tracking on an order that is already fulfilled
 r = post({ action: 'getOrder', key: 'kkk', query: '1008' });
 check('Fulfilled order: refused without allowDone (unchanged)', r, r.ok === false && /nothing left to fulfill/.test(r.error));
 r = post({ action: 'getOrder', key: 'kkk', query: '1008', allowDone: true });
 check('Fulfilled order: opens as done with its tracking numbers', r, r.ok && r.done === true && r.items.length === 0 && r.order.name === '#1008' && Array.isArray(r.tracking));
-r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888888', notify: true });
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', photo: PH, tracking: '8888888888', notify: true });
 check('Fulfilled order: Bosta number added to the newest live shipment', ctx.__trkUpd, r.ok && ctx.__trkUpd.id === 'FUL1' && ctx.__trkUpd.t.company === 'Bosta' && ctx.__trkUpd.t.number === '8888888888' && ctx.__trkUpd.n === true);
-check('Fulfilled order: logged and followed by the bulky check', sheets.Activity.rows.at(-1), sheets.Activity.rows.at(-1)[2] === 'tracking' && sheets.Tracking.rows.some(x => String(x[0]) === '8888888888'));
+check('Fulfilled order: logged, photo saved and followed by the bulky check', sheets.Activity.rows.slice(-2), sheets.Activity.rows.slice(-2).map(x => x[2]).join() === 'tracking,photo' && sheets.Tracking.rows.some(x => String(x[0]) === '8888888888' && x[2] >= 1));
 r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888888' });
+check('Fulfilled order: refused without the photo', r, r.ok === false && /Step 2/.test(r.error));
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', photo: PH, tracking: '8888888888' });
 check('Fulfilled order: same number again -> already there, nothing sent', r, r.ok && r.already === true);
 ctx.__trkUpd = null;
-r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '8888888889' });
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', photo: PH, tracking: '8888888889' });
 check('Fulfilled order: a second number is added next to the first (never replaced)', ctx.__trkUpd && ctx.__trkUpd.t, r.ok && ctx.__trkUpd.t.numbers.join() === '8888888888,8888888889');
-r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '3333333333' });
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', photo: PH, tracking: '3333333333' });
 check('Fulfilled order: waybill of another order refused', r, r.ok === false && /for order #1001/.test(r.error));
-r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', tracking: '1111111111' });
+r = post({ action: 'addOrderTracking', key: 'kkk', orderName: '#1008', photo: PH, tracking: '1111111111' });
 check('Fulfilled order: number not in Bosta refused', r, r.ok === false && /not a Bosta waybill/.test(r.error));
 
 // ---- purchase orders removed from the app (hidden; Shopify has no delete)

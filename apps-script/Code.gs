@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-27.4';
+const SERVER_VERSION = '2026-11-28.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -308,8 +308,8 @@ function posToday_() {
 const ORDER_ACTIONS = {
   listOrders: function () { return listOrders_(); },
   getOrder: function (r) { return getOrder_(r.query, r.allowDone); },
-  addOrderTracking: function (r) { return addOrderTracking_(r.orderName, r.tracking, r.notify); },
-  fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName, r.tracking); },
+  addOrderTracking: function (r) { return addOrderTracking_(r.orderName, r.tracking, r.notify, r.photo); },
+  fulfill: function (r) { return fulfill_(r.items, r.notify, r.orderName, r.tracking, r.photo, r.carrier); },
   checkWaybill: function (r) { return checkWaybill_(r.code, r.orderName); },
   getReturnable: function (r) { return getReturnable_(r); },
   processReturn: function (r) { return processReturn_(r); },
@@ -478,7 +478,8 @@ function orderFulfillments_(orderName) {
 }
 /** Adds a Bosta tracking number to an order that is already fulfilled (its newest shipment). Same checks as Fulfill:
  *  the number must be a Bosta waybill for this order. Numbers already on the shipment are kept, never replaced. */
-function addOrderTracking_(orderName, code, notify) {
+function addOrderTracking_(orderName, code, notify, photo) {
+  needShipmentPhoto_(code, photo);
   const w = checkWaybill_(code, orderName);
   if (!w.bosta) throw new Error(String(code) + ' is not a Bosta waybill');
   if (!w.matches) throw new Error('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + orderName);
@@ -494,8 +495,8 @@ function addOrderTracking_(orderName, code, notify) {
     .fulfillmentTrackingInfoUpdate;
   userErrors_(r.userErrors);
   logActivity_('Orders', 'tracking', of.order.name, 0, { tracking: w.tn });
-  try { addTracking_([w.tn]); } catch (e) { console.warn('addTracking_', e.message); }
-  return { ok: true, tracking: w.tn, order: of.order.name, numbers: all };
+  const saved = saveOrderPhoto_({ tn: w.tn, photo: photo, order: of.order.name, carrier: 'Bosta' });
+  return { ok: true, tracking: w.tn, order: of.order.name, numbers: all, photo: saved };
 }
 
 function bostaTrackingUrl_(tn) {
@@ -503,13 +504,45 @@ function bostaTrackingUrl_(tn) {
   return t && /^https:\/\//.test(t) ? t.replace('{tn}', encodeURIComponent(tn)) : '';
 }
 
-function fulfill_(items, notify, orderName, tracking) {
+/* Fulfill and Returns need the shipment: its barcode scanned (step 1) and a photo of it (step 2), owner's rule. The
+ * photo is saved like a Shipments photo (Drive + sheet "Shipments"; a Bosta one is also followed by the bulky check). */
+function needShipmentPhoto_(code, photo) {
+  if (!String(code || '').trim()) throw uerr_('Step 1: scan the shipment barcode first');
+  if (!/^data:image\/(jpeg|png|webp);base64,/.test(String(photo || ''))) throw uerr_('Step 2: take the shipment photo first');
+  if (String(photo).length > 8 * 1024 * 1024) throw uerr_('The photo is too large: take it again');
+}
+/** Saves the shipment photo of an order (after Shopify accepted the fulfillment / return). Never fails the action:
+ *  a problem is reported back as photo: false. */
+function saveOrderPhoto_(o) {
+  try {
+    const tn = String(o.tn), now = new Date(), user = Session.getActiveUser().getEmail() || 'app';
+    const lock = LockService.getScriptLock(); lock.waitLock(20000);
+    try {
+      const mime = (/^data:(image\/\w+);/.exec(o.photo) || [])[1] || 'image/jpeg';
+      const file = folder_().createFile(Utilities.newBlob(Utilities.base64Decode(String(o.photo).split(',')[1]), mime,
+        (o.isReturn ? 'RETURN_' : '') + tn.replace(/[^\w-]/g, '_') + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_1.jpg'));
+      carrierCol_().appendRow([now, "'" + tn, file.getId(), file.getUrl(), 'Order ' + (o.order || ''), user, o.carrier + (o.isReturn ? ' return' : '')]);
+      if (!o.isReturn && o.carrier === 'Bosta') {                       // followed by the bulky check, like a Shipments photo
+        const r = findRow_('Tracking', tn), t = sh_('Tracking');
+        if (r) t.getRange(r, 3).setValue(Number(t.getRange(r, 3).getValue()) + 1);
+        else t.appendRow(["'" + tn, now, 1, '', '', false]);
+      }
+    } finally { lock.releaseLock(); }
+    logActivity_('Shipments', o.isReturn ? 'return photo' : 'photo', tn, 1, { order: o.order || '', carrier: o.carrier });
+    return true;
+  } catch (e) { logError_('Shipments', 'order photo', e); return false; }
+}
+
+function fulfill_(items, notify, orderName, tracking, photo, carrier) {
   if (!items || !items.length) return { ok: false, error: 'No items' };
+  needShipmentPhoto_(tracking, photo);
   // a Bosta waybill scanned with the order: checked again here, so only a real Bosta number for this order is saved
   let track = null;
-  if (tracking) {
+  carrier = String(carrier || '').trim().slice(0, 40);
+  if (carrier) track = { company: carrier, number: String(tracking).trim().slice(0, 60) };   // another carrier: kept as typed
+  else if (tracking) {
     const w = checkWaybill_(tracking, orderName);
-    if (!w.bosta) throw new Error(String(tracking) + ' is not a Bosta waybill');
+    if (!w.bosta) throw uerr_(String(tracking) + ' is not a Bosta waybill');
     if (!w.matches) throw new Error('Waybill ' + w.tn + ' is for order ' + w.refOrder + ' in Bosta, not ' + orderName);
     track = { company: 'Bosta', number: w.tn };
     const url = bostaTrackingUrl_(w.tn);
@@ -539,9 +572,9 @@ function fulfill_(items, notify, orderName, tracking) {
     return { ok: false, error: r.userErrors.map(function (u) { return u.message; }).join('; ') };
   }
   logActivity_('Orders', 'fulfill', orderName || '', items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), track ? { tracking: track.number } : null);
-  // the hourly Bosta check now follows this shipment too (size, bulky fee)
-  if (track) try { addTracking_([track.number]); } catch (e) { console.warn('addTracking_', e.message); }
-  return { ok: true, status: r.fulfillment.status, tracking: track ? track.number : '' };
+  // the photo (and, for Bosta, the hourly bulky check) follows this shipment
+  const saved = saveOrderPhoto_({ tn: track.number, photo: photo, order: orderName, carrier: carrier || 'Bosta' });
+  return { ok: true, status: r.fulfillment.status, tracking: track ? track.number : '', photo: saved };
 }
 
 /** Returns: fulfilled items on an order that can still be returned. */
@@ -597,6 +630,17 @@ function getReturnable_(body) {
 function processReturn_(body) {
   const items = (body.items || []).filter(function (i) { return i.fliId && i.qty > 0; });
   if (!body.orderId || !items.length) throw new Error('Nothing to return');
+  needShipmentPhoto_(body.shipment, body.photo);
+  // the return shipment: a Bosta number must exist in Bosta (a misread is caught); another carrier is kept as typed
+  const carrier = String(body.carrier || '').trim().slice(0, 40);
+  let shipTn = String(body.shipment).trim().slice(0, 60);
+  if (!carrier) {
+    shipTn = shipTn.replace(/\D/g, '').slice(-10);
+    if (shipTn.length < 9) throw uerr_('Not a Bosta waybill: ' + body.shipment + '. Scan again, or choose Other carrier.');
+    if (P.getProperty('BOSTA_API_KEY')) {
+      try { bosta_(shipTn); } catch (e) { if (/Bosta (400|404)/.test(e.message)) throw uerr_(shipTn + ' not found in Bosta. Scan again, or choose Other carrier.'); }
+    }
+  }
   const reason = body.reason || 'UNKNOWN';
 
   const created = shopify_(
@@ -652,8 +696,9 @@ function processReturn_(body) {
     }
   }
 
-  logActivity_('Orders', 'return', ret.name, items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), { restock: !!body.restock, reason: reason });
-  return { ok: true, returnName: ret.name };
+  logActivity_('Orders', 'return', ret.name, items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), { restock: !!body.restock, reason: reason, shipment: shipTn });
+  const saved = saveOrderPhoto_({ tn: shipTn, photo: body.photo, order: body.orderName || ret.name, carrier: carrier || 'Bosta', isReturn: true });
+  return { ok: true, returnName: ret.name, photo: saved };
 }
 
 function defaultLocation_() {

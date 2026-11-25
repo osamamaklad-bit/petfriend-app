@@ -151,6 +151,7 @@
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data) return;
     if (e.data === 'pf-home') { goHome(); return; }
+    if (e.data.type === 'pf-go' && PAGES[e.data.tab]) { go(e.data.tab); return; }   // the big buttons on Today
     if (e.data.type !== 'pf-open-order') return;
     go('orders');
     const f = frames.orders, send = function () { try { f.contentWindow.postMessage(e.data, location.origin); } catch (x) {} };
