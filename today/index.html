@@ -88,7 +88,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1>Pet Friend Today<small id="when"></small></h1>
+  <h1>Pet Friend<small id="when"></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 <main>
@@ -135,7 +135,7 @@
   const DASH = new URLSearchParams(location.search).get('view') === 'dashboard';
   document.getElementById('goBtns').hidden = DASH;
   document.getElementById('dash').hidden = !DASH;
-  if (DASH) document.querySelector('header h1').firstChild.textContent = 'Pet Friend Dashboard';
+  if (DASH) document.querySelector('header h1').firstChild.textContent = 'Dashboard';
   else document.getElementById('when').textContent = new Date().toLocaleDateString(window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : [], { weekday: 'long', day: 'numeric', month: 'long' });
   const $ = (id) => document.getElementById(id);
   const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };

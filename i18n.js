@@ -21,7 +21,7 @@
     'Fulfill and returns': 'التجهيز والمرتجعات',
     'Shipment photos': 'صور الشحنات',
     'Pick list': 'قائمة التجميع',
-    'Pet Friend Today': 'بتفريند اليوم',
+    'Pet Friend Today': 'بتفريند',
     "Today's work in one place.": 'أعمال اليوم في مكان واحد.',
     'POS sales': 'مبيعات الكاشير',
     'Orders fulfilled': 'طلبات تم تجهيزها',

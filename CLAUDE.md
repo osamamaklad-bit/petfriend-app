@@ -27,7 +27,7 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   Customers and Tasks moved to big home buttons at the owner's request; all fit from 320px). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
   `pf-swipe` (quick, mostly sideways, not from text boxes / sideways-scrolling lists / the camera / open windows), the main
   page follows `ORDER` (today, orders, picklist, shipments, pos, receive, returns, check, customers, tasks, dashboard) with a
-  slide-in. Home buttons: the one pressed LAST stays red (`.last`, remembered in `pf_home_last`), the others plain. Arabic brand name: بتفريند.
+  slide-in. Home buttons: the one pressed LAST stays red (`.last`, remembered in `pf_home_last`), the others plain. Arabic brand name: بتفريند. Page headers show only the section name (e.g. "الطلبات"); the brand ("بتفريند") is only in the home header (owner's rule).
 - `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
   Each label shows values only, no captions (no "SKU", "EXP", "V:", "P:"): the product / variant name on ONE line (when
   too long: its start + "... " + its end, the end being the variant part after " - ", e.g. "... 100 ml"), SKU and expiry
