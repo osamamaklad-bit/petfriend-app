@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-26.3';
+const SERVER_VERSION = '2026-11-27.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -2020,6 +2020,7 @@ function tgHandle_(u) {
 function tasksMorning() {
   const today = taskToday_();
   try { makeRepeats_(today, false); } catch (e) { logError_('Tasks', 'repeats', e); }
+  try { evalReminder_(today); } catch (e) { logError_('Tasks', 'evaluation reminder', e); }
   // the group: one message with everyone's open tasks
   try {
     const open = tRows_('Tasks').filter(function (t) { return t.Status === 'open'; }), L = [];
@@ -2178,6 +2179,144 @@ function tgGroup_(text, markup) {
   const p = { chat_id: chat, text: String(text).slice(0, 4000), disable_web_page_preview: true };
   if (markup) p.reply_markup = markup;
   return tgApi_('sendMessage', p);
+}
+
+/* =====================================================================================
+ * Monthly evaluation (Tasks tab, "Evaluation"): the social media employee fills her numbers every month (day 23 by
+ * default). Each item is achieved when it reaches its target (higher is better, or lower for response time); an item
+ * past its sanction limit is flagged. Result = achieved items / all items; target met at PASS % (default 66).
+ * Settings (employee, day, pass %, items with targets and sanction limits) are edited by the manager in the app and
+ * kept in the Script Property EVAL_CONFIG. Sheet "Evaluations": one row per month.
+ * ===================================================================================== */
+TASK_SHEETS.Evaluations = ['Id', 'Month', 'EmployeeId', 'Name', 'SubmittedAt', 'SubmittedBy', 'Values', 'Results', 'Pct', 'Met', 'Sanctions'];
+const EVAL_DEFAULT = { employeeId: '', day: 23, pass: 66, items: [
+  { key: 'conv', name: 'Conversations started', nameAr: 'المحادثات الجديدة', unit: 'count', better: 'higher', target: 70, sanction: 0 },
+  { key: 'posts', name: 'Posts', nameAr: 'المنشورات', unit: 'count', better: 'higher', target: 8, sanction: 3 },
+  { key: 'stories', name: 'Stories', nameAr: 'القصص (ستوري)', unit: 'count', better: 'higher', target: 8, sanction: 3 },
+  { key: 'rate', name: 'Response rate', nameAr: 'معدل الرد', unit: 'percent', better: 'higher', target: 96.4, sanction: 95 },
+  { key: 'time', name: 'Response time', nameAr: 'زمن الرد', unit: 'minutes', better: 'lower', target: 90, sanction: 100 },
+  { key: 'follows', name: 'Net follows', nameAr: 'صافي المتابعين الجدد', unit: 'count', better: 'higher', target: 100, sanction: 0 }
+] };
+Object.assign(TASK_ACTIONS, {
+  evalInit: function (r, who) { return evalInit_(who); },
+  evalSave: function (r, who) { return evalSave_(r, who); },
+  evalConfig: function (r, who) { return evalConfigSave_(r, who); }
+});
+function evalConfig_() {
+  try { const c = JSON.parse(P.getProperty('EVAL_CONFIG') || 'null'); if (c && c.items && c.items.length) return c; } catch (e) {}
+  return JSON.parse(JSON.stringify(EVAL_DEFAULT));
+}
+/** "75", "1:15", "1 hr 15m", "1h15", "90 min" -> minutes; "95.2%" -> 95.2 */
+function evalNumber_(v, unit) {
+  const s = String(v == null ? '' : v).trim().toLowerCase().replace(/,/g, '.');
+  if (!s) return null;
+  if (unit === 'minutes') {
+    let m = /^(\d+):(\d{1,2})$/.exec(s);
+    if (m) return +m[1] * 60 + +m[2];
+    m = /^(?:(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours|ساعة|ساعات|س))?\s*(?:(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes|د|دقيقة|دقائق)?)?$/.exec(s);
+    if (m && (m[1] || m[2])) return Math.round((+(m[1] || 0)) * 60 + (+(m[2] || 0)));
+    return NaN;
+  }
+  const n = Number(s.replace(/%$/, '').trim());
+  return isFinite(n) ? n : NaN;
+}
+function evalScore_(cfg, values) {
+  const results = cfg.items.map(function (it) {
+    const v = values[it.key];
+    const ok = it.better === 'lower' ? v <= it.target : v >= it.target;
+    const sanction = it.sanction != null && it.sanction !== '' && (it.better === 'lower' ? v > Number(it.sanction) : v < Number(it.sanction));
+    return { key: it.key, value: v, target: it.target, achieved: ok, sanction: !!sanction };
+  });
+  const got = results.filter(function (x) { return x.achieved; }).length;
+  const pct = Math.round(got / results.length * 100);
+  return { results: results, pct: pct, met: pct >= Number(cfg.pass || 66), sanctions: results.filter(function (x) { return x.sanction; }).map(function (x) { return x.key; }) };
+}
+function evalMonth_(ymd) { return String(ymd || taskToday_()).slice(0, 7); }
+function evalOut_(x) {
+  const j = function (v) { try { return JSON.parse(v || 'null'); } catch (e) { return null; } };
+  return { id: x.Id, month: x.Month, employeeId: x.EmployeeId, name: x.Name, submittedAt: x.SubmittedAt ? new Date(x.SubmittedAt).toISOString() : '',
+    submittedBy: x.SubmittedBy, values: j(x.Values) || {}, results: j(x.Results) || [], pct: Number(x.Pct), met: x.Met === true || x.Met === 'TRUE', sanctions: j(x.Sanctions) || [] };
+}
+function evalInit_(who) {
+  const cfg = evalConfig_(), mine = who.manager || cfg.employeeId === who.id;
+  if (!mine) return { ok: true, allowed: false };
+  const rows = tRows_('Evaluations').map(evalOut_).sort(function (a, b) { return b.month.localeCompare(a.month); });
+  const month = evalMonth_();
+  return { ok: true, allowed: true, role: who.manager ? 'manager' : 'employee', config: cfg, month: month,
+    current: rows.filter(function (x) { return x.month === month; })[0] || null, history: rows.slice(0, 24) };
+}
+function evalSave_(r, who) {
+  const cfg = evalConfig_();
+  if (!who.manager && cfg.employeeId !== who.id) throw uerr_('Only the manager can do this');
+  if (!cfg.employeeId) throw uerr_('Choose who fills the evaluation first');
+  const month = /^\d{4}-\d{2}$/.test(String(r.month || '')) ? r.month : evalMonth_();
+  const values = {};
+  cfg.items.forEach(function (it) {
+    const n = evalNumber_((r.values || {})[it.key], it.unit);
+    if (n == null) throw uerr_('Fill in every item');
+    if (isNaN(n) || n < 0) throw uerr_('Not a number: ' + it.name);
+    values[it.key] = n;
+  });
+  const sc = evalScore_(cfg, values);
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === cfg.employeeId; })[0] || {};
+  const row = withTaskLock_(function () {
+    const old = tRows_('Evaluations').filter(function (x) { return x.Month === month; })[0];
+    const x = Object.assign(old || { Id: tId_('V') }, { Month: month, EmployeeId: cfg.employeeId, Name: emp.Name || '', SubmittedAt: new Date(), SubmittedBy: who.name,
+      Values: JSON.stringify(values), Results: JSON.stringify(sc.results), Pct: sc.pct, Met: sc.met, Sanctions: JSON.stringify(sc.sanctions) });
+    tPut_('Evaluations', x);
+    // the reminder task of this month is done now
+    tRows_('Tasks').forEach(function (t) { if (t.RepeatId === 'EVAL-' + month && t.Status === 'open') { t.Status = 'done'; t.DoneAt = new Date(); t.DoneVia = 'evaluation'; tPut_('Tasks', t); } });
+    return x;
+  });
+  logActivity_('Tasks', 'evaluation', month, sc.pct, { met: sc.met, by: who.name });
+  const fmt = function (it, v) { return it.unit === 'percent' ? v + '%' : it.unit === 'minutes' ? v + ' دقيقة' : String(v); };
+  const L = ['📊 تقييم السوشيال ميديا — ' + month + (emp.Name ? '\n👤 ' + emp.Name : ''), ''];
+  cfg.items.forEach(function (it, i) {
+    const x = sc.results[i];
+    L.push((x.achieved ? '✅ ' : '❌ ') + it.nameAr + ': ' + fmt(it, x.value) + ' / المستهدف ' + fmt(it, it.target) + (x.sanction ? ' ⚠️ تجاوز حد العقوبة' : ''));
+  });
+  L.push('', 'النتيجة: ' + sc.pct + '% — ' + (sc.met ? '✅ حقّق المستهدف' : '❌ لم يحقّق المستهدف') + ' (الحد ' + (cfg.pass || 66) + '%)');
+  if (sc.sanctions.length) L.push('⚠️ بنود تجاوزت حد العقوبة: ' + sc.sanctions.length);
+  tgNotify_('tasks', L.join('\n'));
+  return { ok: true, evaluation: evalOut_(row) };
+}
+function evalConfigSave_(r, who) {
+  needManager_(who);
+  const c = r.config || {}, cur = evalConfig_();
+  const emp = c.employeeId ? tRows_('TaskStaff').filter(function (e) { return e.Id === c.employeeId && e.Active !== false; })[0] : null;
+  if (c.employeeId && !emp) throw uerr_('Choose the employee');
+  const day = Math.round(Number(c.day)), pass = Math.round(Number(c.pass));
+  if (!(day >= 1 && day <= 31)) throw uerr_('Choose the day');
+  if (!(pass >= 1 && pass <= 100)) throw uerr_('The pass mark must be between 1 and 100');
+  const items = cur.items.map(function (it) {
+    const n = (c.items || []).filter(function (x) { return x.key === it.key; })[0] || {};
+    const t = evalNumber_(n.target, it.unit), s = n.sanction === '' || n.sanction == null ? null : evalNumber_(n.sanction, it.unit);
+    if (t == null || isNaN(t)) throw uerr_('Not a number: ' + it.name);
+    if (s != null && isNaN(s)) throw uerr_('Not a number: ' + it.name);
+    return Object.assign({}, it, { target: t, sanction: s });
+  });
+  const cfg = { employeeId: emp ? emp.Id : '', day: day, pass: pass, items: items };
+  P.setProperty('EVAL_CONFIG', JSON.stringify(cfg));
+  logActivity_('Tasks', 'evaluation settings', emp ? emp.Name : '-', 0);
+  return { ok: true, config: cfg };
+}
+/** Morning: on the evaluation day (the last day in shorter months), a task for the employee who fills it. */
+function evalReminder_(ymd) {
+  const cfg = evalConfig_();
+  if (!cfg.employeeId) return false;
+  const di = dayInfo_(ymd), day = Number(cfg.day) || 23;
+  if (!(di.day === day || (day > di.last && di.day === di.last))) return false;
+  const month = evalMonth_(ymd);
+  if (tRows_('Evaluations').some(function (x) { return x.Month === month; })) return false;
+  if (tRows_('Tasks').some(function (t) { return t.RepeatId === 'EVAL-' + month; })) return false;
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === cfg.employeeId && e.Active !== false; })[0];
+  if (!emp) return false;
+  const t = withTaskLock_(function () {
+    return tPut_('Tasks', { Id: tId_('T'), Title: 'تعبئة تقييم السوشيال ميديا لشهر ' + month, Notes: 'من تطبيق بتفريند: تبويب المهام ← التقييم الشهري.',
+      EmployeeId: emp.Id, Due: ymd, Status: 'open', CreatedAt: new Date(), DoneAt: '', DoneVia: '', RepeatId: 'EVAL-' + month });
+  });
+  sendTask_(t, emp, '📊 موعد التقييم الشهري');
+  return true;
 }
 
 /* =====================================================================================

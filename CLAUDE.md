@@ -136,6 +136,14 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   answer) and customer complaints (open → working → resolved with a note; category + channel). The order number is
   checked in Shopify (`reqOrder_`) and its total / fulfillment status shown; a cancel / change on a fulfilled order is
   flagged. Every new entry and status change goes to the group (kind `requests`).
+- Monthly evaluation (Tasks tab, "Evaluation"; actions `evalInit`, `evalSave`, `evalConfig`; sheet `Evaluations`, one
+  row per month; settings in Script Property `EVAL_CONFIG`): the owner's social media sheet: conversations started
+  (target 70), posts (8, sanction below 3), stories (8, below 3), response rate % (96.4, below 95), response time in
+  minutes (90, lower is better, sanction above 100; "1 hr 15m" / "1:15" accepted), net follows (100). An item is
+  achieved when it reaches its target (the owner's sheet marked 95.2% vs 96.4% as achieved; the app does not: told
+  the owner). Result = achieved / all, rounded; target met at `pass` % (66). Only the chosen employee (and the manager)
+  sees and fills it. On `day` (23; last day in shorter months) `tasksMorning` makes her a task (`RepeatId` EVAL-yyyy-MM),
+  closed when she submits; the result goes to the group.
 - Every employee notice also goes to the group: each new task (also before the employee links Telegram), linking,
   finished tasks, and one morning list of everyone's open tasks.
 - Returns don't refund money; refunds are done in Shopify admin.

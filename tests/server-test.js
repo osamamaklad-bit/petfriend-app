@@ -785,6 +785,41 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Requests: a status of another kind is refused', r, r.ok === false);
   r = tp({ action: 'reqInit' });
   check('Requests: the list shows every entry, newest first', r.items.map(x => x.kind + ':' + x.status), r.ok && r.items.length === 3 && r.items[0].kind === 'inspect');
+
+  // ---- Monthly evaluation (social media): the owner's sheet, Aya's numbers
+  r = post({ action: 'evalInit', tpin: '1234' });
+  check('Evaluation: hidden from employees who do not fill it', r, r.ok && r.allowed === false);
+  r = post({ action: 'evalConfig', tpin: '1234', config: { employeeId: mona.id, day: 23, pass: 66 } });
+  check('Evaluation: only the manager sets it up', r, r.ok === false && /Only the manager/.test(r.error));
+  r = tp({ action: 'evalInit' });
+  check('Evaluation: default items from the owner\'s sheet (targets + sanction limits)', r.config.items.map(i => i.key + ':' + i.target + '/' + i.sanction).join(),
+    r.config.items.map(i => i.key + ':' + i.target + '/' + i.sanction).join() === 'conv:70/0,posts:8/3,stories:8/3,rate:96.4/95,time:90/100,follows:100/0' && r.config.pass === 66);
+  r = tp({ action: 'evalConfig', config: { employeeId: mona.id, day: 23, pass: 66, items: r.config.items.map(i => ({ key: i.key, target: String(i.target), sanction: i.sanction })) } });
+  check('Evaluation: manager chooses who fills it', r, r.ok && r.config.employeeId === mona.id);
+  // day 23: the reminder task
+  ctx.__today = '2026-11-23'; ctx.__tg = [];
+  ctx.tasksMorning();
+  const evTask = sheets.Tasks.rows.find(x => x[9] === 'EVAL-2026-11');
+  check('Evaluation: on day 23 a task is made for her and announced (she re-linked earlier, so only the group gets it now)', [evTask && evTask[1], ctx.__tg.map(x => x.body.text.slice(0, 40))], evTask && evTask[5] === 'open' && grp().some(x => /موعد التقييم الشهري — Mona/.test(x.body.text)));
+  ctx.tasksMorning();
+  check('Evaluation: the reminder is made once', sheets.Tasks.rows.filter(x => x[9] === 'EVAL-2026-11').length, sheets.Tasks.rows.filter(x => x[9] === 'EVAL-2026-11').length === 1);
+  r = post({ action: 'evalSave', tpin: '1234', month: '2026-11', values: { conv: '58', posts: '4', stories: '4', rate: '95.20%', time: '1 hr 15m' } });
+  check('Evaluation: every item must be filled', r, r.ok === false && /every item/.test(r.error));
+  r = post({ action: 'evalSave', tpin: '5678', month: '2026-11', values: {} });
+  check('Evaluation: another employee cannot fill it', r, r.ok === false);
+  ctx.__tg = [];
+  r = post({ action: 'evalSave', tpin: '1234', month: '2026-11', values: { conv: '58', posts: '4', stories: '4', rate: '95.20%', time: '1 hr 15m', follows: '48' } });
+  const ev = r.evaluation;
+  check('Evaluation: Aya\'s month -> 1 hr 15m = 75 min achieved, 95.2% < 96.4% not achieved -> 1 of 6 = 17%, target not met, no sanction',
+    ev, r.ok && ev.values.time === 75 && ev.results.map(x => x.achieved ? 1 : 0).join('') === '000010' && ev.pct === 17 && ev.met === false && ev.sanctions.length === 0);
+  check('Evaluation: the result goes to the group with every item', grp().map(x => x.body.text), grp().length === 1 && /تقييم السوشيال ميديا — 2026-11/.test(grp()[0].body.text) && /❌ معدل الرد: 95.2% \/ المستهدف 96.4%/.test(grp()[0].body.text) && /✅ زمن الرد: 75 دقيقة/.test(grp()[0].body.text) && /17% — ❌ لم يحقّق المستهدف/.test(grp()[0].body.text));
+  check('Evaluation: the reminder task is closed when she submits', sheets.Tasks.rows.find(x => x[9] === 'EVAL-2026-11')[5], sheets.Tasks.rows.find(x => x[9] === 'EVAL-2026-11')[5] === 'done');
+  r = post({ action: 'evalSave', tpin: '1234', month: '2026-11', values: { conv: '80', posts: '2', stories: '9', rate: '97', time: '120', follows: '120' } });
+  check('Evaluation: a second save of the same month replaces it; 4 of 6 = 67% met; posts < 3 and time > 100 flagged',
+    r.evaluation, r.ok && r.evaluation.pct === 67 && r.evaluation.met === true && r.evaluation.sanctions.join() === 'posts,time' && sheets.Evaluations.rows.length === 2);
+  r = post({ action: 'evalInit', tpin: '1234' });
+  check('Evaluation: she sees this month and her history', r, r.ok && r.allowed && r.current && r.current.pct === 67 && r.history.length === 1);
+  ctx.__today = undefined;
   delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
 }
 

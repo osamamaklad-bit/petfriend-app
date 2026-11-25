@@ -74,8 +74,16 @@
     border-radius: 10px; background: var(--card); color: var(--ink); }
   .tform textarea { min-height: 70px; resize: vertical; }
   .tform input:focus, .tform select:focus, .tform textarea:focus { outline: none; border-color: var(--accent); }
-  .tform .two { display: flex; gap: 8px; } .tform .two label { flex: 1; min-width: 0; }
+  .tform .two { display: flex; gap: 8px; align-items: flex-end; } .tform .two label { flex: 1; min-width: 0; }
   .tform .hint { display: block; font-weight: 400; font-size: 12px; margin-top: 3px; }
+  .ev .row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .ev .row:last-child { border-bottom: 0; }
+  .ev .row .n { flex: 1; min-width: 0; }
+  .ev .row .v { font-weight: 800; white-space: nowrap; }
+  .ev .row.no .v { color: var(--bad); } .ev .row.yes .v { color: var(--ok); }
+  .ev .row small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .ev .big { font-size: 30px; font-weight: 900; line-height: 1; }
+  .ev .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
   .tform .err { color: var(--bad); font-weight: 600; font-size: 14px; min-height: 1em; }
   .tform .b { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
   .tform .b button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 10px; cursor: pointer; border: 2px solid var(--line); background: var(--card); color: var(--ink); }
@@ -97,6 +105,7 @@
     <button data-v="tasks" class="on">Tasks</button>
     <button data-v="repeats">Recurring</button>
     <button data-v="staff">Staff</button>
+    <button data-v="eval" hidden>Evaluation</button>
   </div>
 
   <section id="vTasks" hidden>
@@ -114,6 +123,10 @@
     <div class="bar"><button class="primary" id="newRepeat">＋ New recurring task</button></div>
     <div id="repeatNote" class="empty" style="padding:0 2px 10px;text-align:start">Recurring tasks are made automatically on their day, early in the morning, and sent to the employee.</div>
     <div class="list" id="repeatList"></div>
+  </section>
+
+  <section id="vEval" hidden>
+    <div id="evalBox"></div>
   </section>
 
   <section id="vStaff" hidden>
@@ -161,11 +174,14 @@
     if (!store.get('pf_tpin')) { say('Open Settings and enter the Tasks pass.', 'bad'); return; }
     if (!quiet) say('Loading...');
     try {
-      const d = await api({ action: 'tasksInit' });
-      state.data = d;
+      const [d, ev] = await Promise.all([api({ action: 'tasksInit' }), api({ action: 'evalInit' }).catch(() => ({ allowed: false }))]);
+      state.data = d; state.ev = ev;
       $('who').textContent = d.role === 'manager' ? T('Manager') : d.me;
       $('who').toggleAttribute('data-no-i18n', d.role !== 'manager');
-      $('seg').hidden = d.role !== 'manager';
+      $('seg').hidden = d.role !== 'manager' && !ev.allowed;
+      document.querySelectorAll('#seg button[data-v=repeats], #seg button[data-v=staff]').forEach((b) => { b.hidden = d.role !== 'manager'; });
+      document.querySelector('#seg button[data-v=eval]').hidden = !ev.allowed;
+      if (state.view === 'eval' && !ev.allowed) state.view = 'tasks';
       render();
       const open = d.tasks.filter((t) => t.status === 'open'), late = open.filter((t) => t.late).length;
       if (d.role === 'manager' && !d.telegram) say('Telegram is not set up yet (TELEGRAM_BOT_TOKEN): tasks are saved, but not sent.', 'bad');
@@ -179,14 +195,15 @@
     const d = state.data;
     if (!d) return;
     const mgr = d.role === 'manager';
-    $('vTasks').hidden = state.view !== 'tasks' && mgr;
-    if (!mgr) $('vTasks').hidden = false;
+    $('vTasks').hidden = state.view !== 'tasks';
+    $('vEval').hidden = state.view !== 'eval';
     $('vRepeats').hidden = !(mgr && state.view === 'repeats');
     $('vStaff').hidden = !(mgr && state.view === 'staff');
     $('newTask').hidden = !mgr;
     document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.view));
     renderTasks();
     if (mgr) { renderRepeats(); renderStaff(); }
+    if (state.ev && state.ev.allowed) renderEval();
   }
   function el(tag, cls, text, noI18n) {
     const e = document.createElement(tag);
@@ -278,6 +295,98 @@
       a.appendChild(btn('Change pass', '', () => editStaff(e)));
       a.appendChild(btn('Remove', 'del', () => delStaff(e)));
       c.appendChild(a); box.appendChild(c);
+    });
+  }
+
+  // ---------- monthly evaluation ----------
+  const unitText = (it, v) => it.unit === 'percent' ? v + '%' : it.unit === 'minutes' ? v + ' ' + T('min') : String(v);
+  const monthName = (m) => new Date(m + '-15T12:00:00').toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
+  function evalCard(e, cfg, title) {
+    const c = el('div', 'card ev');
+    const h = el('div', 'head'), l = el('div');
+    l.appendChild(el('div', 't', title || monthName(e.month), true));
+    if (e.name) l.appendChild(el('div', 'who', e.name, true));
+    h.appendChild(l);
+    const r = el('div'); r.style.textAlign = 'end';
+    r.appendChild(el('div', 'big', e.pct + '%', true));
+    r.appendChild(el('span', 'tag ' + (e.met ? 'ok' : 'late'), e.met ? 'Target met' : 'Target not met'));
+    h.appendChild(r); c.appendChild(h);
+    cfg.items.forEach(function (it) {
+      const x = (e.results || []).filter((y) => y.key === it.key)[0];
+      if (!x) return;
+      const row = el('div', 'row ' + (x.achieved ? 'yes' : 'no')), n = el('div', 'n');
+      n.appendChild(el('span', '', (x.achieved ? '✅ ' : '❌ ') + T(it.name)));
+      const sm = el('small'); sm.appendChild(el('span', '', T('Target') + ' ')); sm.appendChild(el('span', '', unitText(it, x.target), true));
+      if (x.sanction) sm.appendChild(el('span', 'tag late', ' ' + T('Past the sanction limit')));
+      n.appendChild(sm); row.appendChild(n);
+      row.appendChild(el('div', 'v', unitText(it, x.value), true));
+      c.appendChild(row);
+    });
+    if (e.submittedBy) { const m = el('div', 'who'); m.appendChild(el('span', '', T('Filled by') + ' ')); m.appendChild(el('span', '', e.submittedBy, true)); c.appendChild(m); }
+    return c;
+  }
+  function renderEval() {
+    const ev = state.ev, cfg = ev.config, box = $('evalBox'), mgr = ev.role === 'manager';
+    box.innerHTML = '';
+    const who = (state.data.staff || []).filter((e) => e.id === cfg.employeeId)[0];
+    if (mgr) {
+      const s = el('div', 'card');
+      s.appendChild(el('div', 't', 'Evaluation settings'));
+      const w = el('div', 'who');
+      w.appendChild(el('span', '', T('Filled by') + ': ')); w.appendChild(el('span', who ? '' : 'tag warn', who ? who.name : T('Not chosen yet'), !!who));
+      w.appendChild(el('span', '', T('Every month on day') + ' ' + cfg.day));
+      w.appendChild(el('span', '', T('Target met at') + ' ' + cfg.pass + '%'));
+      s.appendChild(w);
+      const a = el('div', 'acts'); a.appendChild(btn('Edit settings', '', editEvalConfig)); s.appendChild(a);
+      box.appendChild(s);
+    }
+    box.appendChild(el('h2', 'sec', monthName(ev.month)));
+    if (ev.current) box.appendChild(evalCard(ev.current, cfg));
+    else {
+      const c = el('div', 'card');
+      c.appendChild(el('div', 't', 'Not filled yet this month.'));
+      box.appendChild(c);
+    }
+    if (cfg.employeeId) {
+      const a = el('div', 'bar'); a.appendChild(btn(ev.current ? 'Edit this month\'s evaluation' : '＋ Fill the evaluation', 'primary', () => fillEval()));
+      box.appendChild(a);
+    }
+    const past = ev.history.filter((x) => x.month !== ev.month);
+    if (past.length) {
+      box.appendChild(el('h2', 'sec', 'Previous months'));
+      past.forEach((x) => box.appendChild(evalCard(x, cfg)));
+    }
+  }
+  async function fillEval() {
+    const ev = state.ev, cfg = ev.config, cur = ev.current;
+    const prev = new Date(ev.month + '-15T12:00:00'); prev.setMonth(prev.getMonth() - 1);
+    const pm = prev.toISOString().slice(0, 7);
+    const v = await form(T('Monthly evaluation'), [{ key: 'month', label: 'Month', type: 'select', options: [[ev.month, monthName(ev.month), true], [pm, monthName(pm), true]], value: ev.month }]
+      .concat(cfg.items.map((it) => ({ key: 'i_' + it.key, label: it.name, value: cur && cur.values[it.key] != null ? String(cur.values[it.key]) : '', required: true, data: true,
+        hint: T('Target') + ': ' + unitText(it, it.target) + (it.unit === 'minutes' ? ' · ' + T('minutes, or like 1:15') : it.unit === 'percent' ? ' · ' + T('a number, like 95.2') : '') }))));
+    if (!v) return;
+    const values = {}; cfg.items.forEach((it) => { values[it.key] = v['i_' + it.key]; });
+    await run('Saving...', async function () {
+      const r = await api({ action: 'evalSave', month: v.month, values: values });
+      await load(true);
+      say(T('Saved and sent to the Telegram group.') + ' ' + r.evaluation.pct + '% — ' + T(r.evaluation.met ? 'Target met' : 'Target not met'), r.evaluation.met ? 'ok' : 'bad');
+    });
+  }
+  async function editEvalConfig() {
+    const cfg = state.ev.config;
+    const fields = [
+      { key: 'employeeId', label: 'Filled by', type: 'select', options: [['', T('Not chosen yet')]].concat(staffOpts()), value: cfg.employeeId || '' },
+      { key: 'day', label: 'Every month on day', type: 'number', min: 1, max: 31, value: String(cfg.day), half: true },
+      { key: 'pass', label: 'Target met at (%)', type: 'number', min: 1, max: 100, value: String(cfg.pass), half: true }];
+    cfg.items.forEach(function (it) {
+      fields.push({ key: 't_' + it.key, label: T(it.name) + ': ' + T('target'), value: String(it.target), half: true, data: true });
+      fields.push({ key: 's_' + it.key, label: it.better === 'lower' ? 'Sanction above' : 'Sanction below', value: it.sanction == null ? '' : String(it.sanction), half: true, data: true });
+    });
+    const v = await form(T('Evaluation settings'), fields);
+    if (!v) return;
+    await run('Saving...', async function () {
+      await api({ action: 'evalConfig', config: { employeeId: v.employeeId, day: v.day, pass: v.pass, items: cfg.items.map((it) => ({ key: it.key, target: v['t_' + it.key], sanction: v['s_' + it.key] })) } });
+      await load(true); say('Saved.', 'ok');
     });
   }
 
