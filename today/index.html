@@ -48,6 +48,9 @@
   /* every button looks the same; it lights up only while pressed (no button stays colored) */
   .go button:active { transform: scale(.98); background: var(--accent); border-color: var(--accent); color: var(--on); }
   .go button:active svg { stroke: var(--on); } .go button:active small { color: var(--on); }
+  /* the button pressed last stays red (it moves to the next one pressed) */
+  .go button.last { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  .go button.last svg { stroke: var(--on); } .go button.last small { color: var(--on); opacity: .9; }
   .go button:focus { outline: none; } .go button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .go button svg { width: 34px; height: 34px; stroke: var(--accent); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; margin-bottom: 6px; }
   .go button span { font-size: 18px; font-weight: 800; line-height: 1.2; }
@@ -349,8 +352,13 @@
 
   $('refreshBtn').addEventListener('click', function () { load(); loadBulky(); });
   // big buttons: the main page opens that tab (Back comes home again)
+  function markLast(tab) {
+    document.querySelectorAll('#goBtns button').forEach(function (x) { x.classList.toggle('last', x.dataset.go === tab); });
+  }
+  markLast(store.get('pf_home_last'));
   $('goBtns').addEventListener('click', function (e) {
     const b = e.target.closest('button[data-go]'); if (!b) return;
+    markLast(b.dataset.go); store.set('pf_home_last', b.dataset.go);
     try { window.parent.postMessage({ type: 'pf-go', tab: b.dataset.go }, location.origin); } catch (x) {}
   });
   $('settingsBtn').addEventListener('click', async function () {

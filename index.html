@@ -41,10 +41,10 @@
   nav .brand { display: none; cursor: pointer; }
   /* phones: 8 tabs share the width; long names wrap onto two lines */
   @media (max-width: 899px) {
-    nav button { flex: 1 1 0; min-width: 0; padding: 8px 0 10px; font-size: 12.5px; letter-spacing: -.2px; line-height: 1.15; text-align: center; overflow-wrap: normal; word-break: normal; hyphens: none; }
-    nav button svg { width: 25px; height: 25px; flex: none; }
+    nav button { flex: 1 1 0; min-width: 0; padding: 7px 0 9px; font-size: 10px; letter-spacing: -.2px; line-height: 1.15; text-align: center; overflow-wrap: normal; word-break: normal; hyphens: none; }
+    nav button svg { width: 22px; height: 22px; flex: none; }
   }
-  @media (max-width: 379px) { nav button { font-size: 11.5px; } }
+  @media (max-width: 379px) { nav button { font-size: 8.5px; letter-spacing: -.3px; } nav button svg { width: 20px; height: 20px; } }
   @media (max-width: 339px) { nav button { overflow-wrap: anywhere; } }
   /* Computer / tablet: tab bar becomes a side bar */
   @media (min-width: 900px) {
@@ -69,8 +69,26 @@
 <div id="frames"></div>
 <nav id="tabs" aria-label="Tools">
   <img class="brand" src="icon-192.png" alt="Pet Friend" title="Home" role="button" tabindex="0">
+  <button data-t="pos" aria-label="Point of sale">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M7 8h4"/></svg>POS
+  </button>
   <button data-t="check" aria-label="Check a product">
     <svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M8 8v8M11 8v8M14 8v8M17 8v5"/></svg>Check
+  </button>
+  <button data-t="orders" aria-label="Fulfill and returns">
+    <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></svg>Orders
+  </button>
+  <button data-t="receive" aria-label="Purchase orders">
+    <svg viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="17.5" r="1.7"/><circle cx="17" cy="17.5" r="1.7"/></svg>Purchase orders
+  </button>
+  <button data-t="picklist" aria-label="Pick list">
+    <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10l1.5 1.5L13 9M9 16l1.5 1.5L13 15M15 11h1M15 17h1"/></svg>Pick list
+  </button>
+  <button data-t="shipments" aria-label="Shipment photos">
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Shipments
+  </button>
+  <button data-t="returns" aria-label="Return shipments">
+    <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5v-3M9 17l-3-3 3-3M6 14h7"/></svg>Return shipments
   </button>
   <button data-t="customers" aria-label="Customer service">
     <svg viewBox="0 0 24 24"><path d="M4 14v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="13" width="4" height="6" rx="1.5"/><rect x="17" y="13" width="4" height="6" rx="1.5"/><path d="M19 19c0 1.5-2 2.5-5 2.5"/></svg>Customers

@@ -23,11 +23,11 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
   has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
   (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
-  home. Tab bar: only what is NOT on the home screen: Check · Customers · Tasks (owner's rule: no duplicates of the home
-  buttons). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
+  home. Tab bar (owner wants ALL of them, small icons, as before; removing the ones on the home screen was undone):
+  POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments · Customers · Tasks (all fit from 320px). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
   `pf-swipe` (quick, mostly sideways, not from text boxes / sideways-scrolling lists / the camera / open windows), the main
   page follows `ORDER` (today, orders, picklist, shipments, pos, receive, returns, check, customers, tasks, dashboard) with a
-  slide-in. Home buttons all look the same; one lights up only while pressed. Arabic brand name: بتفريند.
+  slide-in. Home buttons: the one pressed LAST stays red (`.last`, remembered in `pf_home_last`), the others plain. Arabic brand name: بتفريند.
 - `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
   Each label shows values only, no captions (no "SKU", "EXP", "V:", "P:"): the product / variant name on ONE line (when
   too long: its start + "... " + its end, the end being the variant part after " - ", e.g. "... 100 ml"), SKU and expiry
