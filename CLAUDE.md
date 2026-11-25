@@ -6,7 +6,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 ## Layout
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
-  `pos/`, `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Check),
+  `pos/`, `tasks/` (staff tasks), `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Check),
   `receive` (= `orders/index.html?only=receive`: purchase orders),
   `picklist/`, `shipments/` (outgoing: Save + Search), `returns` (= `shipments/index.html?only=returns`: Save return +
   Search), `today/`.
@@ -22,7 +22,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
   has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
   (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
-  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (all fit at once on
+  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments · Tasks (all fit at once on
   phones with smaller icons and wrapping names, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
 - `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
   Each label shows values only, no captions (no "SKU", "EXP", "V:", "P:"): the product / variant name on ONE line (when
@@ -116,6 +116,18 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   Secrets are always read fresh from Script Properties; saved Shopify tokens are keyed by a fingerprint of their
   Client ID + secret (`tokKey_`), so a changed secret never reuses a token made from the old one, and the POS leaves
   the Orders app fallback as soon as its own secret changes.
+- Tasks (own tab, `tasks/index.html`; server `TASK_ACTIONS`, body `{action, tpin}`): staff tasks with Telegram.
+  - "Tasks pass": the manager's (`MANAGER_PIN`, set from the sheet menu) sees and edits everything; each employee has
+    their own pass, set by the manager in the app and stored only as a salted SHA-256 hash (`TASK_SALT`), and sees only
+    their own tasks. Typing mistakes (`uerr_`) are shown in the app, never logged to Errors / Telegram.
+  - Sheets `TaskStaff`, `Tasks`, `TaskRepeats`. One-time tasks have a due date (+ optional time); recurring tasks are
+    weekly (weekday 1 = Monday .. 7 = Sunday) or monthly (day 29-31 = last day in shorter months), made by
+    `tasksMorning` (09:00) once a day each (`LastMade`), or at once when saved on their day.
+  - Telegram: each employee links by opening `t.me/<bot>?start=<LinkCode>` (Staff: Send link). New / changed tasks
+    are sent to them with a "✅ خلصت" button; every morning a summary of their open tasks with buttons. `tgPoll`
+    (every minute, `getUpdates` with `TG_OFFSET`) handles /start, /tasks and the buttons (only the task's own employee
+    can finish it); a finished task is announced in the group (kind `tasks`). Triggers: `installTasksTriggers`
+    (sheet menu). `tgPoll` reads the bot's messages, so group ids seen are kept in `TG_SEEN_GROUPS` for `telegramFindChat`.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.

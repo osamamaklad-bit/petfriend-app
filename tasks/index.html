@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e3031b">
+<link rel="icon" href="../icon-192.png">
+<title>Pet Friend Tasks</title>
+<script src="../config.js"></script><script src="../i18n.js"></script>
+<script src="../settings.js"></script>
+<style>
+  /* "hidden" must always win over a class that sets display */
+  [hidden] { display: none !important; }
+  :root {
+    --ink: #2a1417; --paper: #e9fcfd; --card: #ffffff; --line: #b9ecf1; --muted: #6b5f62;
+    --ok: #15803d; --ok-bg: #dcfce7; --bad: #c00018; --bad-bg: #ffe4e7; --accent: #e3031b; --on: #ffffff; --soft: #f1fdfe; --warn: #9a3412; --warn-bg: #fff4e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #eaf7f8; --paper: #0f1c1e; --card: #17282b; --line: #27403f; --muted: #8fb0b3;
+      --ok: #4ade80; --ok-bg: #12301f; --bad: #ff6b7a; --bad-bg: #3a1218; --accent: #ff4a5c; --on: #1a0508; --soft: #1d3236; --warn: #fbbf24; --warn-bg: #3a2a0f; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; }
+  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 10px; max-width: 900px; margin: 0 auto; padding: 14px 12px 4px; }
+  header .logo { width: 44px; height: 44px; border-radius: 12px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; }
+  header h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+  header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; }
+  main { max-width: 900px; margin: 0 auto; padding: 8px 12px 40px; }
+
+  #banner { white-space: pre-line; min-height: 44px; display: flex; align-items: center; padding: 10px 14px; border-radius: 10px; font-weight: 600;
+    margin-bottom: 10px; background: var(--card); border: 2px solid var(--line); color: var(--muted); }
+  #banner.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  #banner.bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+
+  .seg { display: flex; background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 10px; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 700; padding: 9px 4px; border-radius: 8px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--on); }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .bar button, .chip { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 14px; font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; }
+  .bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin-bottom: 10px; }
+  .chip { padding: 5px 12px; font-size: 14px; border-radius: 99px; white-space: nowrap; }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+  .card.late { border-color: var(--bad); }
+  .card.done { opacity: .62; }
+  .card .t { font-weight: 800; font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
+  .card.done .t { text-decoration: line-through; }
+  .card .who { color: var(--muted); font-size: 13px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .card .due { font-weight: 700; color: var(--ink); }
+  .card.late .due { color: var(--bad); }
+  .card .notes { font-size: 14px; margin-top: 6px; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); background: var(--soft); border-radius: 8px; padding: 6px 8px; }
+  .card .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .card .acts button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 9px; padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .card .acts button.done { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .card .acts button.del { color: var(--bad); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); }
+  .tag.late { background: var(--bad-bg); color: var(--bad); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .empty { color: var(--muted); text-align: center; padding: 26px 8px; }
+  h2.sec { font-size: 15px; color: var(--muted); margin: 16px 2px 8px; }
+
+  /* the form window (same look as Settings) */
+  .tform { border: 0; border-radius: 14px; padding: 0; width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 30px); color: var(--ink); background: var(--card); box-shadow: 0 12px 40px #0004; }
+  .tform::backdrop { background: #0006; }
+  .tform form { padding: 16px; margin: 0; }
+  .tform h3 { margin: 0 0 12px; font-size: 18px; }
+  .tform label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 11px; }
+  .tform input, .tform select, .tform textarea { display: block; width: 100%; margin-top: 4px; font: inherit; font-size: 17px; padding: 10px 11px; border: 2px solid var(--line);
+    border-radius: 10px; background: var(--card); color: var(--ink); }
+  .tform textarea { min-height: 70px; resize: vertical; }
+  .tform input:focus, .tform select:focus, .tform textarea:focus { outline: none; border-color: var(--accent); }
+  .tform .two { display: flex; gap: 8px; } .tform .two label { flex: 1; min-width: 0; }
+  .tform .hint { display: block; font-weight: 400; font-size: 12px; margin-top: 3px; }
+  .tform .err { color: var(--bad); font-weight: 600; font-size: 14px; min-height: 1em; }
+  .tform .b { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .tform .b button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 10px; cursor: pointer; border: 2px solid var(--line); background: var(--card); color: var(--ink); }
+  .tform .b .ok { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  @media (min-width: 900px) { header, main { max-width: 1000px; } .list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .list .card { margin: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="../icon-192.png" alt="Pet Friend">
+  <h1>Pet Friend Tasks<small id="who"></small></h1>
+  <button id="settingsBtn">Settings</button>
+</header>
+<main>
+  <div id="banner">Open Settings and enter the Tasks pass.</div>
+
+  <!-- manager -->
+  <div class="seg" id="seg" hidden>
+    <button data-v="tasks" class="on">Tasks</button>
+    <button data-v="repeats">Recurring</button>
+    <button data-v="staff">Staff</button>
+  </div>
+
+  <section id="vTasks" hidden>
+    <div class="bar">
+      <button class="primary" id="newTask">＋ New task</button>
+      <button id="refresh1">↻ Refresh</button>
+    </div>
+    <div class="chips" id="empChips"></div>
+    <div class="list" id="openList"></div>
+    <h2 class="sec" id="doneHead" hidden>Done</h2>
+    <div class="list" id="doneList"></div>
+  </section>
+
+  <section id="vRepeats" hidden>
+    <div class="bar"><button class="primary" id="newRepeat">＋ New recurring task</button></div>
+    <div id="repeatNote" class="empty" style="padding:0 2px 10px;text-align:start">Recurring tasks are made automatically on their day, early in the morning, and sent to the employee.</div>
+    <div class="list" id="repeatList"></div>
+  </section>
+
+  <section id="vStaff" hidden>
+    <div class="bar"><button class="primary" id="newStaff">＋ Add employee</button></div>
+    <div class="list" id="staffList"></div>
+  </section>
+</main>
+<script>
+(function () {
+  const API_URL = window.PF_API_URL;
+  const $ = (id) => document.getElementById(id);
+  const T = (s) => (window.pfT ? window.pfT(s) : s);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+  const state = { data: null, view: 'tasks', emp: '', busy: false };
+  const WD = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  function say(msg, kind) { const b = $('banner'); b.className = kind || ''; b.textContent = msg; }
+  async function api(payload) {
+    const pin = store.get('pf_tpin');
+    if (!pin) { openSettings(); throw new Error('Enter the Tasks pass in Settings'); }
+    const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ tpin: pin }, payload)) });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
+  // ---------- dates ----------
+  const loc = () => (window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : []);
+  function dueLabel(due, today) {
+    if (!due) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/.exec(due);
+    if (!m) return due;
+    const d = new Date(+m[1], +m[2] - 1, +m[3]), t = new Date(today + 'T00:00:00');
+    const diff = Math.round((d - t) / 864e5);
+    const day = diff === 0 ? T('Today') : diff === 1 ? T('Tomorrow') : diff === -1 ? T('Yesterday')
+      : d.toLocaleDateString(loc(), { weekday: 'short', day: 'numeric', month: 'short' });
+    return day + (m[4] ? ' ' + m[4] : '');
+  }
+
+  // ---------- load ----------
+  async function load(quiet) {
+    if (!store.get('pf_tpin')) { say('Open Settings and enter the Tasks pass.', 'bad'); return; }
+    if (!quiet) say('Loading...');
+    try {
+      const d = await api({ action: 'tasksInit' });
+      state.data = d;
+      $('who').textContent = d.role === 'manager' ? T('Manager') : d.me;
+      $('who').toggleAttribute('data-no-i18n', d.role !== 'manager');
+      $('seg').hidden = d.role !== 'manager';
+      render();
+      const open = d.tasks.filter((t) => t.status === 'open'), late = open.filter((t) => t.late).length;
+      if (d.role === 'manager' && !d.telegram) say('Telegram is not set up yet (TELEGRAM_BOT_TOKEN): tasks are saved, but not sent.', 'bad');
+      else if (d.role === 'manager' && d.staff && !d.staff.length) say('Start by adding your employees (Staff).', '');
+      else say(open.length ? open.length + (open.length === 1 ? ' open task' : ' open tasks') + (late ? ', ' + late + ' late' : '') + '.' : 'No open tasks.', late ? 'bad' : 'ok');
+    } catch (e) { say(e.message, 'bad'); }
+  }
+
+  // ---------- render ----------
+  function render() {
+    const d = state.data;
+    if (!d) return;
+    const mgr = d.role === 'manager';
+    $('vTasks').hidden = state.view !== 'tasks' && mgr;
+    if (!mgr) $('vTasks').hidden = false;
+    $('vRepeats').hidden = !(mgr && state.view === 'repeats');
+    $('vStaff').hidden = !(mgr && state.view === 'staff');
+    $('newTask').hidden = !mgr;
+    document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.view));
+    renderTasks();
+    if (mgr) { renderRepeats(); renderStaff(); }
+  }
+  function el(tag, cls, text, noI18n) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    if (noI18n) { e.setAttribute('data-no-i18n', ''); e.dir = 'auto'; }
+    return e;
+  }
+  function btn(text, cls, fn) { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', fn); return b; }
+
+  function renderTasks() {
+    const d = state.data, mgr = d.role === 'manager';
+    // employee filter (manager)
+    const chips = $('empChips'); chips.innerHTML = ''; chips.hidden = !mgr || !(d.staff || []).length;
+    if (mgr) {
+      [['', T('All')]].concat((d.staff || []).map((e) => [e.id, e.name])).forEach(function (x) {
+        const n = d.tasks.filter((t) => t.status === 'open' && (!x[0] || t.employeeId === x[0])).length;
+        const c = btn(x[1] + (n ? ' · ' + n : ''), 'chip' + (state.emp === x[0] ? ' on' : ''), function () { state.emp = x[0]; renderTasks(); });
+        if (x[0]) c.setAttribute('data-no-i18n', '');
+        chips.appendChild(c);
+      });
+    }
+    const mine = d.tasks.filter((t) => !state.emp || t.employeeId === state.emp);
+    const open = mine.filter((t) => t.status === 'open'), done = mine.filter((t) => t.status === 'done').sort((a, b) => b.doneAt.localeCompare(a.doneAt));
+    const ol = $('openList'), dl = $('doneList');
+    ol.innerHTML = ''; dl.innerHTML = '';
+    if (!open.length) ol.appendChild(el('div', 'empty', mgr ? 'No open tasks.' : 'No open tasks. Well done!'));
+    open.forEach((t) => ol.appendChild(taskCard(t, mgr)));
+    $('doneHead').hidden = !done.length;
+    done.slice(0, 30).forEach((t) => dl.appendChild(taskCard(t, mgr)));
+  }
+  function taskCard(t, mgr) {
+    const c = el('div', 'card' + (t.status === 'done' ? ' done' : t.late ? ' late' : ''));
+    c.appendChild(el('div', 't', t.title, true));
+    const w = el('div', 'who');
+    if (mgr) { const n = el('span', '', t.employee, true); w.appendChild(n); }
+    const due = el('span', 'due'); due.appendChild(el('span', '', T('Due:') + ' '));
+    const dv = el('span', '', dueLabel(t.due, state.data.today), true); due.appendChild(dv); w.appendChild(due);
+    if (t.status === 'open' && t.late) w.appendChild(el('span', 'tag late', 'Late'));
+    if (t.repeatId) w.appendChild(el('span', 'tag', 'Recurring'));
+    if (t.status === 'done') w.appendChild(el('span', 'tag ok', t.doneVia === 'telegram' ? 'Done on Telegram' : 'Done'));
+    c.appendChild(w);
+    if (t.notes) c.appendChild(el('div', 'notes', t.notes, true));
+    const a = el('div', 'acts');
+    if (t.status === 'open') a.appendChild(btn('✓ Done', 'done', () => setDone(t, true)));
+    else a.appendChild(btn('Not done', '', () => setDone(t, false)));
+    if (mgr) {
+      a.appendChild(btn('Edit', '', () => editTask(t)));
+      a.appendChild(btn('Delete', 'del', () => delTask(t)));
+    }
+    c.appendChild(a);
+    return c;
+  }
+  function freqText(r) {
+    return r.freq === 'monthly' ? T('Every month, day') + ' ' + r.day : T('Every') + ' ' + T(WD[r.day]);
+  }
+  function renderRepeats() {
+    const d = state.data, box = $('repeatList'); box.innerHTML = '';
+    if (!d.repeats.length) box.appendChild(el('div', 'empty', 'No recurring tasks yet.'));
+    d.repeats.forEach(function (r) {
+      const c = el('div', 'card');
+      c.appendChild(el('div', 't', r.title, true));
+      const w = el('div', 'who'); w.appendChild(el('span', '', r.employee, true));
+      w.appendChild(el('span', 'due', freqText(r)));
+      w.appendChild(el('span', '', r.dueDays ? T('Due after') + ' ' + r.dueDays + ' ' + T(r.dueDays === 1 ? 'day' : 'days') : T('Due the same day')));
+      c.appendChild(w);
+      if (r.notes) c.appendChild(el('div', 'notes', r.notes, true));
+      const a = el('div', 'acts');
+      a.appendChild(btn('Edit', '', () => editRepeat(r)));
+      a.appendChild(btn('Delete', 'del', () => delRepeat(r)));
+      c.appendChild(a); box.appendChild(c);
+    });
+  }
+  function renderStaff() {
+    const d = state.data, box = $('staffList'); box.innerHTML = '';
+    if (!d.staff.length) box.appendChild(el('div', 'empty', 'No employees yet.'));
+    d.staff.forEach(function (e) {
+      const c = el('div', 'card');
+      c.appendChild(el('div', 't', e.name, true));
+      const w = el('div', 'who');
+      w.appendChild(el('span', 'tag ' + (e.linked ? 'ok' : 'warn'), e.linked ? 'Telegram linked' : 'Telegram not linked'));
+      const open = d.tasks.filter((t) => t.employeeId === e.id && t.status === 'open').length;
+      w.appendChild(el('span', '', open + ' ' + T(open === 1 ? 'open task' : 'open tasks')));
+      c.appendChild(w);
+      if (!e.linked) c.appendChild(el('div', 'notes', 'Send this link to the employee. They open it on their phone and press Start in Telegram; after that their tasks reach them there.'));
+      const a = el('div', 'acts');
+      if (e.link) a.appendChild(btn(e.linked ? 'Copy link' : 'Send link', e.linked ? '' : 'done', () => shareLink(e)));
+      if (e.linked) a.appendChild(btn('New link', '', () => relink(e)));
+      a.appendChild(btn('Change pass', '', () => editStaff(e)));
+      a.appendChild(btn('Remove', 'del', () => delStaff(e)));
+      c.appendChild(a); box.appendChild(c);
+    });
+  }
+
+  // ---------- the form window ----------
+  function form(title, fields, onInput) {
+    return new Promise(function (resolve) {
+      const d = el('dialog', 'tform'), f = el('form');
+      f.appendChild(el('h3', '', title));
+      const inputs = {};
+      let row = null;
+      fields.forEach(function (x) {
+        const lab = el('label'); lab.appendChild(document.createTextNode(T(x.label)));
+        let i;
+        if (x.type === 'select') {
+          i = el('select');
+          x.options.forEach(function (o) { const op = el('option', '', o[1], o[2]); op.value = o[0]; i.appendChild(op); });
+        } else if (x.type === 'textarea') i = el('textarea');
+        else { i = el('input'); i.type = x.type || 'text'; if (x.type === 'number') { i.min = x.min || 0; i.max = x.max || 999; i.inputMode = 'numeric'; } }
+        if (x.value != null) i.value = x.value;
+        if (x.data) { i.setAttribute('data-no-i18n', ''); i.dir = 'auto'; }
+        i.name = x.key; lab.appendChild(i);
+        if (x.hint) lab.appendChild(el('small', 'hint', x.hint));
+        inputs[x.key] = i; lab.dataset.k = x.key;
+        if (x.half) { if (!row) { row = el('div', 'two'); f.appendChild(row); } row.appendChild(lab); if (row.children.length === 2) row = null; }
+        else { row = null; f.appendChild(lab); }
+      });
+      const err = el('div', 'err'); f.appendChild(err);
+      const b = el('div', 'b'), cancel = btn('Cancel', '', () => { d.close(); }), ok = el('button', 'ok', 'Save'); ok.type = 'submit';
+      b.appendChild(cancel); b.appendChild(ok); f.appendChild(b); d.appendChild(f);
+      let result = null;
+      const vals = () => { const v = {}; Object.keys(inputs).forEach((k) => { v[k] = inputs[k].value.trim(); }); return v; };
+      f.addEventListener('input', () => onInput && onInput(inputs, f));
+      f.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const v = vals(), miss = fields.filter((x) => x.required && !v[x.key] && !f.querySelector('label[data-k="' + x.key + '"]').hidden)[0];
+        if (miss) { err.textContent = T('Fill in:') + ' ' + T(miss.label); return; }
+        result = v; d.close();
+      });
+      d.addEventListener('close', () => { d.remove(); resolve(result); });
+      document.body.appendChild(d); d.showModal();
+      if (onInput) onInput(inputs, f);
+      const first = f.querySelector('input,textarea'); if (first) first.focus();
+    });
+  }
+  const staffOpts = () => state.data.staff.map((e) => [e.id, e.name, true]);
+
+  // ---------- actions ----------
+  async function run(msg, fn) {
+    if (state.busy) return;
+    state.busy = true; say(msg);
+    try { await fn(); } catch (e) { say(e.message, 'bad'); }
+    finally { state.busy = false; }
+  }
+  async function setDone(t, done) {
+    await run('Saving...', async function () {
+      await api({ action: 'taskDone', id: t.id, done: done });
+      await load(true); say(done ? 'Marked done: ' + t.title : 'Opened again: ' + t.title, 'ok');
+    });
+  }
+  async function editTask(t) {
+    if (!state.data.staff.length) { state.view = 'staff'; render(); say('Add an employee first.', 'bad'); return; }
+    const today = state.data.today, m = /^(\S+)(?: (\S+))?/.exec((t && t.due) || today);
+    const v = await form(t ? T('Edit task') : T('New task'), [
+      { key: 'title', label: 'Task', value: t ? t.title : '', required: true, data: true },
+      { key: 'employeeId', label: 'Employee', type: 'select', options: staffOpts(), value: t ? t.employeeId : (state.emp || state.data.staff[0].id) },
+      { key: 'date', label: 'Due date', type: 'date', value: m[1], required: true, half: true },
+      { key: 'time', label: 'Time (optional)', type: 'time', value: m[2] || '', half: true },
+      { key: 'notes', label: 'Notes (optional)', type: 'textarea', value: t ? t.notes : '', data: true }
+    ]);
+    if (!v) return;
+    await run('Saving...', async function () {
+      const r = await api({ action: 'taskSave', task: { id: t && t.id, title: v.title, employeeId: v.employeeId, due: v.date + (v.time ? ' ' + v.time : ''), notes: v.notes } });
+      await load(true);
+      say(r.sent ? 'Saved and sent on Telegram.' : r.linked ? 'Saved. (Not sent: check the Telegram bot.)' : 'Saved. The employee has not linked Telegram yet, so it was not sent.', r.sent ? 'ok' : '');
+    });
+  }
+  async function delTask(t) {
+    if (!(await pfConfirm(T('Delete this task?') + '\n' + t.title, { ok: 'Delete', danger: true }))) return;
+    await run('Deleting...', async function () { await api({ action: 'taskDelete', id: t.id }); await load(true); say('Deleted.', 'ok'); });
+  }
+  async function editRepeat(r) {
+    if (!state.data.staff.length) { state.view = 'staff'; render(); say('Add an employee first.', 'bad'); return; }
+    const days = []; for (let i = 1; i <= 31; i++) days.push([String(i), String(i), true]);
+    const v = await form(r ? T('Edit recurring task') : T('New recurring task'), [
+      { key: 'title', label: 'Task', value: r ? r.title : '', required: true, data: true },
+      { key: 'employeeId', label: 'Employee', type: 'select', options: staffOpts(), value: r ? r.employeeId : state.data.staff[0].id },
+      { key: 'freq', label: 'Repeats', type: 'select', options: [['weekly', T('Every week')], ['monthly', T('Every month')]], value: r ? r.freq : 'weekly' },
+      { key: 'wday', label: 'Day', type: 'select', options: WD.slice(1).map((w, i) => [String(i + 1), T(w)]), value: r && r.freq === 'weekly' ? String(r.day) : '7' },
+      { key: 'mday', label: 'Day of the month', type: 'select', options: days, value: r && r.freq === 'monthly' ? String(r.day) : '1', hint: 'Day 29, 30 or 31: in shorter months, the last day.' },
+      { key: 'dueDays', label: 'Days to finish it', type: 'number', min: 0, max: 60, value: r ? String(r.dueDays) : '0', hint: '0 = the same day.' },
+      { key: 'notes', label: 'Notes (optional)', type: 'textarea', value: r ? r.notes : '', data: true }
+    ], function (inputs, f) {
+      const monthly = inputs.freq.value === 'monthly';
+      f.querySelector('label[data-k="wday"]').hidden = monthly;
+      f.querySelector('label[data-k="mday"]').hidden = !monthly;
+    });
+    if (!v) return;
+    await run('Saving...', async function () {
+      const res = await api({ action: 'repeatSave', repeat: { id: r && r.id, title: v.title, employeeId: v.employeeId, freq: v.freq, day: v.freq === 'monthly' ? v.mday : v.wday, dueDays: v.dueDays, notes: v.notes } });
+      await load(true);
+      say(res.madeToday ? 'Saved. Its day is today, so today\'s task was made and sent.' : 'Saved.', 'ok');
+    });
+  }
+  async function delRepeat(r) {
+    if (!(await pfConfirm(T('Stop this recurring task?') + '\n' + r.title + '\n' + T('Tasks already made stay.'), { ok: 'Delete', danger: true }))) return;
+    await run('Deleting...', async function () { await api({ action: 'repeatDelete', id: r.id }); await load(true); say('Deleted.', 'ok'); });
+  }
+  async function editStaff(e) {
+    const v = await form(e ? T('Change pass') : T('Add employee'), [
+      { key: 'name', label: 'Name', value: e ? e.name : '', required: true, data: true },
+      { key: 'pin', label: e ? 'New pass (empty = keep)' : 'Pass', value: '', required: !e, data: true, hint: 'At least 4 characters. The employee enters it in the Tasks tab Settings to see their tasks.' }
+    ]);
+    if (!v) return;
+    await run('Saving...', async function () {
+      const r = await api({ action: 'staffSave', staff: { id: e && e.id, name: v.name, pin: v.pin } });
+      await load(true);
+      say(e ? 'Saved.' : 'Added. Now send them their Telegram link.', 'ok');
+      if (!e && r.staff && r.staff.link) shareLink(r.staff);
+    });
+  }
+  async function delStaff(e) {
+    if (!(await pfConfirm(T('Remove this employee?') + '\n' + e.name + '\n' + T('Their pass and Telegram link stop working.'), { ok: 'Remove', danger: true }))) return;
+    await run('Removing...', async function () { await api({ action: 'staffDelete', id: e.id }); await load(true); say('Removed.', 'ok'); });
+  }
+  async function relink(e) {
+    if (!(await pfConfirm(T('Make a new Telegram link?') + '\n' + T('Use this when the employee changed phone or number. Tasks stop reaching the old chat until the new link is opened.'), { ok: 'New link' }))) return;
+    await run('Saving...', async function () { const r = await api({ action: 'staffRelink', id: e.id }); await load(true); shareLink(r.staff); });
+  }
+  async function shareLink(e) {
+    const text = T('Pet Friend tasks: open this link and press Start') + '\n' + e.link;
+    try { if (navigator.share) { await navigator.share({ text: text }); say('Link sent.', 'ok'); return; } } catch (x) { if (x && x.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(e.link); say('Link copied. Paste it to the employee (WhatsApp, SMS...).', 'ok'); }
+    catch (x) { pfAlert(e.link, { title: e.name }); }
+  }
+
+  // ---------- events ----------
+  $('seg').addEventListener('click', function (e) { const b = e.target.closest('button[data-v]'); if (!b) return; state.view = b.dataset.v; render(); });
+  $('newTask').addEventListener('click', () => editTask(null));
+  $('newRepeat').addEventListener('click', () => editRepeat(null));
+  $('newStaff').addEventListener('click', () => editStaff(null));
+  $('refresh1').addEventListener('click', () => load());
+  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show' && !state.busy) load(true); });
+  document.addEventListener('pf-lang', render);
+
+  async function openSettings() {
+    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'tpin', label: 'Tasks pass', hint: 'The manager\'s pass, or your own pass from the manager.', secret: true, value: store.get('pf_tpin') }] });
+    if (!v) return;
+    store.set('pf_tpin', v.tpin);
+    state.data = null; state.emp = ''; state.view = 'tasks';
+    if (v.tpin) load();
+  }
+  $('settingsBtn').addEventListener('click', openSettings);
+  load();
+})();
+</script>
+</body>
+</html>

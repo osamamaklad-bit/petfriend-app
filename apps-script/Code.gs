@@ -8,6 +8,7 @@
  *              setItemMeta (edit an item's bin locations / expiry dates),
  *              listPickLists, getPickList, createPickList (pick lists of the orders ready to pick),
  *              dailySummary (today's numbers for the Today tab)
+ *   Tasks      tasksInit, taskSave, taskDone, staffSave, repeatSave ... body {action, tpin, ...}  (staff tasks + Telegram)
  *   Shipments  saveShipment, saveOther, getShipment,     body {fn, args: [pin, ...]}   -> {result}   / {error}
  *              checkPin
  *
@@ -31,6 +32,7 @@
  *     BIN_PRODUCT_METAFIELD  (optional) product bin-location metafield shown in Receive, default custom.bin_location
  *     EXPIRY_METAFIELD       (optional) product expiry-date metafield, default custom.expiry_date
  *     LABELS_FOLDER_ID       (made automatically) the Drive folder for label PDFs
+ *     MANAGER_PIN            the manager's Tasks pass (each employee's own pass is set in the app)
  *     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (optional) Telegram group notifications; TELEGRAM_OFF to silence kinds
  *     EXPIRY_PREV_METAFIELD  (optional) expiry date of the previous batch, default custom.expiry_date_of_previous_batch
  *   Shipments
@@ -59,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-25.2';
+const SERVER_VERSION = '2026-11-26.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -71,6 +73,7 @@ function doPost(e) {
   if (q && q.fn) return json_(shipmentsApi_(q));                                // Shipments: {fn, args}
   if (q && Object.prototype.hasOwnProperty.call(POS_ACTIONS, q.action)) return json_(posApi_(q));
   if (q && Object.prototype.hasOwnProperty.call(ORDER_ACTIONS, q.action)) return json_(ordersApi_(q));
+  if (q && Object.prototype.hasOwnProperty.call(TASK_ACTIONS, q.action)) return json_(tasksApi_(q));
   return json_({ ok: false, error: 'Unknown action' });
 }
 
@@ -1285,7 +1288,7 @@ function logActivity_(part, action, ref, qty, details) {
 }
 function logError_(part, action, err) {
   const msg = String((err && err.message) || err || '');
-  if (/^Wrong (PIN|app key)$/.test(msg)) return;     // someone typing a wrong login is not a fault
+  if (/^Wrong (PIN|app key|Tasks pass)$/.test(msg)) return;     // someone typing a wrong login is not a fault
   try { logSheet_('Errors').appendRow([new Date(), part, action || '', "'" + msg.slice(0, 1000)]); }
   catch (e) { console.error('logError_', e.message); }
   // Telegram: at most one message per part / action every 30 minutes, so a repeating error does not flood the group
@@ -1449,16 +1452,29 @@ function tokKey_(kind) {
   const L = LOGINS[kind];
   return L.cache + '_' + fingerprint_(String(P.getProperty(L.id) || '') + ':' + String(P.getProperty(L.secret) || ''));
 }
-const WATCHED_SECRETS = ['CLIENT_ID', 'CLIENT_SECRET', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET', 'APP_KEY', 'POS_PIN', 'APP_PIN', 'BOSTA_API_KEY', 'TELEGRAM_BOT_TOKEN'];
+const WATCHED_SECRETS = ['CLIENT_ID', 'CLIENT_SECRET', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET', 'APP_KEY', 'POS_PIN', 'APP_PIN', 'MANAGER_PIN', 'BOSTA_API_KEY', 'TELEGRAM_BOT_TOKEN'];
 function onOpen() {
   try {
     SpreadsheetApp.getUi().createMenu('بتفريند')
       .addItem('تحديث بيانات دخول شوبيفاي للكاشير', 'menuSetPosLogin')
       .addItem('تحديث بيانات دخول شوبيفاي للطلبات', 'menuSetOrdersLogin')
       .addSeparator()
+      .addItem('باسورد المدير للمهام', 'menuSetManagerPin')
+      .addItem('تشغيل نظام المهام (تيليجرام)', 'installTasksTriggers')
       .addItem('فحص كل الإعدادات', 'testAll')
       .addToUi();
   } catch (e) { /* not opened from the spreadsheet */ }
+}
+/** Sheet menu: the manager's Tasks pass, saved without the Project Settings page (which can put old secrets back). */
+function menuSetManagerPin() {
+  const ui = SpreadsheetApp.getUi();
+  const a = ui.prompt('باسورد المدير للمهام', 'اكتب باسورد المدير (4 حروف أو أرقام على الأقل). بيه تفتح تاب المهام وتضيف الموظفين والمهام.', ui.ButtonSet.OK_CANCEL);
+  if (a.getSelectedButton() !== ui.Button.OK) return;
+  const pin = String(a.getResponseText() || '').trim();
+  if (pin.length < 4) { ui.alert('❌ الباسورد لازم يبقى 4 حروف أو أرقام على الأقل.'); return; }
+  P.setProperty('MANAGER_PIN', pin);
+  watchSecrets_('saved from the menu');
+  ui.alert('✅ اتحفظ. اكتبه في إعدادات تاب المهام في التطبيق.');
 }
 function menuSetPosLogin() { menuSetLogin_('pos'); }
 function menuSetOrdersLogin() { menuSetLogin_('orders'); }
@@ -1524,7 +1540,7 @@ function watchSecrets_(why) {
  * found with telegramFindChat), TELEGRAM_OFF (optional, comma list of kinds to silence: picklist, bulky, errors,
  * daily). Without a token or chat id nothing is sent. Run installTelegramTrigger once for the 9 pm daily report.
  * ===================================================================================== */
-const TG_KINDS = ['picklist', 'bulky', 'errors', 'daily'];
+const TG_KINDS = ['picklist', 'bulky', 'errors', 'daily', 'tasks'];
 function tgNotify_(kind, text) {
   const off = String(P.getProperty('TELEGRAM_OFF') || '').toLowerCase().split(/[\s,]+/);
   if (off.indexOf(kind) !== -1) return false;
@@ -1554,6 +1570,8 @@ function telegramFindChat() {
     const m = u.message || u.my_chat_member || u.channel_post || {}, c = m.chat;
     if (c && (c.type === 'group' || c.type === 'supergroup')) chats[c.id] = c.title || String(c.id);
   });
+  // once the Tasks inbox runs (tgPoll), it reads the bot's messages first and keeps the groups it saw
+  try { const g = JSON.parse(P.getProperty('TG_SEEN_GROUPS') || '{}'); Object.keys(g).forEach(function (id) { chats[id] = g[id] || id; }); } catch (e) {}
   const ids = Object.keys(chats);
   if (!ids.length) { Logger.log('No group found. Add the bot to the group, write any message in the group, then run this again.'); return; }
   ids.forEach(function (id) { Logger.log('Group: ' + chats[id] + '  id: ' + id); });
@@ -1593,6 +1611,422 @@ function dailyTelegramReport() {
   } catch (e) { L.push('⚠️ تعذر فحص الصلاحية'); }
   L.push(d.errors.count ? '❗ أخطاء اليوم: ' + d.errors.count : '👍 مفيش أخطاء النهارده');
   return tgNotify_('daily', L.join('\n'));
+}
+
+/* =====================================================================================
+ * Tasks: jobs for the staff, reminders and done buttons on Telegram
+ *
+ * Tab "Tasks" in the app. Login "Tasks pass": the manager's pass (MANAGER_PIN in Script Properties) sees and edits
+ * everything; each employee has their own pass (set by the manager in the app, stored only as a hash) and sees only
+ * their own tasks, and can mark them done.
+ * Sheets: TaskStaff (employees), Tasks (every task), TaskRepeats (weekly / monthly tasks that are made on their day).
+ * Telegram (same bot as the group notices): each employee opens the bot once from their link in the app
+ * (t.me/<bot>?start=<code>); after that every new task comes to them with a "done" button, and every morning a summary.
+ * tgPoll (every minute) reads the bot's messages and button taps. Run installTasksTriggers once (or the sheet menu).
+ * ===================================================================================== */
+const TASK_SHEETS = {
+  TaskStaff: ['Id', 'Name', 'PassHash', 'ChatId', 'LinkCode', 'Active', 'CreatedAt'],
+  Tasks: ['Id', 'Title', 'Notes', 'EmployeeId', 'Due', 'Status', 'CreatedAt', 'DoneAt', 'DoneVia', 'RepeatId'],
+  TaskRepeats: ['Id', 'Title', 'Notes', 'EmployeeId', 'Freq', 'Day', 'DueDays', 'Active', 'LastMade', 'CreatedAt']
+};
+const TASK_ACTIONS = {
+  tasksInit: function (r, who) { return tasksInit_(who); },
+  taskSave: function (r, who) { return taskSave_(r, who); },
+  taskDone: function (r, who) { return taskDone_(r, who); },
+  taskDelete: function (r, who) { return taskDelete_(r, who); },
+  staffSave: function (r, who) { return staffSave_(r, who); },
+  staffDelete: function (r, who) { return staffDelete_(r, who); },
+  staffRelink: function (r, who) { return staffRelink_(r, who); },
+  repeatSave: function (r, who) { return repeatSave_(r, who); },
+  repeatDelete: function (r, who) { return repeatDelete_(r, who); }
+};
+const WEEKDAYS_AR = ['', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت', 'الحد'];
+
+function tasksApi_(r) {
+  try {
+    const who = taskWho_(r.tpin);
+    return TASK_ACTIONS[r.action](r, who);
+  } catch (err) {
+    if (!err.user) logError_('Tasks', r.action, err);         // typing mistakes are shown in the app, not logged
+    return { ok: false, error: String(err.message || err) };
+  }
+}
+/** A mistake in what was typed (shown in the app; not an app fault, so not logged / sent to Telegram). */
+function uerr_(msg) { const e = new Error(msg); e.user = true; return e; }
+function passHash_(pin) {
+  let salt = P.getProperty('TASK_SALT');
+  if (!salt) { salt = Utilities.getUuid(); P.setProperty('TASK_SALT', salt); }
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ':' + pin, Utilities.Charset.UTF_8));
+}
+/** The manager (MANAGER_PIN) or one employee (their own pass). */
+function taskWho_(pin) {
+  pin = String(pin || '').trim();
+  const mgr = P.getProperty('MANAGER_PIN');
+  if (!mgr) throw uerr_('Set MANAGER_PIN in Script Properties (the manager\'s Tasks pass)');
+  if (!pin) throw uerr_('Wrong Tasks pass');
+  if (pin === mgr) return { manager: true, name: 'Manager' };
+  const h = passHash_(pin), e = tRows_('TaskStaff').filter(function (x) { return x.Active !== false && x.PassHash === h; })[0];
+  if (!e) throw uerr_('Wrong Tasks pass');
+  return { manager: false, id: e.Id, name: e.Name };
+}
+function needManager_(who) { if (!who.manager) throw uerr_('Only the manager can do this'); }
+
+// ---- sheets as lists of objects (row numbers kept in _row)
+function tSheet_(name) {
+  const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
+  let s = ss.getSheetByName(name);
+  if (!s) { s = ss.insertSheet(name); s.appendRow(TASK_SHEETS[name]); s.setFrozenRows(1); }
+  return s;
+}
+function tRows_(name) {
+  const s = tSheet_(name), n = s.getLastRow(), head = TASK_SHEETS[name];
+  if (n < 2) return [];
+  return s.getRange(2, 1, n - 1, head.length).getValues().map(function (v, i) {
+    const o = { _row: i + 2 };
+    head.forEach(function (h, k) { o[h] = typeof v[k] === 'string' ? v[k].replace(/^'/, '') : v[k]; });
+    return o;
+  }).filter(function (o) { return o.Id; });
+}
+function tCell_(v) {
+  if (v === true || v === false || typeof v === 'number' || v instanceof Date) return v;
+  return v == null || v === '' ? '' : "'" + String(v);        // text stays text (dates, ids, chat ids)
+}
+function tPut_(name, o) {
+  const s = tSheet_(name), head = TASK_SHEETS[name], row = head.map(function (h) { return tCell_(o[h]); });
+  if (o._row) s.getRange(o._row, 1, 1, head.length).setValues([row]);
+  else { s.getRange(s.getLastRow() + 1, 1, 1, head.length).setValues([row]); o._row = s.getLastRow(); }
+  return o;
+}
+function tId_(prefix) { return prefix + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
+function withTaskLock_(fn) {
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+// ---- dates (script time zone): "yyyy-MM-dd" and "yyyy-MM-dd HH:mm" texts
+function taskToday_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+function taskNow_() { return taskToday_() + ' ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm'); }
+function dayInfo_(ymd) {   // weekday 1 = Monday .. 7 = Sunday, day of month, days in the month
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd), d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return { wd: d.getUTCDay() || 7, day: +m[3], last: new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate() };
+}
+function addDays_(ymd, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd), d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  return d.toISOString().slice(0, 10);
+}
+function cleanDue_(v) {
+  v = String(v || '').trim().replace('T', ' ');
+  if (!/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(v)) throw uerr_('Due date must be a date (and optional time)');
+  return v;
+}
+function isLate_(due) { return !!due && (due.length > 10 ? due : due + ' 23:59') < taskNow_(); }
+
+// ---- what the app shows
+function staffOut_(e, bot) {
+  return { id: e.Id, name: e.Name, active: e.Active !== false, linked: !!e.ChatId, link: bot && e.LinkCode ? 'https://t.me/' + bot + '?start=' + e.LinkCode : '' };
+}
+function taskOut_(t, names) {
+  return { id: t.Id, title: t.Title, notes: t.Notes, employeeId: t.EmployeeId, employee: names[t.EmployeeId] || '', due: t.Due, status: t.Status,
+    late: t.Status === 'open' && isLate_(t.Due), createdAt: t.CreatedAt ? new Date(t.CreatedAt).toISOString() : '',
+    doneAt: t.DoneAt ? new Date(t.DoneAt).toISOString() : '', doneVia: t.DoneVia || '', repeatId: t.RepeatId || '' };
+}
+function tasksInit_(who) {
+  const staff = tRows_('TaskStaff'), names = {};
+  staff.forEach(function (e) { names[e.Id] = e.Name; });
+  const since = Date.now() - (who.manager ? 30 : 7) * 864e5;
+  const tasks = tRows_('Tasks').filter(function (t) {
+    if (t.Status === 'cancelled') return false;
+    if (!who.manager && t.EmployeeId !== who.id) return false;
+    return t.Status === 'open' || (t.DoneAt && new Date(t.DoneAt).getTime() >= since);
+  }).map(function (t) { return taskOut_(t, names); })
+    .sort(function (a, b) { return (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1) || String(a.due).localeCompare(String(b.due)); });
+  const out = { ok: true, role: who.manager ? 'manager' : 'employee', me: who.name, today: taskToday_(), tasks: tasks };
+  if (who.manager) {
+    let bot = '';
+    try { bot = tgBotName_(); } catch (e) {}
+    out.bot = bot;
+    out.telegram = !!P.getProperty('TELEGRAM_BOT_TOKEN');
+    out.staff = staff.map(function (e) { return staffOut_(e, bot); }).filter(function (e) { return e.active; });
+    out.repeats = tRows_('TaskRepeats').filter(function (x) { return x.Active !== false; }).map(function (x) {
+      return { id: x.Id, title: x.Title, notes: x.Notes, employeeId: x.EmployeeId, employee: names[x.EmployeeId] || '', freq: x.Freq, day: Number(x.Day), dueDays: Number(x.DueDays) || 0, lastMade: x.LastMade || '' };
+    });
+  }
+  return out;
+}
+
+// ---- tasks
+function taskSave_(r, who) {
+  needManager_(who);
+  const t = r.task || {}, title = String(t.title || '').trim().slice(0, 300);
+  if (!title) throw uerr_('Write the task');
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === t.employeeId && e.Active !== false; })[0];
+  if (!emp) throw uerr_('Choose the employee');
+  const due = cleanDue_(t.due);
+  return withTaskLock_(function () {
+    let row = t.id ? tRows_('Tasks').filter(function (x) { return x.Id === t.id; })[0] : null;
+    if (t.id && !row) throw uerr_('Task not found');
+    const isNew = !row, moved = row && (row.EmployeeId !== emp.Id || row.Due !== due || row.Title !== title);
+    row = Object.assign(row || { Id: tId_('T'), Status: 'open', CreatedAt: new Date(), DoneAt: '', DoneVia: '', RepeatId: '' },
+      { Title: title, Notes: String(t.notes || '').trim().slice(0, 1000), EmployeeId: emp.Id, Due: due });
+    tPut_('Tasks', row);
+    logActivity_('Tasks', isNew ? 'new' : 'edit', title, 0, { employee: emp.Name, due: due });
+    let sent = false;
+    if ((isNew || moved) && row.Status === 'open') sent = sendTask_(row, emp, isNew ? '' : '✏️ تعديل في مهمة');
+    return { ok: true, id: row.Id, sent: sent, linked: !!emp.ChatId };
+  });
+}
+function taskDone_(r, who) {
+  return withTaskLock_(function () {
+    const t = tRows_('Tasks').filter(function (x) { return x.Id === r.id; })[0];
+    if (!t || t.Status === 'cancelled') throw uerr_('Task not found');
+    if (!who.manager && t.EmployeeId !== who.id) throw uerr_('This is not your task');
+    const done = r.done !== false;
+    markTask_(t, done, who.manager ? 'manager' : 'app');
+    return { ok: true, id: t.Id, status: t.Status };
+  });
+}
+function markTask_(t, done, via) {
+  t.Status = done ? 'done' : 'open'; t.DoneAt = done ? new Date() : ''; t.DoneVia = done ? via : '';
+  tPut_('Tasks', t);
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === t.EmployeeId; })[0] || {};
+  logActivity_('Tasks', done ? 'done' : 'reopen', t.Title, 0, { employee: emp.Name || '', via: via });
+  if (done) tgNotify_('tasks', '✅ ' + (emp.Name || '') + ' خلّص: ' + t.Title + (isLate_(t.Due) ? ' (متأخر، الميعاد كان ' + t.Due + ')' : ''));
+}
+function taskDelete_(r, who) {
+  needManager_(who);
+  return withTaskLock_(function () {
+    const t = tRows_('Tasks').filter(function (x) { return x.Id === r.id; })[0];
+    if (!t) throw uerr_('Task not found');
+    t.Status = 'cancelled'; tPut_('Tasks', t);
+    logActivity_('Tasks', 'delete', t.Title, 0);
+    return { ok: true };
+  });
+}
+
+// ---- employees
+function staffSave_(r, who) {
+  needManager_(who);
+  const e = r.staff || {}, name = String(e.name || '').trim().slice(0, 60), pin = String(e.pin || '').trim();
+  if (!name) throw uerr_('Write the employee\'s name');
+  if (pin && pin.length < 4) throw uerr_('The pass must be at least 4 characters');
+  return withTaskLock_(function () {
+    const all = tRows_('TaskStaff');
+    let row = e.id ? all.filter(function (x) { return x.Id === e.id; })[0] : null;
+    if (e.id && !row) throw uerr_('Employee not found');
+    if (!row && !pin) throw uerr_('Choose a pass for the employee');
+    if (pin) {
+      if (pin === P.getProperty('MANAGER_PIN')) throw uerr_('This pass is the manager\'s: choose another');
+      const h = passHash_(pin);
+      if (all.some(function (x) { return x.Active !== false && x.PassHash === h && x.Id !== (row && row.Id); })) throw uerr_('Another employee has this pass: choose another');
+    }
+    row = Object.assign(row || { Id: tId_('E'), ChatId: '', LinkCode: tLinkCode_(), Active: true, CreatedAt: new Date() }, { Name: name });
+    if (pin) row.PassHash = passHash_(pin);
+    tPut_('TaskStaff', row);
+    logActivity_('Tasks', e.id ? 'edit employee' : 'new employee', name, 0);
+    let bot = ''; try { bot = tgBotName_(); } catch (x) {}
+    return { ok: true, staff: staffOut_(row, bot) };
+  });
+}
+function tLinkCode_() { return Utilities.getUuid().replace(/[^a-z0-9]/gi, '').slice(0, 16); }
+function staffDelete_(r, who) {
+  needManager_(who);
+  return withTaskLock_(function () {
+    const e = tRows_('TaskStaff').filter(function (x) { return x.Id === r.id; })[0];
+    if (!e) throw uerr_('Employee not found');
+    e.Active = false; e.PassHash = ''; e.ChatId = ''; e.LinkCode = '';
+    tPut_('TaskStaff', e);
+    logActivity_('Tasks', 'remove employee', e.Name, 0);
+    return { ok: true };
+  });
+}
+/** A new Telegram link for an employee (e.g. new phone): the old chat stops getting tasks until the link is opened. */
+function staffRelink_(r, who) {
+  needManager_(who);
+  return withTaskLock_(function () {
+    const e = tRows_('TaskStaff').filter(function (x) { return x.Id === r.id && x.Active !== false; })[0];
+    if (!e) throw uerr_('Employee not found');
+    e.ChatId = ''; e.LinkCode = tLinkCode_(); tPut_('TaskStaff', e);
+    let bot = ''; try { bot = tgBotName_(); } catch (x) {}
+    return { ok: true, staff: staffOut_(e, bot) };
+  });
+}
+
+// ---- weekly / monthly tasks
+function repeatSave_(r, who) {
+  needManager_(who);
+  const x = r.repeat || {}, title = String(x.title || '').trim().slice(0, 300);
+  if (!title) throw uerr_('Write the task');
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === x.employeeId && e.Active !== false; })[0];
+  if (!emp) throw uerr_('Choose the employee');
+  const freq = x.freq === 'monthly' ? 'monthly' : 'weekly', day = Math.round(Number(x.day));
+  if (freq === 'weekly' ? !(day >= 1 && day <= 7) : !(day >= 1 && day <= 31)) throw uerr_('Choose the day');
+  const dueDays = Math.max(0, Math.min(60, Math.round(Number(x.dueDays) || 0)));
+  const res = withTaskLock_(function () {
+    let row = x.id ? tRows_('TaskRepeats').filter(function (y) { return y.Id === x.id; })[0] : null;
+    if (x.id && !row) throw uerr_('Not found');
+    row = Object.assign(row || { Id: tId_('R'), Active: true, LastMade: '', CreatedAt: new Date() },
+      { Title: title, Notes: String(x.notes || '').trim().slice(0, 1000), EmployeeId: emp.Id, Freq: freq, Day: day, DueDays: dueDays });
+    tPut_('TaskRepeats', row);
+    logActivity_('Tasks', x.id ? 'edit repeat' : 'new repeat', title, 0, { employee: emp.Name, freq: freq, day: day });
+    return row;
+  });
+  // its day is today: make today's task now (after the morning run it would wait a week / month)
+  const made = makeRepeats_(taskToday_(), true, res.Id);
+  return { ok: true, id: res.Id, madeToday: made };
+}
+function repeatDelete_(r, who) {
+  needManager_(who);
+  return withTaskLock_(function () {
+    const x = tRows_('TaskRepeats').filter(function (y) { return y.Id === r.id; })[0];
+    if (!x) throw uerr_('Not found');
+    x.Active = false; tPut_('TaskRepeats', x);
+    logActivity_('Tasks', 'delete repeat', x.Title, 0);
+    return { ok: true };
+  });
+}
+/** Makes today's tasks from the weekly / monthly list (each once a day). notify: send each to its employee now. */
+function makeRepeats_(ymd, notify, onlyId) {
+  const di = dayInfo_(ymd), staff = {};
+  tRows_('TaskStaff').forEach(function (e) { staff[e.Id] = e; });
+  let made = 0;
+  withTaskLock_(function () {
+    tRows_('TaskRepeats').forEach(function (x) {
+      if (x.Active === false || (onlyId && x.Id !== onlyId) || x.LastMade === ymd) return;
+      const day = Number(x.Day), due = x.Freq === 'monthly' ? (di.day === day || (day > di.last && di.day === di.last)) : di.wd === day;
+      const emp = staff[x.EmployeeId];
+      if (!due || !emp || emp.Active === false) return;
+      const t = tPut_('Tasks', { Id: tId_('T'), Title: x.Title, Notes: x.Notes, EmployeeId: x.EmployeeId, Due: addDays_(ymd, Number(x.DueDays) || 0),
+        Status: 'open', CreatedAt: new Date(), DoneAt: '', DoneVia: '', RepeatId: x.Id });
+      x.LastMade = ymd; tPut_('TaskRepeats', x); made++;
+      if (notify) sendTask_(t, emp, '🔁 مهمة دورية');
+    });
+  });
+  return made;
+}
+
+// ---- Telegram: messages to one employee, the bot's inbox (every minute), the morning summary
+function tgApi_(method, payload) {
+  const token = P.getProperty('TELEGRAM_BOT_TOKEN');
+  if (!token) return null;
+  const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true, payload: JSON.stringify(payload || {}) });
+  let j = null; try { j = JSON.parse(res.getContentText()); } catch (e) {}
+  if (!j || !j.ok) { console.error('Telegram ' + method + ' ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300)); return null; }
+  return j.result;
+}
+function tgBotName_() {
+  const c = CacheService.getScriptCache(), hit = c.get('tg_bot_name');
+  if (hit) return hit;
+  const me = tgApi_('getMe');
+  if (!me || !me.username) return '';
+  c.put('tg_bot_name', me.username, 6 * 3600);
+  return me.username;
+}
+function dueText_(due) {
+  if (!due) return '';
+  const di = dayInfo_(due), today = taskToday_();
+  const when = due.slice(0, 10) === today ? 'النهارده' : due.slice(0, 10) === addDays_(today, 1) ? 'بكرة' : WEEKDAYS_AR[di.wd] + ' ' + due.slice(0, 10);
+  return when + (due.length > 10 ? ' الساعة ' + due.slice(11) : '');
+}
+function taskLine_(t) {
+  return (isLate_(t.Due) ? '⛔ ' : '▫️ ') + t.Title + '\n   ⏰ ' + dueText_(t.Due) + (isLate_(t.Due) ? ' (متأخرة)' : '');
+}
+function doneButton_(t) { return { text: '✅ خلصت: ' + String(t.Title).slice(0, 40), callback_data: 'td:' + t.Id }; }
+/** One task to its employee, with a "done" button. False when the employee has not linked Telegram (or no bot). */
+function sendTask_(t, emp, head) {
+  if (!emp || !emp.ChatId) return false;
+  const text = (head || '📌 مهمة جديدة') + '\n\n' + t.Title + (t.Notes ? '\n\n📝 ' + t.Notes : '') + '\n\n⏰ آخر ميعاد: ' + dueText_(t.Due);
+  return !!tgApi_('sendMessage', { chat_id: emp.ChatId, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [[{ text: '✅ خلصت', callback_data: 'td:' + t.Id }]] } });
+}
+function sendOpenList_(emp, head) {
+  const open = tRows_('Tasks').filter(function (t) { return t.EmployeeId === emp.Id && t.Status === 'open'; })
+    .sort(function (a, b) { return String(a.Due).localeCompare(String(b.Due)); });
+  if (!open.length) return tgApi_('sendMessage', { chat_id: emp.ChatId, text: (head ? head + '\n\n' : '') + 'مفيش مهام مفتوحة 👍' });
+  const shown = open.slice(0, 25);
+  return tgApi_('sendMessage', { chat_id: emp.ChatId,
+    text: ((head ? head + '\n\n' : '') + shown.map(taskLine_).join('\n') + (open.length > 25 ? '\n… و' + (open.length - 25) + ' كمان في التطبيق' : '')).slice(0, 4000),
+    reply_markup: { inline_keyboard: shown.map(function (t) { return [doneButton_(t)]; }) } });
+}
+/** Time trigger, every minute: the bot's new messages (employees linking with /start <code>, /tasks) and "done" taps. */
+function tgPoll() {
+  if (!P.getProperty('TELEGRAM_BOT_TOKEN')) return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return;                       // the previous run is still busy
+  let ups;
+  try {
+    const offset = Number(P.getProperty('TG_OFFSET')) || 0;
+    ups = tgApi_('getUpdates', { offset: offset, timeout: 0, allowed_updates: ['message', 'callback_query'] }) || [];
+    if (ups.length) P.setProperty('TG_OFFSET', String(ups[ups.length - 1].update_id + 1));
+  } finally { lock.releaseLock(); }
+  ups.forEach(function (u) { try { tgHandle_(u); } catch (e) { console.error('tgHandle_', e.message); } });
+}
+function tgHandle_(u) {
+  const staff = tRows_('TaskStaff').filter(function (e) { return e.Active !== false; });
+  if (u.callback_query) {
+    const q = u.callback_query, m = /^td:(\w+)$/.exec(q.data || ''), chat = String(q.from && q.from.id);
+    const emp = staff.filter(function (e) { return String(e.ChatId) === chat; })[0];
+    let say = '';
+    if (!m) say = '؟';
+    else if (!emp) say = 'حسابك مش مربوط: افتح الرابط من المدير';
+    else withTaskLock_(function () {
+      const t = tRows_('Tasks').filter(function (x) { return x.Id === m[1]; })[0];
+      if (!t || t.Status === 'cancelled') say = 'المهمة دي اتلغت';
+      else if (t.EmployeeId !== emp.Id) say = 'دي مش مهمتك';
+      else if (t.Status === 'done') say = 'متعلّمة خلصت قبل كده ✅';
+      else { markTask_(t, true, 'telegram'); say = 'تمام ✅ اتسجلت'; }
+    });
+    tgApi_('answerCallbackQuery', { callback_query_id: q.id, text: say });
+    if (q.message && /اتسجلت|قبل كده/.test(say) && q.message.reply_markup) {
+      // take the tapped button off the message (others stay)
+      const rows = (q.message.reply_markup.inline_keyboard || []).filter(function (row) { return !row.some(function (b) { return b.callback_data === q.data; }); });
+      if (rows.length === (q.message.reply_markup.inline_keyboard || []).length - 1 && rows.length === 0)
+        tgApi_('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, text: String(q.message.text || '').slice(0, 3900) + '\n\n✅ خلصت' });
+      else tgApi_('editMessageReplyMarkup', { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: rows } });
+    }
+    return;
+  }
+  const msg = u.message;
+  if (!msg || !msg.chat) return;
+  if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {   // for telegramFindChat: the bot reads its messages here now
+    try { const g = JSON.parse(P.getProperty('TG_SEEN_GROUPS') || '{}'); g[msg.chat.id] = msg.chat.title || ''; P.setProperty('TG_SEEN_GROUPS', JSON.stringify(g)); } catch (e) {}
+    return;
+  }
+  if (msg.chat.type !== 'private') return;
+  const text = String(msg.text || '').trim(), chat = String(msg.chat.id);
+  const start = /^\/start(?:\s+(\w+))?/.exec(text);
+  if (start && start[1]) {
+    const emp = staff.filter(function (e) { return e.LinkCode && e.LinkCode === start[1]; })[0];
+    if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'الرابط ده قديم أو غلط. اطلب رابط جديد من المدير.' }); return; }
+    withTaskLock_(function () {
+      // one chat = one employee: an older link of the same chat is removed
+      staff.forEach(function (e) { if (String(e.ChatId) === chat && e.Id !== emp.Id) { e.ChatId = ''; tPut_('TaskStaff', e); } });
+      emp.ChatId = chat; tPut_('TaskStaff', emp);
+    });
+    logActivity_('Tasks', 'telegram linked', emp.Name, 0);
+    sendOpenList_(emp, 'أهلاً ' + emp.Name + ' 👋\nاتربطت بمهامك في بتفريند. هيوصلك هنا كل مهمة جديدة، وكل يوم الصبح ملخص.\nاكتب /tasks في أي وقت عشان تشوف مهامك.');
+    return;
+  }
+  const emp = staff.filter(function (e) { return String(e.ChatId) === chat; })[0];
+  if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'أهلاً 👋 افتح رابط الربط اللي هيبعتهولك المدير من تطبيق بتفريند.' }); return; }
+  if (/^\/(tasks|start)\b|مهام/.test(text)) sendOpenList_(emp, '📋 مهامك المفتوحة');
+}
+/** Time trigger, every morning: makes today's weekly / monthly tasks, then sends each employee their open tasks. */
+function tasksMorning() {
+  const today = taskToday_();
+  try { makeRepeats_(today, false); } catch (e) { logError_('Tasks', 'repeats', e); }
+  tRows_('TaskStaff').forEach(function (e) {
+    if (e.Active === false || !e.ChatId) return;
+    try { sendOpenList_(e, '☀️ صباح الخير ' + e.Name + '\nمهامك النهارده:'); } catch (x) { console.error('morning', e.Name, x.message); }
+  });
+}
+/** Editor or the sheet menu, once: the bot inbox (every minute) and the morning summary (around 9:00). */
+function installTasksTriggers() {
+  ScriptApp.getProjectTriggers().filter(function (t) { return ['tgPoll', 'tasksMorning'].indexOf(t.getHandlerFunction()) !== -1; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('tgPoll').timeBased().everyMinutes(1).create();
+  ScriptApp.newTrigger('tasksMorning').timeBased().atHour(9).everyDays(1).create();
+  Logger.log('Tasks: bot inbox every minute, morning summary around 9:00.');
+  try { SpreadsheetApp.getUi().alert('✅ نظام المهام اشتغل: البوت بيقرأ الرسايل كل دقيقة، والملخص كل يوم الصبح حوالي 9.'); } catch (e) {}
 }
 
 /* =====================================================================================

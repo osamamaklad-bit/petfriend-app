@@ -121,8 +121,10 @@ const ctx = {
   UrlFetchApp: { fetch(url, o = {}) { const body = o.payload && typeof o.payload === 'string' ? JSON.parse(o.payload) : (o.payload || {});
     fetches.push({ ver: (url.match(/api\/([\d-]+)\//) || [])[1], url, token: (o.headers || {})['X-Shopify-Access-Token'], q: (body.query || '') });
     let ans, code = 200;
-    if (url.includes('api.telegram.org')) { if (url.endsWith('/getUpdates')) ans = { ok: true, result: [{ message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' } } }, { message: { chat: { id: 5, type: 'private' } } }] };
-      else { ctx.__tg = (ctx.__tg || []).concat([{ url, body }]); ans = { ok: true }; } }
+    if (url.includes('api.telegram.org') && url.endsWith('/getMe')) ans = { ok: true, result: { username: 'PetFriend002bot' } };
+    else if (url.includes('api.telegram.org') && url.endsWith('/getUpdates') && ctx.__tgUpdates) { ctx.__tgOffsets = (ctx.__tgOffsets || []).concat([body.offset]); ans = { ok: true, result: ctx.__tgUpdates }; ctx.__tgUpdates = []; }
+    else if (url.includes('api.telegram.org')) { if (url.endsWith('/getUpdates')) ans = { ok: true, result: [{ message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' } } }, { message: { chat: { id: 5, type: 'private' } } }] };
+      else { ctx.__tg = (ctx.__tg || []).concat([{ url, body }]); ans = { ok: true, result: { message_id: 1 } }; } }
     else if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
@@ -134,8 +136,9 @@ const ctx = {
   DriveApp: { createFolder: (n) => { ctx.__folders = (ctx.__folders || []).concat([n]); return { getId: () => 'F', getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }; },
     getFolderById: () => ({ getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }), getFileById: () => ({ getBlob: () => ({ getBytes: () => [1] }) }) },
   Session: { getActiveUser: () => ({ getEmail: () => 'me@x' }), getScriptTimeZone: () => 'Africa/Cairo' },
-  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? '2026-11-15' : '20261115', newBlob: (bytes, type, name) => ({ type, name }), base64Decode: () => [], base64Encode: () => 'AA==', sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
-  LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? (ctx.__today || '2026-11-15') : f === 'HH:mm' ? (ctx.__hm || '11:00') : '20261115', newBlob: (bytes, type, name) => ({ type, name }), base64Decode: () => [], base64Encode: b => Array.isArray(b) && b.length > 4 ? Buffer.from(b).toString('base64') : 'AA==',
+    computeDigest: (alg, s) => Array.from(require('crypto').createHash('sha256').update(String(s)).digest()), DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
+  LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
   ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create() {} }) }) }) },
   Logger: { log: (...a) => console.log('   LOG', ...a) },
   HtmlService: {}
@@ -323,8 +326,9 @@ check('Pick list: data cells written as text (leading apostrophe)', app && app.s
 r = post({ action: 'getPickList', key: 'kkk', id: app && app[0] });
 check('Pick list: items carry the expiry date and the previous batch expiry', r.pickList.items.find(i => i.sku === '6723085'),
   r.pickList.items.find(i => i.sku === '6723085').expiry === '2027-05-01' && r.pickList.items.find(i => i.sku === '6723085').expPrev === '2026-12-15' && r.pickList.items.find(i => i.sku === 'TOY').expPrev === '');
+const SV = /SERVER_VERSION = '([^']+)'/.exec(code)[1];
 check('Every reply says the server version (app warns when it is older)', [r.sv, post({ action: 'x' }).sv, post({ action: 'today', pin: 'bad' }).sv, post({ fn: 'checkPin', args: ['bad'] }).sv],
-  [r.sv, post({ action: 'x' }).sv, post({ action: 'today', pin: 'bad' }).sv, post({ fn: 'checkPin', args: ['bad'] }).sv].every(v => v === ctx.SERVER_VERSION || v === '2026-11-25.2'));
+  [r.sv, post({ action: 'x' }).sv, post({ action: 'today', pin: 'bad' }).sv, post({ fn: 'checkPin', args: ['bad'] }).sv].every(v => v === SV));
 check('Pick list: reads back after the text marker', r.ok && r.pickList.items.length, r.ok && r.pickList.items.length === 3);
 const bp = ctx.buildPickList_('status:open', 'CREATED_AT');
 check('Pick list: tells when the 1000-order limit was not reached', bp.truncated, bp.truncated === false);
@@ -652,6 +656,92 @@ ctx.UrlFetchApp.fetch = (url, o) => (url.includes('/graphql.json') && /returnabl
 r = post({ action: 'getReturnable', key: 'kkk', query: '14211' }); check('Still denied -> clear error, no endless retry', r, r.ok === false && /Access denied/.test(r.error));
 ctx.__cache[ctx.tokKey_('pos')] = 'p'; ctx.__cache[ctx.tokKey_('orders')] = 'o';
 ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ctx.tokKey_('orders')] && !ctx.__cache[ctx.tokKey_('pos')]);
+
+// ---- Tasks: staff, tasks, weekly / monthly tasks, Telegram links and done buttons
+{
+  const tp = b => post(Object.assign({ tpin: 'boss1' }, b));
+  r = tp({ action: 'tasksInit' });
+  check('Tasks: no MANAGER_PIN -> clear error', r, r.ok === false && /MANAGER_PIN/.test(r.error));
+  props.MANAGER_PIN = 'boss1'; props.TELEGRAM_BOT_TOKEN = '123:abc'; props.TELEGRAM_CHAT_ID = '-100777'; ctx.__tg = [];
+  r = post({ action: 'tasksInit', tpin: 'nope' });
+  check('Tasks: wrong pass refused, not logged as an error', r, r.ok === false && r.error === 'Wrong Tasks pass' && !((sheets.Errors || { rows: [] }).rows.some(x => /Wrong Tasks pass/.test(x[3]))));
+  r = tp({ action: 'staffSave', staff: { name: 'Mona', pin: '1234' } });
+  const mona = r.staff;
+  check('Tasks: manager adds an employee with a Telegram link', r, r.ok && /^https:\/\/t\.me\/PetFriend002bot\?start=\w{8,}$/.test(mona.link) && !mona.linked);
+  check('Tasks: the pass is stored only as a hash', sheets.TaskStaff.rows[1], !sheets.TaskStaff.rows[1].includes('1234') && String(sheets.TaskStaff.rows[1][2]).length > 20);
+  r = tp({ action: 'staffSave', staff: { name: 'Ali', pin: '1234' } });
+  check('Tasks: two employees cannot share a pass', r, r.ok === false && /Another employee/.test(r.error));
+  r = tp({ action: 'staffSave', staff: { name: 'Ali', pin: 'boss1' } });
+  check('Tasks: an employee cannot get the manager pass', r, r.ok === false && /manager/.test(r.error));
+  const ali = tp({ action: 'staffSave', staff: { name: 'Ali', pin: '5678' } }).staff;
+  r = post({ action: 'staffSave', tpin: '1234', staff: { name: 'X', pin: '9999' } });
+  check('Tasks: an employee cannot add employees', r, r.ok === false && /Only the manager/.test(r.error));
+  r = tp({ action: 'taskSave', task: { title: 'Post 3 reels', employeeId: mona.id, due: '2026-11-15 18:00', notes: 'Royal Canin offer' } });
+  check('Tasks: task saved; not sent while the employee has not linked Telegram', r, r.ok && r.sent === false && r.linked === false && ctx.__tg.length === 0);
+  const t1 = r.id;
+  r = tp({ action: 'taskSave', task: { title: 'x', employeeId: mona.id, due: 'tomorrow' } });
+  check('Tasks: bad due date refused, not logged or sent to the group', r, r.ok === false && /Due date/.test(r.error) && ctx.__tg.length === 0 && !(sheets.Errors || { rows: [] }).rows.some(x => /Due date/.test(x[3])));
+  // Mona opens her link: /start <code>
+  const code = mona.link.split('start=')[1];
+  ctx.__tgUpdates = [{ update_id: 10, message: { chat: { id: 555, type: 'private' }, from: { id: 555 }, text: '/start ' + code } },
+                     { update_id: 11, message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' }, text: 'hi' } }];
+  ctx.tgPoll();
+  check('Tasks: /start <code> links the employee and sends her open tasks with done buttons', ctx.__tg.map(x => x.body.text),
+    sheets.TaskStaff.rows[1][3] === '555' && ctx.__tg.length === 1 && ctx.__tg[0].body.chat_id === '555' && /أهلاً Mona/.test(ctx.__tg[0].body.text) && /Post 3 reels/.test(ctx.__tg[0].body.text)
+    && ctx.__tg[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t1);
+  check('Tasks: the next poll starts after the last update; groups seen are kept for telegramFindChat', [props.TG_OFFSET, props.TG_SEEN_GROUPS], props.TG_OFFSET === '12' && /PetFriend staff/.test(props.TG_SEEN_GROUPS));
+  ctx.__tg = [];
+  r = tp({ action: 'taskSave', task: { title: 'Answer comments', employeeId: mona.id, due: '2026-11-15' } });
+  const t2 = r.id;
+  check('Tasks: a new task goes to the linked employee with a done button and the due date', ctx.__tg.map(x => x.body.text),
+    r.sent === true && /مهمة جديدة/.test(ctx.__tg[0].body.text) && /النهارده/.test(ctx.__tg[0].body.text) && ctx.__tg[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t2);
+  // Ali (not linked) taps nothing; someone else's chat taps Mona's button
+  ctx.__tg = [];
+  ctx.__tgUpdates = [{ update_id: 12, callback_query: { id: 'cq1', from: { id: 999 }, data: 'td:' + t2, message: { chat: { id: 999 }, message_id: 5, text: 'x' } } }];
+  ctx.tgPoll();
+  check('Tasks: a chat that is not linked cannot mark tasks done', ctx.__tg.map(x => x.body.text), /مش مربوط/.test(ctx.__tg[0].body.text) && sheets.Tasks.rows.find(x => x[0] === t2)[5] === 'open');
+  ctx.__tg = [];
+  ctx.__tgUpdates = [{ update_id: 13, callback_query: { id: 'cq2', from: { id: 555 }, data: 'td:' + t2,
+    message: { chat: { id: 555 }, message_id: 6, text: 'مهمة جديدة', reply_markup: { inline_keyboard: [[{ text: '✅ خلصت', callback_data: 'td:' + t2 }]] } } } }];
+  ctx.tgPoll();
+  const row2 = sheets.Tasks.rows.find(x => x[0] === t2);
+  check('Tasks: Mona taps done -> task done (via telegram), button answered, message updated, group told', ctx.__tg.map(x => x.url.split('/').pop() + ':' + (x.body.text || '')),
+    row2[5] === 'done' && row2[8] === 'telegram' && ctx.__tg.some(x => /answerCallbackQuery/.test(x.url) && /اتسجلت/.test(x.body.text))
+    && ctx.__tg.some(x => /editMessageText/.test(x.url)) && ctx.__tg.some(x => x.body.chat_id === '-100777' && /Mona خلّص: Answer comments/.test(x.body.text)));
+  r = post({ action: 'tasksInit', tpin: '1234' });
+  check('Tasks: employee sees only her own tasks, no staff list', r, r.ok && r.role === 'employee' && r.me === 'Mona' && r.tasks.length === 2 && r.tasks.every(t => t.employeeId === mona.id) && !r.staff);
+  r = post({ action: 'taskDone', tpin: '5678', id: t1 });
+  check('Tasks: an employee cannot finish someone else\'s task', r, r.ok === false && /not your task/.test(r.error));
+  ctx.__hm = '19:00';
+  r = tp({ action: 'tasksInit' });
+  check('Tasks: manager sees everything; a task past its time is late', r, r.ok && r.role === 'manager' && r.staff.length === 2 && r.staff[0].linked === true && r.tasks.find(t => t.id === t1).late === true);
+  ctx.__hm = '11:00';
+  // weekly / monthly: 2026-11-15 is a Sunday (7)
+  ctx.__tg = [];
+  r = tp({ action: 'repeatSave', repeat: { title: 'Weekly report', employeeId: mona.id, freq: 'weekly', day: 7, dueDays: 2 } });
+  check('Tasks: a weekly task whose day is today is made at once and sent', [r, ctx.__tg.map(x => x.body.text)],
+    r.ok && r.madeToday === 1 && sheets.Tasks.rows.some(x => x[1] === 'Weekly report' && x[4] === '2026-11-17') && /مهمة دورية/.test(ctx.__tg[0].body.text));
+  tp({ action: 'repeatSave', repeat: { title: 'Monthly stock count', employeeId: ali.id, freq: 'monthly', day: 31, dueDays: 0 } });
+  tp({ action: 'repeatSave', repeat: { title: 'Monday meeting', employeeId: ali.id, freq: 'weekly', day: 1 } });
+  const before = sheets.Tasks.rows.length;
+  ctx.tasksMorning();
+  check('Tasks: the morning run does not make a weekly task twice the same day', sheets.Tasks.rows.length, sheets.Tasks.rows.length === before);
+  ctx.__today = '2026-11-30'; ctx.__tg = [];
+  ctx.tasksMorning();
+  const made = sheets.Tasks.rows.slice(before).map(x => x[1]);
+  check('Tasks: monthly day 31 -> made on the 30th of November; Monday task made on Monday', made, made.includes('Monthly stock count') && made.includes('Monday meeting') && !made.includes('Weekly report'));
+  check('Tasks: morning summary only to linked employees, with done buttons', ctx.__tg.map(x => x.body.chat_id + ':' + x.body.text.slice(0, 20)),
+    ctx.__tg.length === 1 && ctx.__tg[0].body.chat_id === '555' && /صباح الخير Mona/.test(ctx.__tg[0].body.text) && ctx.__tg[0].body.reply_markup.inline_keyboard.length >= 2);
+  ctx.__today = undefined;
+  r = tp({ action: 'staffRelink', id: mona.id });
+  check('Tasks: a new link unlinks the old chat', r, r.ok && !r.staff.linked && r.staff.link !== mona.link);
+  r = tp({ action: 'taskDelete', id: t1 });
+  check('Tasks: deleted task disappears from the lists', tp({ action: 'tasksInit' }).tasks.map(t => t.id), r.ok && !tp({ action: 'tasksInit' }).tasks.some(t => t.id === t1));
+  tp({ action: 'staffDelete', id: ali.id });
+  r = post({ action: 'tasksInit', tpin: '5678' });
+  check('Tasks: a removed employee\'s pass stops working', r, r.ok === false && r.error === 'Wrong Tasks pass');
+  delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
+}
 
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));
 process.exit(failed ? 1 : 0);
