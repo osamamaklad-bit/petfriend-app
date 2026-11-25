@@ -568,6 +568,8 @@
     'Dashboard': 'لوحة المتابعة',
     "Today's numbers, errors, bulky, expiry": 'أرقام اليوم، والأخطاء، والشحنات كبيرة الحجم، والصلاحية',
     'Pet Friend Dashboard': 'لوحة متابعة بتفريند',
+    'Requests and complaints': 'الطلبات والشكاوى',
+    'Staff tasks and evaluation': 'مهام الموظفين والتقييم',
     'Searching…': 'جارٍ البحث…',
     'Price': 'السعر',
     'Cart is empty': 'السلة فارغة',

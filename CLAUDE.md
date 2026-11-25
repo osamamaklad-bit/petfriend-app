@@ -23,8 +23,8 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
   has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
   (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
-  home. Tab bar (owner wants ALL of them, small icons, as before; removing the ones on the home screen was undone):
-  POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments · Customers · Tasks (all fit from 320px). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
+  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (7, a bit larger;
+  Customers and Tasks moved to big home buttons at the owner's request; all fit from 320px). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
   `pf-swipe` (quick, mostly sideways, not from text boxes / sideways-scrolling lists / the camera / open windows), the main
   page follows `ORDER` (today, orders, picklist, shipments, pos, receive, returns, check, customers, tasks, dashboard) with a
   slide-in. Home buttons: the one pressed LAST stays red (`.last`, remembered in `pf_home_last`), the others plain. Arabic brand name: بتفريند.
@@ -114,7 +114,8 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   refuses without them (`needShipmentPhoto_`, "Step 1/2" messages, not logged). After Shopify accepts, `saveOrderPhoto_`
   saves the photo like a Shipments photo (Drive + `Shipments` sheet, note "Order #…"; carrier `Bosta` / `<carrier>` /
   `… return`; a Bosta fulfill photo also counts in `Tracking`). A photo that fails to save never fails the action.
-- Today (home) shows ONLY big buttons: Orders, Pick list, Shipments, POS, Purchase orders, Return shipments, and a
+- Today (home) shows ONLY big buttons: Orders, Pick list, Shipments, POS, Purchase orders, Return shipments, Customer
+  service, Tasks, and a
   full-width Dashboard (`pf-go` message to the main page). The Dashboard is the same page with `?view=dashboard`
   (tab `dashboard`, no tab-bar button, Back returns home): today's tiles, errors, bulky shipments, expiry dates. Home
   makes no server calls.
