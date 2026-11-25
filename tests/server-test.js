@@ -559,7 +559,7 @@ ctx.__tg = []; props.TELEGRAM_OFF = 'picklist, errors'; sheets.PickLists.rows.le
 post({ action: 'createPickList', key: 'kkk' });
 check('Telegram: TELEGRAM_OFF silences chosen kinds', ctx.__tg.length, ctx.__tg.length === 0);
 delete props.TELEGRAM_OFF; ctx.__tg = [];
-check('Telegram: daily report sent', ctx.dailyTelegramReport(), ctx.__tg.length === 1 && /ملخص اليوم/.test(ctx.__tg[0].body.text) && /طلبات اتجهزت/.test(ctx.__tg[0].body.text));
+check('Telegram: daily report sent', ctx.dailyTelegramReport(), ctx.__tg.length === 1 && /ملخص اليوم/.test(ctx.__tg[0].body.text) && /طلبات تم تجهيزها/.test(ctx.__tg[0].body.text));
 check('Telegram: daily report lists stock expired or expiring within 7 days', ctx.__tg[0].body.text, /منتهي الصلاحية وموجود بالمخزون: 1[\s\S]*Expired/.test(ctx.__tg[0].body.text));
 ctx.__tg = []; props.TELEGRAM_CHAT_ID = '-1'; const realF = ctx.UrlFetchApp.fetch;
 ctx.UrlFetchApp.fetch = (url, o) => url.includes('api.telegram.org') ? { getResponseCode: () => 403, getContentText: () => '{"ok":false,"description":"bot was kicked"}' } : realF(url, o);
@@ -660,6 +660,7 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
 // ---- Tasks: staff, tasks, weekly / monthly tasks, Telegram links and done buttons
 {
   const tp = b => post(Object.assign({ tpin: 'boss1' }, b));
+  const dm = () => ctx.__tg.filter(x => x.body.chat_id !== '-100777'), grp = () => ctx.__tg.filter(x => x.body.chat_id === '-100777');
   r = tp({ action: 'tasksInit' });
   check('Tasks: no MANAGER_PIN -> clear error', r, r.ok === false && /MANAGER_PIN/.test(r.error));
   props.MANAGER_PIN = 'boss1'; props.TELEGRAM_BOT_TOKEN = '123:abc'; props.TELEGRAM_CHAT_ID = '-100777'; ctx.__tg = [];
@@ -677,7 +678,8 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   r = post({ action: 'staffSave', tpin: '1234', staff: { name: 'X', pin: '9999' } });
   check('Tasks: an employee cannot add employees', r, r.ok === false && /Only the manager/.test(r.error));
   r = tp({ action: 'taskSave', task: { title: 'Post 3 reels', employeeId: mona.id, due: '2026-11-15 18:00', notes: 'Royal Canin offer' } });
-  check('Tasks: task saved; not sent while the employee has not linked Telegram', r, r.ok && r.sent === false && r.linked === false && ctx.__tg.length === 0);
+  check('Tasks: task saved; not sent to the employee before she links Telegram, but the group is told', ctx.__tg.map(x => x.body.text), r.ok && r.sent === false && r.linked === false && dm().length === 0 && grp().length === 1 && /مهمة جديدة — Mona/.test(grp()[0].body.text));
+  ctx.__tg = [];
   const t1 = r.id;
   r = tp({ action: 'taskSave', task: { title: 'x', employeeId: mona.id, due: 'tomorrow' } });
   check('Tasks: bad due date refused, not logged or sent to the group', r, r.ok === false && /Due date/.test(r.error) && ctx.__tg.length === 0 && !(sheets.Errors || { rows: [] }).rows.some(x => /Due date/.test(x[3])));
@@ -686,28 +688,28 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   ctx.__tgUpdates = [{ update_id: 10, message: { chat: { id: 555, type: 'private' }, from: { id: 555 }, text: '/start ' + code } },
                      { update_id: 11, message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' }, text: 'hi' } }];
   ctx.tgPoll();
-  check('Tasks: /start <code> links the employee and sends her open tasks with done buttons', ctx.__tg.map(x => x.body.text),
-    sheets.TaskStaff.rows[1][3] === '555' && ctx.__tg.length === 1 && ctx.__tg[0].body.chat_id === '555' && /أهلاً Mona/.test(ctx.__tg[0].body.text) && /Post 3 reels/.test(ctx.__tg[0].body.text)
-    && ctx.__tg[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t1);
+  check('Tasks: /start <code> links the employee and sends her open tasks with done buttons; the group is told', ctx.__tg.map(x => x.body.text),
+    sheets.TaskStaff.rows[1][3] === '555' && dm().length === 1 && dm()[0].body.chat_id === '555' && /أهلًا Mona/.test(dm()[0].body.text) && /Post 3 reels/.test(dm()[0].body.text)
+    && dm()[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t1 && grp().length === 1 && /ربط Mona/.test(grp()[0].body.text));
   check('Tasks: the next poll starts after the last update; groups seen are kept for telegramFindChat', [props.TG_OFFSET, props.TG_SEEN_GROUPS], props.TG_OFFSET === '12' && /PetFriend staff/.test(props.TG_SEEN_GROUPS));
   ctx.__tg = [];
   r = tp({ action: 'taskSave', task: { title: 'Answer comments', employeeId: mona.id, due: '2026-11-15' } });
   const t2 = r.id;
-  check('Tasks: a new task goes to the linked employee with a done button and the due date', ctx.__tg.map(x => x.body.text),
-    r.sent === true && /مهمة جديدة/.test(ctx.__tg[0].body.text) && /النهارده/.test(ctx.__tg[0].body.text) && ctx.__tg[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t2);
+  check('Tasks: a new task goes to the linked employee with a done button and the due date (and to the group)', ctx.__tg.map(x => x.body.text),
+    r.sent === true && /مهمة جديدة/.test(dm()[0].body.text) && /الموعد النهائي: اليوم/.test(dm()[0].body.text) && dm()[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t2 && grp().length === 1);
   // Ali (not linked) taps nothing; someone else's chat taps Mona's button
   ctx.__tg = [];
   ctx.__tgUpdates = [{ update_id: 12, callback_query: { id: 'cq1', from: { id: 999 }, data: 'td:' + t2, message: { chat: { id: 999 }, message_id: 5, text: 'x' } } }];
   ctx.tgPoll();
-  check('Tasks: a chat that is not linked cannot mark tasks done', ctx.__tg.map(x => x.body.text), /مش مربوط/.test(ctx.__tg[0].body.text) && sheets.Tasks.rows.find(x => x[0] === t2)[5] === 'open');
+  check('Tasks: a chat that is not linked cannot mark tasks done', ctx.__tg.map(x => x.body.text), /غير مرتبط/.test(ctx.__tg[0].body.text) && sheets.Tasks.rows.find(x => x[0] === t2)[5] === 'open');
   ctx.__tg = [];
   ctx.__tgUpdates = [{ update_id: 13, callback_query: { id: 'cq2', from: { id: 555 }, data: 'td:' + t2,
     message: { chat: { id: 555 }, message_id: 6, text: 'مهمة جديدة', reply_markup: { inline_keyboard: [[{ text: '✅ خلصت', callback_data: 'td:' + t2 }]] } } } }];
   ctx.tgPoll();
   const row2 = sheets.Tasks.rows.find(x => x[0] === t2);
   check('Tasks: Mona taps done -> task done (via telegram), button answered, message updated, group told', ctx.__tg.map(x => x.url.split('/').pop() + ':' + (x.body.text || '')),
-    row2[5] === 'done' && row2[8] === 'telegram' && ctx.__tg.some(x => /answerCallbackQuery/.test(x.url) && /اتسجلت/.test(x.body.text))
-    && ctx.__tg.some(x => /editMessageText/.test(x.url)) && ctx.__tg.some(x => x.body.chat_id === '-100777' && /Mona خلّص: Answer comments/.test(x.body.text)));
+    row2[5] === 'done' && row2[8] === 'telegram' && ctx.__tg.some(x => /answerCallbackQuery/.test(x.url) && /تم التسجيل/.test(x.body.text))
+    && ctx.__tg.some(x => /editMessageText/.test(x.url)) && ctx.__tg.some(x => x.body.chat_id === '-100777' && /أنجز Mona المهمة: Answer comments/.test(x.body.text)));
   r = post({ action: 'tasksInit', tpin: '1234' });
   check('Tasks: employee sees only her own tasks, no staff list', r, r.ok && r.role === 'employee' && r.me === 'Mona' && r.tasks.length === 2 && r.tasks.every(t => t.employeeId === mona.id) && !r.staff);
   r = post({ action: 'taskDone', tpin: '5678', id: t1 });
@@ -720,7 +722,7 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   ctx.__tg = [];
   r = tp({ action: 'repeatSave', repeat: { title: 'Weekly report', employeeId: mona.id, freq: 'weekly', day: 7, dueDays: 2 } });
   check('Tasks: a weekly task whose day is today is made at once and sent', [r, ctx.__tg.map(x => x.body.text)],
-    r.ok && r.madeToday === 1 && sheets.Tasks.rows.some(x => x[1] === 'Weekly report' && x[4] === '2026-11-17') && /مهمة دورية/.test(ctx.__tg[0].body.text));
+    r.ok && r.madeToday === 1 && sheets.Tasks.rows.some(x => x[1] === 'Weekly report' && x[4] === '2026-11-17') && /مهمة دورية/.test(dm()[0].body.text));
   tp({ action: 'repeatSave', repeat: { title: 'Monthly stock count', employeeId: ali.id, freq: 'monthly', day: 31, dueDays: 0 } });
   tp({ action: 'repeatSave', repeat: { title: 'Monday meeting', employeeId: ali.id, freq: 'weekly', day: 1 } });
   const before = sheets.Tasks.rows.length;
@@ -730,8 +732,9 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   ctx.tasksMorning();
   const made = sheets.Tasks.rows.slice(before).map(x => x[1]);
   check('Tasks: monthly day 31 -> made on the 30th of November; Monday task made on Monday', made, made.includes('Monthly stock count') && made.includes('Monday meeting') && !made.includes('Weekly report'));
-  check('Tasks: morning summary only to linked employees, with done buttons', ctx.__tg.map(x => x.body.chat_id + ':' + x.body.text.slice(0, 20)),
-    ctx.__tg.length === 1 && ctx.__tg[0].body.chat_id === '555' && /صباح الخير Mona/.test(ctx.__tg[0].body.text) && ctx.__tg[0].body.reply_markup.inline_keyboard.length >= 2);
+  check('Tasks: morning summary to linked employees with done buttons, and one list of everyone\'s tasks in the group', ctx.__tg.map(x => x.body.chat_id + ':' + x.body.text.slice(0, 20)),
+    dm().length === 1 && dm()[0].body.chat_id === '555' && /صباح الخير Mona/.test(dm()[0].body.text) && dm()[0].body.reply_markup.inline_keyboard.length >= 2
+    && grp().length === 1 && /مهام اليوم المفتوحة[\s\S]*Mona[\s\S]*Ali/.test(grp()[0].body.text));
   ctx.__today = undefined;
   r = tp({ action: 'staffRelink', id: mona.id });
   check('Tasks: a new link unlinks the old chat', r, r.ok && !r.staff.linked && r.staff.link !== mona.link);
@@ -740,6 +743,48 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   tp({ action: 'staffDelete', id: ali.id });
   r = post({ action: 'tasksInit', tpin: '5678' });
   check('Tasks: a removed employee\'s pass stops working', r, r.ok === false && r.error === 'Wrong Tasks pass');
+
+  // ---- Customer service: cancel / edit requests, inspection (answered in the group), complaints
+  ctx.__tg = [];
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'cancel', order: '1001', details: 'Customer changed her mind' } });
+  check('Requests: cancel request saved with the Shopify order, written by the employee, told in the group', [r, grp().map(x => x.body.text)],
+    r.ok && r.item.order === '#1001' && r.item.createdBy === 'Mona' && r.item.status === 'open' && grp().length === 1 && /طلب إلغاء جديد[\s\S]*#1001[\s\S]*Mona/.test(grp()[0].body.text));
+  const cq = r.item.id;
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'edit', order: '1001', details: '' } });
+  check('Requests: a change request needs details', r, r.ok === false && /details/.test(r.error));
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'cancel', order: '' } });
+  check('Requests: the order number is needed', r, r.ok === false && /order number/.test(r.error));
+  ctx.__tg = [];
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'complaint', customer: 'Hoda', phone: '010 1234 5678', channel: 'whatsapp', category: 'late', details: 'Arrived 3 days late' } });
+  check('Requests: a complaint without an order is fine; category and channel shown in the group', [r.item, grp().map(x => x.body.text)],
+    r.ok && r.item.order === '' && r.item.phone === '01012345678' && /شكوى عميل جديدة[\s\S]*تأخر التوصيل · واتساب/.test(grp()[0].body.text));
+  const comp = r.item.id;
+  ctx.__tg = [];
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'inspect', order: '1001', details: 'Customer wants to open the box' } });
+  const iq = r.item.id, msg = grp()[0];
+  check('Requests: inspection request -> group message with allow / do not allow buttons', msg && msg.body,
+    r.ok && r.item.status === 'pending' && /طلب معاينة/.test(msg.body.text) && msg.body.reply_markup.inline_keyboard[0].map(b => b.callback_data).join() === 'ia:' + iq + ',in:' + iq);
+  r = post({ action: 'reqStatus', tpin: '1234', id: iq, status: 'allowed' });
+  check('Requests: an employee cannot answer an inspection in the app', r, r.ok === false && /Only the manager/.test(r.error));
+  ctx.__tg = [];
+  ctx.__tgUpdates = [{ update_id: 30, callback_query: { id: 'c9', from: { id: 1, first_name: 'Osama' }, data: 'ia:' + iq, message: { chat: { id: 555 }, message_id: 3, text: 'x' } } }];
+  ctx.tgPoll();
+  check('Requests: the buttons only work in the store group', ctx.__tg.map(x => x.body.text), /جروب المتجر فقط/.test(ctx.__tg[0].body.text) && sheets.Requests.rows.find(x => x[0] === iq)[8] === 'pending');
+  ctx.__tg = [];
+  ctx.__tgUpdates = [{ update_id: 31, callback_query: { id: 'c10', from: { id: 1, first_name: 'Osama' }, data: 'ia:' + iq, message: { chat: { id: -100777 }, message_id: 4, text: 'طلب معاينة' } } },
+                     { update_id: 32, callback_query: { id: 'c11', from: { id: 2, first_name: 'Ali' }, data: 'in:' + iq, message: { chat: { id: -100777 }, message_id: 4, text: 'طلب معاينة' } } }];
+  ctx.tgPoll();
+  const irow = sheets.Requests.rows.find(x => x[0] === iq);
+  check('Requests: "allow" in the group saves the answer and who gave it; a second answer is refused', ctx.__tg.map(x => x.url.split('/').pop() + ':' + x.body.text),
+    irow[8] === 'allowed' && /Osama/.test(irow[12]) && ctx.__tg.some(x => /editMessageText/.test(x.url) && /مسموح بالمعاينة — Osama/.test(x.body.text))
+    && ctx.__tg.some(x => /answerCallbackQuery/.test(x.url) && /تم الرد بالفعل/.test(x.body.text)));
+  ctx.__tg = [];
+  r = post({ action: 'reqStatus', tpin: '1234', id: cq, status: 'done', note: 'Cancelled in Shopify' });
+  check('Requests: status change saved and told in the group', [r.item, grp().map(x => x.body.text)], r.ok && r.item.status === 'done' && r.item.updatedBy === 'Mona' && /إلغاء طلب #1001: تم التنفيذ[\s\S]*Cancelled in Shopify/.test(grp()[0].body.text));
+  r = post({ action: 'reqStatus', tpin: '1234', id: comp, status: 'done' });
+  check('Requests: a status of another kind is refused', r, r.ok === false);
+  r = tp({ action: 'reqInit' });
+  check('Requests: the list shows every entry, newest first', r.items.map(x => x.kind + ':' + x.status), r.ok && r.items.length === 3 && r.items[0].kind === 'inspect');
   delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
 }
 

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e3031b">
+<link rel="icon" href="../icon-192.png">
+<title>Pet Friend Customer Service</title>
+<script src="../config.js"></script><script src="../i18n.js"></script>
+<script src="../settings.js"></script>
+<style>
+  /* "hidden" must always win over a class that sets display */
+  [hidden] { display: none !important; }
+  :root {
+    --ink: #2a1417; --paper: #e9fcfd; --card: #ffffff; --line: #b9ecf1; --muted: #6b5f62;
+    --ok: #15803d; --ok-bg: #dcfce7; --bad: #c00018; --bad-bg: #ffe4e7; --accent: #e3031b; --on: #ffffff; --soft: #f1fdfe; --warn: #9a3412; --warn-bg: #fff4e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #eaf7f8; --paper: #0f1c1e; --card: #17282b; --line: #27403f; --muted: #8fb0b3;
+      --ok: #4ade80; --ok-bg: #12301f; --bad: #ff6b7a; --bad-bg: #3a1218; --accent: #ff4a5c; --on: #1a0508; --soft: #1d3236; --warn: #fbbf24; --warn-bg: #3a2a0f; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; }
+  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 10px; max-width: 900px; margin: 0 auto; padding: 14px 12px 4px; }
+  header .logo { width: 44px; height: 44px; border-radius: 12px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; }
+  header h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+  header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; }
+  main { max-width: 900px; margin: 0 auto; padding: 8px 12px 40px; }
+
+  #banner { white-space: pre-line; min-height: 44px; display: flex; align-items: center; padding: 10px 14px; border-radius: 10px; font-weight: 600;
+    margin-bottom: 10px; background: var(--card); border: 2px solid var(--line); color: var(--muted); }
+  #banner.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  #banner.bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+
+  .seg { display: flex; background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 10px; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 700; padding: 9px 4px; border-radius: 8px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--on); }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .bar button, .chip { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 14px; font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; }
+  .bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin-bottom: 10px; }
+  .chip { padding: 5px 12px; font-size: 14px; border-radius: 99px; white-space: nowrap; }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+  .card.late { border-color: var(--bad); }
+  .card.done { opacity: .62; }
+  .card .t { font-weight: 800; font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
+  .card.done .t { text-decoration: line-through; }
+  .card .who { color: var(--muted); font-size: 13px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .card .due { font-weight: 700; color: var(--ink); }
+  .card.late .due { color: var(--bad); }
+  .card .notes { font-size: 14px; margin-top: 6px; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); background: var(--soft); border-radius: 8px; padding: 6px 8px; }
+  .card .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .card .acts button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 9px; padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .card .acts button.done { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .card .acts button.del { color: var(--bad); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); }
+  .tag.late { background: var(--bad-bg); color: var(--bad); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .empty { color: var(--muted); text-align: center; padding: 26px 8px; }
+  h2.sec { font-size: 15px; color: var(--muted); margin: 16px 2px 8px; }
+
+  /* the form window (same look as Settings) */
+  .tform { border: 0; border-radius: 14px; padding: 0; width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 30px); color: var(--ink); background: var(--card); box-shadow: 0 12px 40px #0004; }
+  .tform::backdrop { background: #0006; }
+  .tform form { padding: 16px; margin: 0; }
+  .tform h3 { margin: 0 0 12px; font-size: 18px; }
+  .tform label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 11px; }
+  .tform input, .tform select, .tform textarea { display: block; width: 100%; margin-top: 4px; font: inherit; font-size: 17px; padding: 10px 11px; border: 2px solid var(--line);
+    border-radius: 10px; background: var(--card); color: var(--ink); }
+  .tform textarea { min-height: 70px; resize: vertical; }
+  .tform input:focus, .tform select:focus, .tform textarea:focus { outline: none; border-color: var(--accent); }
+  .tform .two { display: flex; gap: 8px; } .tform .two label { flex: 1; min-width: 0; }
+  .tform .hint { display: block; font-weight: 400; font-size: 12px; margin-top: 3px; }
+  .tform .err { color: var(--bad); font-weight: 600; font-size: 14px; min-height: 1em; }
+  .tform .b { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .tform .b button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 10px; cursor: pointer; border: 2px solid var(--line); background: var(--card); color: var(--ink); }
+  .tform .b .ok { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  @media (min-width: 900px) { header, main { max-width: 1000px; } .list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .list .card { margin: 0; } }
+  .card .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .card .ord { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; margin-top: 4px; }
+  .card .ord b { color: var(--ink); }
+  .card .warn { color: var(--warn); background: var(--warn-bg); border-radius: 8px; padding: 3px 8px; font-size: 13px; font-weight: 700; margin-top: 6px; display: inline-block; }
+  .card a.tel { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .tag.k { background: var(--ink); color: var(--paper); }
+  .card .acts button.no { color: var(--bad); border-color: var(--bad); }
+  .seg button[data-n]:not([data-n="0"])::after { content: attr(data-n); display: inline-block; min-width: 18px; margin-inline-start: 5px; padding: 0 5px; border-radius: 99px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="../icon-192.png" alt="Pet Friend">
+  <h1>Pet Friend Customer Service<small id="who"></small></h1>
+  <button id="settingsBtn">Settings</button>
+</header>
+<main>
+  <div id="banner">Open Settings and enter the Tasks pass.</div>
+  <div class="seg" id="seg">
+    <button data-v="change" class="on">Cancel / change</button>
+    <button data-v="inspect">Inspection</button>
+    <button data-v="complaint">Complaints</button>
+  </div>
+  <div class="bar">
+    <button class="primary" id="newBtn">＋ New</button>
+    <button id="refreshBtn">↻ Refresh</button>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="list" id="list"></div>
+</main>
+<script>
+(function () {
+  const API_URL = window.PF_API_URL;
+  const $ = (id) => document.getElementById(id);
+  const T = (s) => (window.pfT ? window.pfT(s) : s);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+  const state = { data: null, view: 'change', closed: false, busy: false };
+  const KINDS = { change: ['cancel', 'edit'], inspect: ['inspect'], complaint: ['complaint'] };
+  const FIRST = { cancel: 'open', edit: 'open', inspect: 'pending', complaint: 'open' };
+  const STATUS = { open: 'Not handled yet', done: 'Carried out', rejected: 'Rejected', pending: 'Waiting for an answer', allowed: 'Inspection allowed',
+    denied: 'Inspection not allowed', working: 'Following up', resolved: 'Resolved' };
+  const KIND = { cancel: 'Cancel order', edit: 'Change order', inspect: 'Inspection', complaint: 'Complaint' };
+  const CATS = [['quality', 'Product quality'], ['late', 'Late delivery'], ['wrong', 'Wrong or missing item'], ['damaged', 'Damaged item'],
+    ['staff', 'Staff behaviour'], ['price', 'Price'], ['delivery', 'Shipping company'], ['other', 'Other']];
+  const CHANNELS = [['phone', 'Phone call'], ['whatsapp', 'WhatsApp'], ['facebook', 'Facebook'], ['instagram', 'Instagram'], ['store', 'In the store'], ['other', 'Other']];
+  const FUL = { UNFULFILLED: 'Not fulfilled', PARTIALLY_FULFILLED: 'Partly fulfilled', FULFILLED: 'Fulfilled', IN_PROGRESS: 'In progress', ON_HOLD: 'On hold' };
+  const label = (list, k) => (list.filter((x) => x[0] === k)[0] || [k, k])[1];
+
+  function say(msg, kind) { const b = $('banner'); b.className = kind || ''; b.textContent = msg; }
+  async function api(payload) {
+    const pin = store.get('pf_tpin');
+    if (!pin) { openSettings(); throw new Error('Enter the Tasks pass in Settings'); }
+    const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ tpin: pin }, payload)) });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+  const loc = () => (window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : []);
+  const when = (iso) => iso ? new Date(iso).toLocaleString(loc(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+
+  async function load(quiet) {
+    if (!store.get('pf_tpin')) { say('Open Settings and enter the Tasks pass.', 'bad'); return; }
+    if (!quiet) say('Loading...');
+    try {
+      state.data = await api({ action: 'reqInit' });
+      $('who').textContent = state.data.role === 'manager' ? T('Manager') : state.data.me;
+      $('who').toggleAttribute('data-no-i18n', state.data.role !== 'manager');
+      render();
+      if (!quiet) {
+        const waiting = state.data.items.filter((x) => x.status === 'pending').length;
+        say(waiting ? waiting + (waiting === 1 ? ' inspection request is waiting for an answer.' : ' inspection requests are waiting for an answer.') : 'Up to date.', waiting ? 'bad' : 'ok');
+      }
+    } catch (e) { say(e.message, 'bad'); }
+  }
+
+  function el(tag, cls, text, noI18n) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    if (noI18n) { e.setAttribute('data-no-i18n', ''); e.dir = 'auto'; }
+    return e;
+  }
+  function btn(text, cls, fn) { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', fn); return b; }
+  const isOpen = (x) => x.status === FIRST[x.kind] || x.status === 'working';
+
+  function render() {
+    const d = state.data;
+    document.querySelectorAll('#seg button').forEach((b) => {
+      const n = d ? d.items.filter((x) => KINDS[b.dataset.v].indexOf(x.kind) !== -1 && isOpen(x)).length : 0;
+      b.classList.toggle('on', b.dataset.v === state.view);
+      b.dataset.n = n;
+    });
+    $('newBtn').textContent = T({ change: '＋ New cancel / change request', inspect: '＋ New inspection request', complaint: '＋ New complaint' }[state.view]);
+    if (!d) return;
+    const mine = d.items.filter((x) => KINDS[state.view].indexOf(x.kind) !== -1);
+    const open = mine.filter(isOpen), closed = mine.filter((x) => !isOpen(x));
+    const chips = $('chips'); chips.innerHTML = '';
+    [[false, T('Open items') + ' · ' + open.length], [true, T('Closed items') + ' · ' + closed.length]].forEach(function (c) {
+      chips.appendChild(btn(c[1], 'chip' + (state.closed === c[0] ? ' on' : ''), function () { state.closed = c[0]; render(); }));
+    });
+    const list = $('list'); list.innerHTML = '';
+    const show = state.closed ? closed : open;
+    if (!show.length) list.appendChild(el('div', 'empty', state.closed ? 'Nothing closed in the last 30 days.' : 'Nothing open.'));
+    show.forEach((x) => list.appendChild(card(x)));
+  }
+
+  function card(x) {
+    const c = el('div', 'card' + (x.status === 'pending' ? ' late' : isOpen(x) ? '' : ' done'));
+    const top = el('div', 'who');
+    top.appendChild(el('span', 'tag k', KIND[x.kind]));
+    top.appendChild(el('span', 'tag ' + (x.status === 'rejected' || x.status === 'denied' ? 'late' : isOpen(x) ? 'warn' : 'ok'), STATUS[x.status]));
+    c.appendChild(top);
+    const title = x.order ? x.order + (x.customer ? ' — ' + x.customer : '') : x.customer || '—';
+    const t = el('div', 't', title, true); t.style.marginTop = '6px'; c.appendChild(t);
+    if (x.info && !x.info.unchecked && (x.kind !== 'complaint' || x.order)) {
+      const o = el('div', 'ord');
+      if (x.info.total) o.appendChild(el('span', '', x.info.total, true));
+      if (x.info.fulfillment) o.appendChild(el('span', '', FUL[x.info.fulfillment] || x.info.fulfillment));
+      if (x.info.city) o.appendChild(el('span', '', x.info.city, true));
+      c.appendChild(o);
+      if (isOpen(x) && (x.kind === 'cancel' || x.kind === 'edit') && /FULFILLED/.test(x.info.fulfillment || '')) c.appendChild(el('div', 'warn', 'This order is already fulfilled'));
+      if (isOpen(x) && x.info.cancelled) c.appendChild(el('div', 'warn', 'This order is already cancelled'));
+    }
+    if (x.kind === 'complaint') {
+      const o = el('div', 'ord');
+      o.appendChild(el('span', '', label(CATS, x.category)));
+      o.appendChild(el('span', '', label(CHANNELS, x.channel)));
+      if (x.phone) { const a = el('a', 'tel', x.phone, true); a.href = 'tel:' + x.phone; o.appendChild(a); }
+      c.appendChild(o);
+    }
+    if (x.details) c.appendChild(el('div', 'notes', x.details, true));
+    if (x.note) { const n = el('div', 'notes'); n.appendChild(el('b', '', T('Note:') + ' ')); n.appendChild(el('span', '', x.note, true)); c.appendChild(n); }
+    const m = el('div', 'meta');
+    m.appendChild(el('span', '', T('Written by') + ' ')); m.appendChild(el('span', '', x.createdBy, true)); m.appendChild(el('span', '', ' · ' + when(x.createdAt), true));
+    if (x.updatedBy) { m.appendChild(el('span', '', ' · ' + T('Last change by') + ' ')); m.appendChild(el('span', '', x.updatedBy, true)); }
+    c.appendChild(m);
+    const a = el('div', 'acts'), mgr = state.data.role === 'manager';
+    if (x.kind === 'cancel' || x.kind === 'edit') {
+      if (isOpen(x)) { a.appendChild(btn('✓ Carried out', 'done', () => setStatus(x, 'done', true))); a.appendChild(btn('Reject', 'no', () => setStatus(x, 'rejected', true))); }
+      else a.appendChild(btn('Open again', '', () => setStatus(x, 'open')));
+    } else if (x.kind === 'inspect') {
+      if (mgr && x.status === 'pending') { a.appendChild(btn('✓ Allow', 'done', () => setStatus(x, 'allowed'))); a.appendChild(btn('Do not allow', 'no', () => setStatus(x, 'denied'))); }
+      else if (x.status === 'pending') a.appendChild(el('span', 'meta', 'Waiting for the answer in the Telegram group.'));
+    } else {
+      if (x.status === 'open') a.appendChild(btn('Following up', '', () => setStatus(x, 'working', true)));
+      if (isOpen(x)) a.appendChild(btn('✓ Resolved', 'done', () => setStatus(x, 'resolved', true, true)));
+      else a.appendChild(btn('Open again', '', () => setStatus(x, 'open')));
+    }
+    if (a.children.length) c.appendChild(a);
+    return c;
+  }
+
+  // ---------- the form window (same as the Tasks tab) ----------
+  function form(title, fields, onInput) {
+    return new Promise(function (resolve) {
+      const d = el('dialog', 'tform'), f = el('form');
+      f.appendChild(el('h3', '', title));
+      const inputs = {};
+      fields.forEach(function (x) {
+        const lab = el('label'); lab.appendChild(document.createTextNode(T(x.label)));
+        let i;
+        if (x.type === 'select') { i = el('select'); x.options.forEach(function (o) { const op = el('option', '', T(o[1])); op.value = o[0]; i.appendChild(op); }); }
+        else if (x.type === 'textarea') i = el('textarea');
+        else { i = el('input'); i.type = x.type || 'text'; if (x.mode) i.inputMode = x.mode; }
+        if (x.value != null) i.value = x.value;
+        if (x.data) { i.setAttribute('data-no-i18n', ''); i.dir = 'auto'; }
+        i.name = x.key; lab.appendChild(i);
+        if (x.hint) lab.appendChild(el('small', 'hint', x.hint));
+        inputs[x.key] = i; lab.dataset.k = x.key; f.appendChild(lab);
+      });
+      const err = el('div', 'err'); f.appendChild(err);
+      const b = el('div', 'b'), cancel = btn('Cancel', '', () => { d.close(); }), ok = el('button', 'ok', 'Save'); ok.type = 'submit';
+      b.appendChild(cancel); b.appendChild(ok); f.appendChild(b); d.appendChild(f);
+      let result = null;
+      f.addEventListener('input', () => onInput && onInput(inputs, f));
+      f.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const v = {}; Object.keys(inputs).forEach((k) => { v[k] = inputs[k].value.trim(); });
+        const miss = fields.filter((x) => (typeof x.required === 'function' ? x.required(v) : x.required) && !v[x.key])[0];
+        if (miss) { err.textContent = T('Fill in:') + ' ' + T(miss.label); return; }
+        result = v; d.close();
+      });
+      d.addEventListener('close', () => { d.remove(); resolve(result); });
+      document.body.appendChild(d); d.showModal();
+      if (onInput) onInput(inputs, f);
+      const first = f.querySelector('input,textarea'); if (first) first.focus();
+    });
+  }
+
+  async function run(msg, fn) {
+    if (state.busy) return;
+    state.busy = true; say(msg);
+    try { await fn(); } catch (e) { say(e.message, 'bad'); }
+    finally { state.busy = false; }
+  }
+  async function newEntry() {
+    let fields, kind;
+    if (state.view === 'change') fields = [
+      { key: 'kind', label: 'Request', type: 'select', options: [['cancel', 'Cancel the order'], ['edit', 'Change the order']] },
+      { key: 'order', label: 'Order number', mode: 'numeric', required: true, data: true },
+      { key: 'details', label: 'Details', type: 'textarea', data: true, required: (v) => v.kind === 'edit', hint: 'For a change: what should change. For a cancel: the reason (optional).' }];
+    else if (state.view === 'inspect') { kind = 'inspect'; fields = [
+      { key: 'order', label: 'Order number', mode: 'numeric', required: true, data: true },
+      { key: 'details', label: 'Notes (optional)', type: 'textarea', data: true }]; }
+    else { kind = 'complaint'; fields = [
+      { key: 'customer', label: 'Customer name', required: true, data: true },
+      { key: 'phone', label: 'Phone (optional)', type: 'tel', data: true },
+      { key: 'order', label: 'Order number (optional)', mode: 'numeric', data: true },
+      { key: 'channel', label: 'Came by', type: 'select', options: CHANNELS },
+      { key: 'category', label: 'Complaint about', type: 'select', options: CATS },
+      { key: 'details', label: 'Details', type: 'textarea', required: true, data: true }]; }
+    const title = { change: 'New cancel / change request', inspect: 'New inspection request', complaint: 'New complaint' }[state.view];
+    const v = await form(T(title), fields);
+    if (!v) return;
+    await run('Saving...', async function () {
+      const r = await api({ action: 'reqSave', req: Object.assign({ kind: kind || v.kind }, v) });
+      await load(true);
+      const tg = r.sent ? 'Saved and sent to the Telegram group.' : 'Saved. (Not sent: check the Telegram group settings.)';
+      say(r.warn === 'fulfilled' ? tg + '\n' + T('Note: this order is already fulfilled.') : r.warn === 'cancelled' ? tg + '\n' + T('Note: this order is already cancelled.') : tg, r.sent && !r.warn ? 'ok' : '');
+    });
+  }
+  async function setStatus(x, status, askNote, needNote) {
+    let note = x.note;
+    if (askNote) {
+      const v = await form(T(STATUS[status]) + (x.order ? ' — ' + x.order : ''), [{ key: 'note', label: needNote ? 'How was it resolved?' : 'Note (optional)', type: 'textarea', value: x.note || '', data: true, required: !!needNote }]);
+      if (!v) return;
+      note = v.note;
+    }
+    await run('Saving...', async function () {
+      await api({ action: 'reqStatus', id: x.id, status: status, note: note });
+      await load(true);
+      say('Saved and sent to the Telegram group.', 'ok');
+    });
+  }
+
+  $('seg').addEventListener('click', function (e) { const b = e.target.closest('button[data-v]'); if (!b) return; state.view = b.dataset.v; state.closed = false; render(); });
+  $('newBtn').addEventListener('click', newEntry);
+  $('refreshBtn').addEventListener('click', () => load());
+  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show' && !state.busy) load(true); });
+  document.addEventListener('pf-lang', render);
+  async function openSettings() {
+    const v = await pfSettings({ title: 'Settings', fields: [{ key: 'tpin', label: 'Tasks pass', hint: 'The same pass as the Tasks tab: the manager\'s, or your own.', secret: true, value: store.get('pf_tpin') }] });
+    if (!v) return;
+    store.set('pf_tpin', v.tpin);
+    if (v.tpin) load();
+  }
+  $('settingsBtn').addEventListener('click', openSettings);
+  render();
+  load();
+})();
+</script>
+</body>
+</html>

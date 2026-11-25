@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-26.1';
+const SERVER_VERSION = '2026-11-26.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1156,7 +1156,7 @@ function createPickList_(kind) {
     s.appendRow([id, now, kind, pl.orderIds.length, pl.products.length, "'" + pl.orderIds.join(',')].concat(chunks.map(function (c) { return "'" + c; })));
     logActivity_('Pick list', kind, id, pl.orderIds.length, { products: pl.products.length });
     tgNotify_('picklist', '🧾 قائمة تجميع جديدة (' + (kind === 'manual' ? 'يدوية' : 'تلقائية') + ')\n' + pl.orderIds.length + ' طلب · ' + pl.products.length + ' منتج' +
-      (pl.truncated ? '\n⚠️ فيه أكتر من 1000 طلب مستني: اعمل قائمة تانية للباقي' : '') + '\nافتح التطبيق ← قائمة التجميع');
+      (pl.truncated ? '\n⚠️ يوجد أكثر من 1000 طلب في الانتظار: أنشئ قائمة أخرى للباقي' : '') + '\nافتح التطبيق ← قائمة التجميع');
     return { ok: true, created: true, truncated: pl.truncated, pickList: { id: id, createdAt: now.toISOString(), kind: kind, orders: pl.orderIds.length, products: pl.products.length } };
   } finally { lock.releaseLock(); }
 }
@@ -1459,7 +1459,7 @@ function onOpen() {
       .addItem('تحديث بيانات دخول شوبيفاي للكاشير', 'menuSetPosLogin')
       .addItem('تحديث بيانات دخول شوبيفاي للطلبات', 'menuSetOrdersLogin')
       .addSeparator()
-      .addItem('باسورد المدير للمهام', 'menuSetManagerPin')
+      .addItem('كلمة مرور المدير للمهام', 'menuSetManagerPin')
       .addItem('تشغيل نظام المهام (تيليجرام)', 'installTasksTriggers')
       .addItem('فحص كل الإعدادات', 'testAll')
       .addToUi();
@@ -1468,13 +1468,13 @@ function onOpen() {
 /** Sheet menu: the manager's Tasks pass, saved without the Project Settings page (which can put old secrets back). */
 function menuSetManagerPin() {
   const ui = SpreadsheetApp.getUi();
-  const a = ui.prompt('باسورد المدير للمهام', 'اكتب باسورد المدير (4 حروف أو أرقام على الأقل). بيه تفتح تاب المهام وتضيف الموظفين والمهام.', ui.ButtonSet.OK_CANCEL);
+  const a = ui.prompt('كلمة مرور المدير للمهام', 'اكتب كلمة مرور المدير (4 أحرف أو أرقام على الأقل). بها تفتح تبويب المهام وتضيف الموظفين والمهام.', ui.ButtonSet.OK_CANCEL);
   if (a.getSelectedButton() !== ui.Button.OK) return;
   const pin = String(a.getResponseText() || '').trim();
-  if (pin.length < 4) { ui.alert('❌ الباسورد لازم يبقى 4 حروف أو أرقام على الأقل.'); return; }
+  if (pin.length < 4) { ui.alert('❌ يجب أن تتكون كلمة المرور من 4 أحرف أو أرقام على الأقل.'); return; }
   P.setProperty('MANAGER_PIN', pin);
   watchSecrets_('saved from the menu');
-  ui.alert('✅ اتحفظ. اكتبه في إعدادات تاب المهام في التطبيق.');
+  ui.alert('✅ تم الحفظ. اكتبها في إعدادات تبويب المهام في التطبيق.');
 }
 function menuSetPosLogin() { menuSetLogin_('pos'); }
 function menuSetOrdersLogin() { menuSetLogin_('orders'); }
@@ -1485,7 +1485,7 @@ function menuSetLogin_(kind) {
   const b = ui.prompt('Shopify ' + L.name + ': Client secret', 'Paste the Client secret. It is checked with Shopify before it is saved.', ui.ButtonSet.OK_CANCEL);
   if (b.getSelectedButton() !== ui.Button.OK) return;
   const r = setShopifyLogin_(kind, a.getResponseText(), b.getResponseText());
-  ui.alert(r.ok ? '✅ تم: شوبيفاي قبل البيانات واتحفظت.' : '❌ ما اتحفظش: ' + r.error);
+  ui.alert(r.ok ? '✅ تم: قبِل شوبيفاي البيانات وحُفظت.' : '❌ لم يتم الحفظ: ' + r.error);
 }
 /** Checks a Client ID / secret with Shopify (client credentials) and saves them only if Shopify gives a token. */
 function setShopifyLogin_(kind, id, secret) {
@@ -1540,7 +1540,7 @@ function watchSecrets_(why) {
  * found with telegramFindChat), TELEGRAM_OFF (optional, comma list of kinds to silence: picklist, bulky, errors,
  * daily). Without a token or chat id nothing is sent. Run installTelegramTrigger once for the 9 pm daily report.
  * ===================================================================================== */
-const TG_KINDS = ['picklist', 'bulky', 'errors', 'daily', 'tasks'];
+const TG_KINDS = ['picklist', 'bulky', 'errors', 'daily', 'tasks', 'requests'];
 function tgNotify_(kind, text) {
   const off = String(P.getProperty('TELEGRAM_OFF') || '').toLowerCase().split(/[\s,]+/);
   if (off.indexOf(kind) !== -1) return false;
@@ -1578,11 +1578,11 @@ function telegramFindChat() {
   if (ids.length === 1) {
     P.setProperty('TELEGRAM_CHAT_ID', ids[0]);
     Logger.log('Saved TELEGRAM_CHAT_ID. Sending a test message...');
-    Logger.log(tgSend_('✅ بتفريند: الإشعارات شغالة في الجروب ده.') ? 'Test message sent.' : 'Test message failed: see the log above.');
+    Logger.log(tgSend_('✅ بتفريند: الإشعارات تعمل في هذه المجموعة.') ? 'Test message sent.' : 'Test message failed: see the log above.');
   } else Logger.log('More than one group: copy the right id into TELEGRAM_CHAT_ID yourself.');
 }
 /** Editor: sends a test message to the group. */
-function testTelegram() { Logger.log(tgSend_('✅ بتفريند: رسالة تجربة.') ? 'Sent.' : 'Not sent: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.'); }
+function testTelegram() { Logger.log(tgSend_('✅ بتفريند: رسالة تجريبية.') ? 'Sent.' : 'Not sent: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.'); }
 /** Editor, once: the daily report at 21:00 (script time zone). */
 function installTelegramTrigger() {
   ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyTelegramReport'; })
@@ -1595,21 +1595,21 @@ function dailyTelegramReport() {
   const d = dailySummary_(), L = [];
   L.push('📊 ملخص اليوم ' + d.date);
   if (d.pos && !d.pos.error) L.push('🛒 الكاشير: ' + d.pos.count + ' عملية · ' + d.pos.total + ' جنيه');
-  L.push('✅ طلبات اتجهزت: ' + d.fulfilled.count + ' (' + d.fulfilled.qty + ' قطعة)');
+  L.push('✅ طلبات تم تجهيزها: ' + d.fulfilled.count + ' (' + d.fulfilled.qty + ' قطعة)');
   if (d.openOrders != null) L.push('⏳ طلبات مفتوحة: ' + d.openOrders);
   L.push('↩️ مرتجعات: ' + d.returns.count + ' (' + d.returns.qty + ' قطعة)');
-  L.push('📥 استلام من الموردين: ' + d.received.qty + ' قطعة' + (d.received.extra ? ' · زيادة ' + d.received.extra : '') +
-    (d.received.rejected ? ' · مرفوض ' + d.received.rejected : ''));
-  L.push('🧾 قوائم تجميع: ' + d.pickLists.count);
-  L.push('📷 صور شحنات: ' + d.photos.qty + (d.returnPhotos && d.returnPhotos.qty ? ' · صور مرتجعات: ' + d.returnPhotos.qty : ''));
-  if (d.bulky && d.bulky.count) L.push('📦 شحنات بالكي: ' + d.bulky.count);
+  L.push('📥 استلام من الموردين: ' + d.received.qty + ' قطعة' + (d.received.extra ? ' · زيادة: ' + d.received.extra : '') +
+    (d.received.rejected ? ' · مرفوض: ' + d.received.rejected : ''));
+  L.push('🧾 قوائم التجميع: ' + d.pickLists.count);
+  L.push('📷 صور الشحنات: ' + d.photos.qty + (d.returnPhotos && d.returnPhotos.qty ? ' · صور المرتجعات: ' + d.returnPhotos.qty : ''));
+  if (d.bulky && d.bulky.count) L.push('📦 شحنات كبيرة الحجم: ' + d.bulky.count);
   try {
     const ex = expiryReport_({}).items.filter(function (x) { return x.stock > 0 && x.daysLeft <= 7; });
     const past = ex.filter(function (x) { return x.daysLeft < 0; }), soon = ex.filter(function (x) { return x.daysLeft >= 0; });
     if (past.length) L.push('⛔ منتهي الصلاحية وموجود بالمخزون: ' + past.length + '\n' + past.slice(0, 5).map(function (x) { return '  • ' + x.title + ' (' + x.expiry + ')'; }).join('\n'));
-    if (soon.length) L.push('⚠️ صلاحيته بتخلص خلال 7 أيام: ' + soon.length + '\n' + soon.slice(0, 5).map(function (x) { return '  • ' + x.title + ' (' + x.expiry + ')'; }).join('\n'));
+    if (soon.length) L.push('⚠️ تنتهي صلاحيته خلال 7 أيام: ' + soon.length + '\n' + soon.slice(0, 5).map(function (x) { return '  • ' + x.title + ' (' + x.expiry + ')'; }).join('\n'));
   } catch (e) { L.push('⚠️ تعذر فحص الصلاحية'); }
-  L.push(d.errors.count ? '❗ أخطاء اليوم: ' + d.errors.count : '👍 مفيش أخطاء النهارده');
+  L.push(d.errors.count ? '❗ أخطاء اليوم: ' + d.errors.count : '👍 لا توجد أخطاء اليوم');
   return tgNotify_('daily', L.join('\n'));
 }
 
@@ -1640,7 +1640,7 @@ const TASK_ACTIONS = {
   repeatSave: function (r, who) { return repeatSave_(r, who); },
   repeatDelete: function (r, who) { return repeatDelete_(r, who); }
 };
-const WEEKDAYS_AR = ['', 'الاتنين', 'التلات', 'الأربع', 'الخميس', 'الجمعة', 'السبت', 'الحد'];
+const WEEKDAYS_AR = ['', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'];
 
 function tasksApi_(r) {
   try {
@@ -1771,7 +1771,7 @@ function taskSave_(r, who) {
     tPut_('Tasks', row);
     logActivity_('Tasks', isNew ? 'new' : 'edit', title, 0, { employee: emp.Name, due: due });
     let sent = false;
-    if ((isNew || moved) && row.Status === 'open') sent = sendTask_(row, emp, isNew ? '' : '✏️ تعديل في مهمة');
+    if ((isNew || moved) && row.Status === 'open') sent = sendTask_(row, emp, isNew ? '' : '✏️ تعديل على مهمة');
     return { ok: true, id: row.Id, sent: sent, linked: !!emp.ChatId };
   });
 }
@@ -1790,7 +1790,7 @@ function markTask_(t, done, via) {
   tPut_('Tasks', t);
   const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === t.EmployeeId; })[0] || {};
   logActivity_('Tasks', done ? 'done' : 'reopen', t.Title, 0, { employee: emp.Name || '', via: via });
-  if (done) tgNotify_('tasks', '✅ ' + (emp.Name || '') + ' خلّص: ' + t.Title + (isLate_(t.Due) ? ' (متأخر، الميعاد كان ' + t.Due + ')' : ''));
+  if (done) tgNotify_('tasks', '✅ أنجز ' + (emp.Name || '') + ' المهمة: ' + t.Title + (isLate_(t.Due) ? ' (متأخرة، كان موعدها ' + t.Due + ')' : ''));
 }
 function taskDelete_(r, who) {
   needManager_(who);
@@ -1925,26 +1925,29 @@ function tgBotName_() {
 function dueText_(due) {
   if (!due) return '';
   const di = dayInfo_(due), today = taskToday_();
-  const when = due.slice(0, 10) === today ? 'النهارده' : due.slice(0, 10) === addDays_(today, 1) ? 'بكرة' : WEEKDAYS_AR[di.wd] + ' ' + due.slice(0, 10);
+  const when = due.slice(0, 10) === today ? 'اليوم' : due.slice(0, 10) === addDays_(today, 1) ? 'غدًا' : WEEKDAYS_AR[di.wd] + ' ' + due.slice(0, 10);
   return when + (due.length > 10 ? ' الساعة ' + due.slice(11) : '');
 }
 function taskLine_(t) {
   return (isLate_(t.Due) ? '⛔ ' : '▫️ ') + t.Title + '\n   ⏰ ' + dueText_(t.Due) + (isLate_(t.Due) ? ' (متأخرة)' : '');
 }
-function doneButton_(t) { return { text: '✅ خلصت: ' + String(t.Title).slice(0, 40), callback_data: 'td:' + t.Id }; }
+function doneButton_(t) { return { text: '✅ أنجزت: ' + String(t.Title).slice(0, 40), callback_data: 'td:' + t.Id }; }
 /** One task to its employee, with a "done" button. False when the employee has not linked Telegram (or no bot). */
 function sendTask_(t, emp, head) {
-  if (!emp || !emp.ChatId) return false;
-  const text = (head || '📌 مهمة جديدة') + '\n\n' + t.Title + (t.Notes ? '\n\n📝 ' + t.Notes : '') + '\n\n⏰ آخر ميعاد: ' + dueText_(t.Due);
-  return !!tgApi_('sendMessage', { chat_id: emp.ChatId, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [[{ text: '✅ خلصت', callback_data: 'td:' + t.Id }]] } });
+  if (!emp) return false;
+  // the group sees every task given out (also to employees who have not linked Telegram yet)
+  tgNotify_('tasks', (head || '📌 مهمة جديدة') + ' — ' + emp.Name + '\n' + t.Title + '\n⏰ ' + dueText_(t.Due));
+  if (!emp.ChatId) return false;
+  const text = (head || '📌 مهمة جديدة') + '\n\n' + t.Title + (t.Notes ? '\n\n📝 ' + t.Notes : '') + '\n\n⏰ الموعد النهائي: ' + dueText_(t.Due);
+  return !!tgApi_('sendMessage', { chat_id: emp.ChatId, text: text.slice(0, 4000), reply_markup: { inline_keyboard: [[{ text: '✅ أنجزت', callback_data: 'td:' + t.Id }]] } });
 }
 function sendOpenList_(emp, head) {
   const open = tRows_('Tasks').filter(function (t) { return t.EmployeeId === emp.Id && t.Status === 'open'; })
     .sort(function (a, b) { return String(a.Due).localeCompare(String(b.Due)); });
-  if (!open.length) return tgApi_('sendMessage', { chat_id: emp.ChatId, text: (head ? head + '\n\n' : '') + 'مفيش مهام مفتوحة 👍' });
+  if (!open.length) return tgApi_('sendMessage', { chat_id: emp.ChatId, text: (head ? head + '\n\n' : '') + 'لا توجد مهام مفتوحة 👍' });
   const shown = open.slice(0, 25);
   return tgApi_('sendMessage', { chat_id: emp.ChatId,
-    text: ((head ? head + '\n\n' : '') + shown.map(taskLine_).join('\n') + (open.length > 25 ? '\n… و' + (open.length - 25) + ' كمان في التطبيق' : '')).slice(0, 4000),
+    text: ((head ? head + '\n\n' : '') + shown.map(taskLine_).join('\n') + (open.length > 25 ? '\n… و' + (open.length - 25) + ' مهام أخرى في التطبيق' : '')).slice(0, 4000),
     reply_markup: { inline_keyboard: shown.map(function (t) { return [doneButton_(t)]; }) } });
 }
 /** Time trigger, every minute: the bot's new messages (employees linking with /start <code>, /tasks) and "done" taps. */
@@ -1963,24 +1966,26 @@ function tgPoll() {
 function tgHandle_(u) {
   const staff = tRows_('TaskStaff').filter(function (e) { return e.Active !== false; });
   if (u.callback_query) {
+    const qa = /^(ia|in):(\w+)$/.exec(u.callback_query.data || '');
+    if (qa) { reqAnswer_(u.callback_query, qa); return; }        // inspection answer in the group
     const q = u.callback_query, m = /^td:(\w+)$/.exec(q.data || ''), chat = String(q.from && q.from.id);
     const emp = staff.filter(function (e) { return String(e.ChatId) === chat; })[0];
     let say = '';
     if (!m) say = '؟';
-    else if (!emp) say = 'حسابك مش مربوط: افتح الرابط من المدير';
+    else if (!emp) say = 'حسابك غير مرتبط: افتح رابط الربط الذي يرسله المدير';
     else withTaskLock_(function () {
       const t = tRows_('Tasks').filter(function (x) { return x.Id === m[1]; })[0];
-      if (!t || t.Status === 'cancelled') say = 'المهمة دي اتلغت';
-      else if (t.EmployeeId !== emp.Id) say = 'دي مش مهمتك';
-      else if (t.Status === 'done') say = 'متعلّمة خلصت قبل كده ✅';
-      else { markTask_(t, true, 'telegram'); say = 'تمام ✅ اتسجلت'; }
+      if (!t || t.Status === 'cancelled') say = 'تم إلغاء هذه المهمة';
+      else if (t.EmployeeId !== emp.Id) say = 'هذه المهمة ليست لك';
+      else if (t.Status === 'done') say = 'سُجِّلت منجزة من قبل ✅';
+      else { markTask_(t, true, 'telegram'); say = 'تم التسجيل ✅'; }
     });
     tgApi_('answerCallbackQuery', { callback_query_id: q.id, text: say });
-    if (q.message && /اتسجلت|قبل كده/.test(say) && q.message.reply_markup) {
+    if (q.message && /تم التسجيل|من قبل/.test(say) && q.message.reply_markup) {
       // take the tapped button off the message (others stay)
       const rows = (q.message.reply_markup.inline_keyboard || []).filter(function (row) { return !row.some(function (b) { return b.callback_data === q.data; }); });
       if (rows.length === (q.message.reply_markup.inline_keyboard || []).length - 1 && rows.length === 0)
-        tgApi_('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, text: String(q.message.text || '').slice(0, 3900) + '\n\n✅ خلصت' });
+        tgApi_('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, text: String(q.message.text || '').slice(0, 3900) + '\n\n✅ أُنجزت' });
       else tgApi_('editMessageReplyMarkup', { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: rows } });
     }
     return;
@@ -1996,27 +2001,38 @@ function tgHandle_(u) {
   const start = /^\/start(?:\s+(\w+))?/.exec(text);
   if (start && start[1]) {
     const emp = staff.filter(function (e) { return e.LinkCode && e.LinkCode === start[1]; })[0];
-    if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'الرابط ده قديم أو غلط. اطلب رابط جديد من المدير.' }); return; }
+    if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'هذا الرابط قديم أو غير صحيح. اطلب رابطًا جديدًا من المدير.' }); return; }
     withTaskLock_(function () {
       // one chat = one employee: an older link of the same chat is removed
       staff.forEach(function (e) { if (String(e.ChatId) === chat && e.Id !== emp.Id) { e.ChatId = ''; tPut_('TaskStaff', e); } });
       emp.ChatId = chat; tPut_('TaskStaff', emp);
     });
     logActivity_('Tasks', 'telegram linked', emp.Name, 0);
-    sendOpenList_(emp, 'أهلاً ' + emp.Name + ' 👋\nاتربطت بمهامك في بتفريند. هيوصلك هنا كل مهمة جديدة، وكل يوم الصبح ملخص.\nاكتب /tasks في أي وقت عشان تشوف مهامك.');
+    tgNotify_('tasks', '🔗 ربط ' + emp.Name + ' حسابه على تيليجرام بمهامه.');
+    sendOpenList_(emp, 'أهلًا ' + emp.Name + ' 👋\nتم ربط حسابك بمهامك في بتفريند. ستصلك هنا كل مهمة جديدة، وملخص كل صباح.\nاكتب /tasks في أي وقت لعرض مهامك.');
     return;
   }
   const emp = staff.filter(function (e) { return String(e.ChatId) === chat; })[0];
-  if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'أهلاً 👋 افتح رابط الربط اللي هيبعتهولك المدير من تطبيق بتفريند.' }); return; }
+  if (!emp) { tgApi_('sendMessage', { chat_id: chat, text: 'أهلًا 👋 افتح رابط الربط الذي سيرسله إليك المدير من تطبيق بتفريند.' }); return; }
   if (/^\/(tasks|start)\b|مهام/.test(text)) sendOpenList_(emp, '📋 مهامك المفتوحة');
 }
 /** Time trigger, every morning: makes today's weekly / monthly tasks, then sends each employee their open tasks. */
 function tasksMorning() {
   const today = taskToday_();
   try { makeRepeats_(today, false); } catch (e) { logError_('Tasks', 'repeats', e); }
+  // the group: one message with everyone's open tasks
+  try {
+    const open = tRows_('Tasks').filter(function (t) { return t.Status === 'open'; }), L = [];
+    tRows_('TaskStaff').forEach(function (e) {
+      if (e.Active === false) return;
+      const mine = open.filter(function (t) { return t.EmployeeId === e.Id; }).sort(function (a, b) { return String(a.Due).localeCompare(String(b.Due)); });
+      if (mine.length) L.push('👤 ' + e.Name + ' (' + mine.length + ')\n' + mine.slice(0, 10).map(taskLine_).join('\n'));
+    });
+    if (L.length) tgNotify_('tasks', ('☀️ مهام اليوم المفتوحة\n\n' + L.join('\n\n')).slice(0, 4000));
+  } catch (e) { console.error('morning group', e.message); }
   tRows_('TaskStaff').forEach(function (e) {
     if (e.Active === false || !e.ChatId) return;
-    try { sendOpenList_(e, '☀️ صباح الخير ' + e.Name + '\nمهامك النهارده:'); } catch (x) { console.error('morning', e.Name, x.message); }
+    try { sendOpenList_(e, '☀️ صباح الخير ' + e.Name + '\nمهامك اليوم:'); } catch (x) { console.error('morning', e.Name, x.message); }
   });
 }
 /** Editor or the sheet menu, once: the bot inbox (every minute) and the morning summary (around 9:00). */
@@ -2026,7 +2042,141 @@ function installTasksTriggers() {
   ScriptApp.newTrigger('tgPoll').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('tasksMorning').timeBased().atHour(9).everyDays(1).create();
   Logger.log('Tasks: bot inbox every minute, morning summary around 9:00.');
-  try { SpreadsheetApp.getUi().alert('✅ نظام المهام اشتغل: البوت بيقرأ الرسايل كل دقيقة، والملخص كل يوم الصبح حوالي 9.'); } catch (e) {}
+  try { SpreadsheetApp.getUi().alert('✅ تم تشغيل نظام المهام: يقرأ البوت الرسائل كل دقيقة، ويُرسَل الملخص كل صباح نحو الساعة 9.'); } catch (e) {}
+}
+
+/* =====================================================================================
+ * Customer service (tab "Customer service"): order cancel / change requests, delivery inspection requests and
+ * customer complaints. Login: the Tasks pass (manager or employee), so each entry records who wrote it.
+ * Every new entry and every change is announced in the Telegram group (kind "requests"). An inspection request
+ * carries two buttons in the group (allow / do not allow); the answer and who gave it are saved and shown in the app.
+ * Sheet "Requests" (one row per entry).
+ * ===================================================================================== */
+TASK_SHEETS.Requests = ['Id', 'Kind', 'Order', 'Customer', 'Phone', 'Channel', 'Category', 'Details', 'Status', 'CreatedAt', 'CreatedBy',
+  'UpdatedAt', 'UpdatedBy', 'Note', 'OrderInfo'];
+const REQ_KINDS = { cancel: 'إلغاء طلب', edit: 'تعديل طلب', inspect: 'معاينة', complaint: 'شكوى' };
+const REQ_STATUS = {   // the statuses each kind can have; the first is the starting one
+  cancel: ['open', 'done', 'rejected'], edit: ['open', 'done', 'rejected'],
+  inspect: ['pending', 'allowed', 'denied'], complaint: ['open', 'working', 'resolved']
+};
+const REQ_STATUS_AR = { open: 'مفتوح', done: 'تم التنفيذ', rejected: 'مرفوض', pending: 'في انتظار الرد', allowed: 'مسموح بالمعاينة',
+  denied: 'غير مسموح بالمعاينة', working: 'قيد المتابعة', resolved: 'تم الحل' };
+const COMPLAINT_CATS = { quality: 'جودة المنتج', late: 'تأخر التوصيل', wrong: 'منتج خطأ أو ناقص', damaged: 'منتج تالف', staff: 'تعامل الموظفين',
+  price: 'السعر', delivery: 'شركة الشحن', other: 'أخرى' };
+const COMPLAINT_CHANNELS = { phone: 'مكالمة', whatsapp: 'واتساب', facebook: 'فيسبوك', instagram: 'إنستجرام', store: 'في المحل', other: 'أخرى' };
+Object.assign(TASK_ACTIONS, {
+  reqInit: function (r, who) { return reqInit_(r, who); },
+  reqSave: function (r, who) { return reqSave_(r, who); },
+  reqStatus: function (r, who) { return reqStatus_(r, who); }
+});
+
+function reqOut_(x) {
+  let info = null; try { info = x.OrderInfo ? JSON.parse(x.OrderInfo) : null; } catch (e) {}
+  return { id: x.Id, kind: x.Kind, order: x.Order, customer: x.Customer, phone: x.Phone, channel: x.Channel, category: x.Category,
+    details: x.Details, status: x.Status, createdAt: x.CreatedAt ? new Date(x.CreatedAt).toISOString() : '', createdBy: x.CreatedBy,
+    updatedAt: x.UpdatedAt ? new Date(x.UpdatedAt).toISOString() : '', updatedBy: x.UpdatedBy || '', note: x.Note || '', info: info };
+}
+/** Open entries, and closed ones of the last 30 days (90 for complaints), newest first. */
+function reqInit_(r, who) {
+  const since = Date.now() - 30 * 864e5, sinceC = Date.now() - 90 * 864e5;
+  const list = tRows_('Requests').filter(function (x) {
+    const first = (REQ_STATUS[x.Kind] || [])[0], t = new Date(x.UpdatedAt || x.CreatedAt).getTime();
+    return x.Status === first || x.Status === 'working' || t >= (x.Kind === 'complaint' ? sinceC : since);
+  }).map(reqOut_).sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); });
+  return { ok: true, role: who.manager ? 'manager' : 'employee', me: who.name, items: list };
+}
+/** The Shopify order behind a request: checked so a mistyped number is caught, and shown in the group message. */
+function reqOrder_(raw) {
+  const num = String(raw || '').replace(/[^0-9a-z-]/gi, '');
+  if (!num) throw uerr_('Write the order number');
+  let o;
+  try {
+    o = shopify_('query($q: String!) { orders(first: 1, query: $q) { nodes { id name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus ' +
+      'totalPriceSet { shopMoney { amount currencyCode } } shippingAddress { name city } } } }', { q: 'name:#' + num + ' OR name:' + num }).orders.nodes[0];
+  } catch (e) { return { name: '#' + num, unchecked: true }; }     // Shopify unreachable: keep the request anyway
+  if (!o) throw uerr_('Order ' + num + ' not found in Shopify');
+  return { name: o.name, customer: o.shippingAddress && o.shippingAddress.name || '', city: o.shippingAddress && o.shippingAddress.city || '',
+    total: o.totalPriceSet ? o.totalPriceSet.shopMoney.amount + ' ' + o.totalPriceSet.shopMoney.currencyCode : '',
+    paid: o.displayFinancialStatus, fulfillment: o.displayFulfillmentStatus, cancelled: !!o.cancelledAt, createdAt: o.createdAt };
+}
+const FUL_AR = { UNFULFILLED: 'لم يُجهَّز', PARTIALLY_FULFILLED: 'مُجهَّز جزئيًا', FULFILLED: 'تم تجهيزه', IN_PROGRESS: 'قيد التجهيز', ON_HOLD: 'معلّق' };
+function reqText_(x, head) {
+  let info = null; try { info = x.OrderInfo ? JSON.parse(x.OrderInfo) : null; } catch (e) {}
+  const L = [head];
+  if (x.Order) L.push('🧾 الطلب: ' + x.Order + (info && info.customer ? ' — ' + info.customer : '') + (info && info.city ? ' (' + info.city + ')' : ''));
+  if (info && info.total) L.push('💰 ' + info.total + (info.fulfillment ? ' · ' + (FUL_AR[info.fulfillment] || info.fulfillment) : '') + (info.cancelled ? ' · ملغى بالفعل' : ''));
+  if (info && /FULFILLED/.test(info.fulfillment || '') && (x.Kind === 'cancel' || x.Kind === 'edit')) L.push('⚠️ تنبيه: الطلب جُهِّز بالفعل');
+  if (x.Customer) L.push('👤 ' + x.Customer + (x.Phone ? ' · ' + x.Phone : ''));
+  if (x.Kind === 'complaint') L.push('🏷️ ' + (COMPLAINT_CATS[x.Category] || 'أخرى') + ' · ' + (COMPLAINT_CHANNELS[x.Channel] || ''));
+  if (x.Details) L.push('📝 ' + x.Details);
+  L.push('✍️ ' + x.CreatedBy);
+  return L.join('\n').slice(0, 3800);
+}
+function reqSave_(r, who) {
+  const x = r.req || {}, kind = x.kind;
+  if (!REQ_KINDS[kind]) throw uerr_('Choose the type');
+  const details = String(x.details || '').trim().slice(0, 1500);
+  if ((kind === 'edit' || kind === 'complaint') && !details) throw uerr_('Write the details');
+  let info = null, order = String(x.order || '').trim();
+  if (kind !== 'complaint' || order) { info = reqOrder_(order); order = info.name; }
+  const row = { Id: tId_('Q'), Kind: kind, Order: order, Customer: String(x.customer || (info && info.customer) || '').trim().slice(0, 80),
+    Phone: String(x.phone || '').replace(/[^\d+]/g, '').slice(0, 20), Channel: kind === 'complaint' ? (COMPLAINT_CHANNELS[x.channel] ? x.channel : 'other') : '',
+    Category: kind === 'complaint' ? (COMPLAINT_CATS[x.category] ? x.category : 'other') : '', Details: details, Status: REQ_STATUS[kind][0],
+    CreatedAt: new Date(), CreatedBy: who.name, UpdatedAt: '', UpdatedBy: '', Note: '', OrderInfo: info ? JSON.stringify(info) : '' };
+  withTaskLock_(function () { tPut_('Requests', row); });
+  logActivity_('Customers', kind, order || row.Customer, 0, { by: who.name });
+  const icon = { cancel: '🛑', edit: '✏️', inspect: '🔍', complaint: '📣' }[kind];
+  const head = icon + ' ' + (kind === 'inspect' ? 'طلب معاينة — يُرجى الرد' : kind === 'complaint' ? 'شكوى عميل جديدة' : 'طلب ' + REQ_KINDS[kind].replace('طلب', '').trim() + ' جديد');
+  let sent;
+  if (kind === 'inspect') sent = tgGroup_(reqText_(row, head), { inline_keyboard: [[{ text: '✅ يُسمح بالمعاينة', callback_data: 'ia:' + row.Id }, { text: '❌ لا يُسمح', callback_data: 'in:' + row.Id }]] });
+  else sent = tgNotify_('requests', reqText_(row, head));
+  return { ok: true, item: reqOut_(row), sent: !!sent, warn: info && /FULFILLED/.test(info.fulfillment || '') && (kind === 'cancel' || kind === 'edit') ? 'fulfilled' : info && info.cancelled ? 'cancelled' : '' };
+}
+/** Change the status (and note) of an entry. Inspection answers: the manager only (or the group buttons). */
+function reqStatus_(r, who) {
+  const res = withTaskLock_(function () {
+    const x = tRows_('Requests').filter(function (y) { return y.Id === r.id; })[0];
+    if (!x) throw uerr_('Not found');
+    if ((REQ_STATUS[x.Kind] || []).indexOf(r.status) === -1) throw uerr_('Choose the status');
+    if (x.Kind === 'inspect' && !who.manager) throw uerr_('Only the manager can do this');
+    const changed = x.Status !== r.status;
+    x.Status = r.status; x.Note = String(r.note == null ? x.Note : r.note).trim().slice(0, 1000);
+    x.UpdatedAt = new Date(); x.UpdatedBy = who.name;
+    tPut_('Requests', x);
+    return { x: x, changed: changed };
+  });
+  const x = res.x;
+  logActivity_('Customers', x.Kind + ' ' + x.Status, x.Order || x.Customer, 0, { by: who.name });
+  if (res.changed) tgNotify_('requests', (x.Status === 'rejected' || x.Status === 'denied' ? '❌ ' : x.Status === 'working' ? '⏳ ' : '✅ ') +
+    REQ_KINDS[x.Kind] + (x.Order ? ' ' + x.Order : '') + ': ' + REQ_STATUS_AR[x.Status] + '\n✍️ ' + who.name + (x.Note ? '\n📝 ' + x.Note : ''));
+  return { ok: true, item: reqOut_(x) };
+}
+/** An inspection button pressed in the group. Anyone in the store's group can answer; the name is saved. */
+function reqAnswer_(q, m) {
+  const name = [q.from && q.from.first_name, q.from && q.from.last_name].filter(Boolean).join(' ') || 'تيليجرام';
+  let say = '', x;
+  if (String(q.message && q.message.chat && q.message.chat.id) !== String(P.getProperty('TELEGRAM_CHAT_ID'))) say = 'يتم الرد من جروب المتجر فقط';
+  else withTaskLock_(function () {
+    x = tRows_('Requests').filter(function (y) { return y.Id === m[2]; })[0];
+    if (!x) { say = 'الطلب غير موجود'; return; }
+    if (x.Status !== 'pending') { say = 'تم الرد بالفعل: ' + REQ_STATUS_AR[x.Status]; return; }
+    x.Status = m[1] === 'ia' ? 'allowed' : 'denied'; x.UpdatedAt = new Date(); x.UpdatedBy = name + ' (تيليجرام)';
+    tPut_('Requests', x); say = 'تم: ' + REQ_STATUS_AR[x.Status];
+  });
+  tgApi_('answerCallbackQuery', { callback_query_id: q.id, text: say });
+  if (x && /^تم:/.test(say)) {
+    logActivity_('Customers', 'inspect ' + x.Status, x.Order, 0, { by: name });
+    tgApi_('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id,
+      text: String(q.message.text || '').slice(0, 3700) + '\n\n' + (x.Status === 'allowed' ? '✅ ' : '❌ ') + REQ_STATUS_AR[x.Status] + ' — ' + name });
+  }
+}
+/** A message to the store's group (with optional buttons). */
+function tgGroup_(text, markup) {
+  const chat = P.getProperty('TELEGRAM_CHAT_ID');
+  if (!chat) return null;
+  const p = { chat_id: chat, text: String(text).slice(0, 4000), disable_web_page_preview: true };
+  if (markup) p.reply_markup = markup;
+  return tgApi_('sendMessage', p);
 }
 
 /* =====================================================================================
@@ -2341,8 +2491,8 @@ function syncBosta(only) {
       if (r) { const cur = B.getRange(r, 1, 1, 14).getValues()[0]; row[11] = cur[11]; if (!row[12]) row[12] = cur[12];
         B.getRange(r, 1, 1, 14).setValues([row]); st.bulkyUpdated++; }
       else { B.appendRow(row); st.bulkyNew++; logActivity_('Shipments', 'bulky', tn, 1, { size: p.size, order: d.businessReference });
-        tgNotify_('bulky', '📦 شحنة بالكي\nالبوليصة: ' + tn + '\nالطلب: ' + (d.businessReference || '-') + '\nالمقاس: ' + p.size +
-          '\nالرسوم: ' + (p.final !== '' ? p.final + ' جنيه (اتخصمت)' : (p.vat || '?') + ' جنيه (متوقعة)')); }
+        tgNotify_('bulky', '📦 شحنة كبيرة الحجم (Bulky)\nالبوليصة: ' + tn + '\nالطلب: ' + (d.businessReference || '-') + '\nالمقاس: ' + p.size +
+          '\nالرسوم: ' + (p.final !== '' ? p.final + ' جنيه (خُصمت)' : (p.vat || '?') + ' جنيه (متوقعة)')); }
     } catch (e) {
       console.error(tn, e.message);
       if (/Bosta (400|404)/.test(e.message))             // not a Bosta shipment (misread): mark & stop retrying

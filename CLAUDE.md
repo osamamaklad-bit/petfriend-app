@@ -1,12 +1,13 @@
 # PetFriend app: notes for Claude
 
 Installable web app (PWA) for the Pet Friend store, hosted on GitHub Pages from `main`.
-The owner writes in Arabic (Egyptian); answer in the language they use.
+The owner writes in Arabic (Egyptian); answer in the language they use. **All Arabic in the app and in Telegram
+messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule): e.g. كلمة المرور not باسورد, الخادم not السيرفر.
 
 ## Layout
 
 - `index.html`: main page with the tab bar. Each tab is its own page in an iframe:
-  `pos/`, `tasks/` (staff tasks), `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Check),
+  `pos/`, `tasks/` (staff tasks), `customers/` (customer service), `check` (= `orders/index.html?only=check`: Check mode only), `orders/` (Fulfill · Returns · Check),
   `receive` (= `orders/index.html?only=receive`: purchase orders),
   `picklist/`, `shipments/` (outgoing: Save + Search), `returns` (= `shipments/index.html?only=returns`: Save return +
   Search), `today/`.
@@ -22,7 +23,7 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
   has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
   (one history entry above home), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
-  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments · Tasks (all fit at once on
+  home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments · Customers · Tasks (all fit at once on
   phones with smaller icons and wrapping names, checked from 320px; the owner prefers this to a carousel). Arabic brand name: بتفريند.
 - `labels.js`: barcode labels, always 50 mm wide x 25 mm tall (owner's paper), used by Purchase orders, Check and Today.
   Each label shows values only, no captions (no "SKU", "EXP", "V:", "P:"): the product / variant name on ONE line (when
@@ -128,6 +129,15 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
     (every minute, `getUpdates` with `TG_OFFSET`) handles /start, /tasks and the buttons (only the task's own employee
     can finish it); a finished task is announced in the group (kind `tasks`). Triggers: `installTasksTriggers`
     (sheet menu). `tgPoll` reads the bot's messages, so group ids seen are kept in `TG_SEEN_GROUPS` for `telegramFindChat`.
+- Customer service (own tab, `customers/index.html`; actions `reqInit`, `reqSave`, `reqStatus`, same Tasks pass so each
+  entry records who wrote it; sheet `Requests`): order cancel / change requests (open → done / rejected), inspection
+  requests (pending → allowed / denied: two buttons in the Telegram group, `ia:` / `in:` callbacks handled by `tgPoll`,
+  only from the store group, the first answer wins and the answerer's name is saved; in the app only the manager can
+  answer) and customer complaints (open → working → resolved with a note; category + channel). The order number is
+  checked in Shopify (`reqOrder_`) and its total / fulfillment status shown; a cancel / change on a fulfilled order is
+  flagged. Every new entry and status change goes to the group (kind `requests`).
+- Every employee notice also goes to the group: each new task (also before the employee links Telegram), linking,
+  finished tasks, and one morning list of everyone's open tasks.
 - Returns don't refund money; refunds are done in Shopify admin.
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.
