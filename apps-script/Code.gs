@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-27.2';
+const SERVER_VERSION = '2026-11-27.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -326,7 +326,7 @@ const ORDER_ACTIONS = {
   expiryReport: function (r) { return expiryReport_(r); },
   lookupProduct: function (r) { return lookupProduct_(r); },
   saveLabels: function (r) { return saveLabels_(r); },
-  bulkyList: function (r) { return bulkyRecent_(r.days); },
+  bulkyList: function (r) { return Object.assign(bulkyRecent_(r.days), { job: bulkyJobState_() }); },
   bulkyCheck: function (r) { return bulkyBackfill_(r.days); }
 };
 
@@ -2618,14 +2618,17 @@ function syncBosta(only, opts) {
   opts = opts && typeof opts === 'object' && !opts.triggerUid ? opts : {};
   if (!only) watchSecrets_();
   const st = { at: new Date().toISOString(), fees: null, shopify: null, checked: 0, bulkyNew: 0, bulkyUpdated: 0, failed: 0, firstError: '' };
-  if (!only) {
+  if (!only && !opts.skipImport) {
     try { st.fees = importFromFees(opts.feePages); } catch (e) { st.fees = { error: e.message }; logError_('Shipments', 'Bosta fees import', e); }
     try { st.shopify = importFromShopify_(opts.days); } catch (e) { st.shopify = { error: e.message }; logError_('Shipments', 'Bosta numbers from Shopify', e); }
   }
   const t0 = Date.now(), limit = opts.limitMs || 300000, flag = new RegExp(P.getProperty('FLAG_REGEX') || 'bulky', 'i');
   const T = sh_('Tracking'), data = T.getDataRange().getValues();
   // newest first, so new shipments are checked even when an old backlog does not fit in one run
-  for (let i = data.length - 1; i >= 1 && Date.now() - t0 < limit; i--) {
+  let lastI = 0;
+  const from = opts.from ? Math.min(data.length - 1, Number(opts.from)) : data.length - 1;   // a later round goes on where the last stopped
+  for (let i = from; i >= 1; i--) {
+    if (Date.now() - t0 >= limit) { lastI = i; break; }
     if (data[i][5] === true && !only) continue;
     const tn = String(data[i][0]);
     if (only && tn !== only) continue;
@@ -2635,6 +2638,7 @@ function syncBosta(only, opts) {
       T.getRange(i + 1, 4, 1, 3).setValues([[d.state && d.state.value, p.size, p.final !== '' || old]]);
       if (!flag.test(p.size || '')) continue;
       const B = sh_('Bulky'), r = findRow_('Bulky', tn), now = new Date();
+      if (!B.getRange(1, 15).getValue()) B.getRange(1, 15).setValue('ShipmentDate');
       const links = rows_('Shipments').filter(x => String(x[1]) === tn).map(x => x[3]).join('\n');
       const row = [ "'" + tn, d.businessReference, p.size, p.vat, p.ship, p.sizeCost, p.material, p.final,
         d.state && d.state.value, items_(d), links, now, p.final !== '' ? now : '', p.final !== '' ? 'Charged' : 'Flagged', bostaDate_(d) ];
@@ -2650,9 +2654,11 @@ function syncBosta(only, opts) {
       else { st.failed++; if (!st.firstError) st.firstError = tn + ': ' + e.message; }
     }
   }
+  st.more = false; st.stoppedAt = lastI;
+  for (let k = data.length - 1; k >= 1; k--) if (data[k][5] !== true && k <= lastI) { st.more = true; break; }   // time ran out first
   // e.g. an expired Bosta key fails every shipment: one line in Errors per run, not one per shipment
   if (st.failed) logError_('Shipments', 'Bosta sync', new Error(st.failed + ' shipment(s) failed. First: ' + st.firstError));
-  if (!only) try { P.setProperty('BOSTA_LAST_SYNC', JSON.stringify(st)); } catch (e) {}
+  if (!only && !opts.skipImport) try { P.setProperty('BOSTA_LAST_SYNC', JSON.stringify(st)); } catch (e) {}
   return st;
 }
 /** The day Bosta created the shipment (its own date), else ''. */
@@ -2674,26 +2680,107 @@ function bulkyRecent_(days) {
   const fees = list.reduce(function (t, x) { return t + (x.final != null ? x.final : x.expected || 0); }, 0);
   return { ok: true, days: days, since: cutoff, count: list.length, fees: Math.round(fees * 100) / 100, items: list };
 }
-/** Brings in the Bosta shipments of the last `days` days (Shopify fulfillments, more pages of the Bosta wallet feed),
- *  checks them with Bosta, and returns the bulky ones. For the app button and the sheet menu. */
+/* Bulky shipments of the last N days, as a background job (the app's button and the sheet menu start it):
+ * 1. brings in the Bosta numbers of those days from every source: Bosta's own shipment list (deliveries/search),
+ *    the wallet feed (more pages) and Shopify fulfillments;
+ * 2. checks every shipment not finished yet with Bosta (syncBosta), in rounds of 4.5 minutes: when time runs out the
+ *    job starts itself again a minute later (Google stops any run after 6 minutes);
+ * 3. at the end: the list of bulky shipments goes to the Telegram group, and the Today tab shows it.
+ * State in Script Property BULKY_JOB (what each source brought, how many checked, done or not). */
+const BULKY_JOB_MAX_ROUNDS = 8;
+function bulkyJobState_() { try { return JSON.parse(P.getProperty('BULKY_JOB') || 'null'); } catch (e) { return null; } }
 function bulkyBackfill_(days) {
   days = Math.max(1, Math.min(60, Number(days) || 14));
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) throw uerr_('A Bosta check is already running. Try again in a few minutes.');
-  let st;
-  try { st = syncBosta('', { days: days, feePages: Math.max(5, Math.ceil(days / 2) + 3), limitMs: 240000 }); }
-  finally { lock.releaseLock(); }
-  const r = bulkyRecent_(days);
-  logActivity_('Shipments', 'bulky check ' + days + ' days', '', r.count, { checked: st.checked, added: ((st.fees && st.fees.added) || 0) + ((st.shopify && st.shopify.added) || 0) });
-  tgNotify_('bulky', '📦 الشحنات كبيرة الحجم في آخر ' + days + ' يومًا: ' + r.count + (r.count ? ' شحنة · الرسوم ' + r.fees + ' جنيه' : '') +
-    (r.items.length ? '\n' + r.items.slice(0, 15).map(function (x) { return '• ' + x.tn + ' · ' + (x.order || '-') + ' · ' + x.size + ' · ' + x.date; }).join('\n') : '') +
-    '\n(تم فحص ' + st.checked + ' شحنة' + (st.failed ? '، وفشل ' + st.failed : '') + ')');
-  return Object.assign(r, { checked: st.checked, failed: st.failed, added: ((st.fees && st.fees.added) || 0) + ((st.shopify && st.shopify.added) || 0) });
+  const job = bulkyJobState_();
+  if (job && job.state === 'running' && Date.now() - new Date(job.updatedAt || job.startedAt).getTime() < 15 * 60000)
+    return Object.assign(bulkyRecent_(days), { job: job, already: true });
+  const now = new Date().toISOString();
+  const fresh = { state: 'running', days: days, startedAt: now, updatedAt: now, step: 'import', rounds: 0, checked: 0, failed: 0, sources: {} };
+  P.setProperty('BULKY_JOB', JSON.stringify(fresh));
+  bulkyJobTrigger_(1);
+  logActivity_('Shipments', 'bulky check started', days + ' days', 0);
+  return Object.assign(bulkyRecent_(days), { job: fresh, started: true });
 }
-/** Sheet menu / editor: the bulky shipments of the last 14 days. */
+function bulkyJobTrigger_(minutes) {
+  ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'bulkyJob'; }).forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('bulkyJob').timeBased().after(Math.max(1, minutes) * 60000).create();
+}
+/** Time trigger (one-off): one round of the bulky job. */
+function bulkyJob() {
+  const job = bulkyJobState_();
+  ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'bulkyJob'; }).forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  if (!job || job.state !== 'running') return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) { bulkyJobTrigger_(2); return; }      // the hourly check is busy: try again shortly
+  const save = function () { job.updatedAt = new Date().toISOString(); P.setProperty('BULKY_JOB', JSON.stringify(job)); };
+  let st;
+  try {
+    if (job.step === 'import') {
+      const src = function (name, fn) { try { job.sources[name] = fn(); } catch (e) { job.sources[name] = { error: String(e.message || e).slice(0, 200) }; } };
+      src('bosta', function () { return importFromBostaList_(job.days); });
+      src('fees', function () { return importFromFees(Math.max(5, Math.ceil(job.days / 2) + 3)); });
+      src('shopify', function () { return importFromShopify_(job.days); });
+      job.step = 'check'; save();
+    }
+    st = syncBosta('', { skipImport: true, limitMs: 270000, from: job.from || 0 });
+    job.from = st.stoppedAt || 0;
+  } catch (e) {
+    job.state = 'failed'; job.error = String(e.message || e).slice(0, 300); save();
+    logError_('Shipments', 'bulky check', e);
+    return;
+  } finally { lock.releaseLock(); }
+  job.rounds++; job.checked += st.checked; job.failed += st.failed;
+  if (st.more && job.rounds < BULKY_JOB_MAX_ROUNDS) { save(); bulkyJobTrigger_(1); return; }
+  job.state = 'done'; job.more = !!st.more; save();
+  const r = bulkyRecent_(job.days), s = job.sources || {};
+  const srcLine = function (name, label) {
+    const x = s[name] || {};
+    return '• ' + label + ': ' + (x.error ? 'خطأ (' + x.error.slice(0, 80) + ')' : x.skipped ? 'غير مُعدّ' : (x.found || 0) + ' رقمًا، منها ' + (x.added || 0) + ' جديدًا');
+  };
+  logActivity_('Shipments', 'bulky check ' + job.days + ' days', '', r.count, { checked: job.checked, rounds: job.rounds,
+    bosta: s.bosta && (s.bosta.added != null ? s.bosta.added : s.bosta.error || s.bosta.skipped), fees: s.fees && (s.fees.added != null ? s.fees.added : s.fees.error || s.fees.skipped),
+    shopify: s.shopify && (s.shopify.added != null ? s.shopify.added : s.shopify.error || s.shopify.skipped) });
+  tgNotify_('bulky', ('📦 الشحنات كبيرة الحجم في آخر ' + job.days + ' يومًا: ' + r.count + (r.count ? ' شحنة · الرسوم ' + r.fees + ' جنيه' : '') +
+    (r.items.length ? '\n' + r.items.slice(0, 20).map(function (x) { return '• ' + x.tn + ' · ' + (x.order || '-') + ' · ' + x.size + ' · ' + x.date; }).join('\n') : '') +
+    '\n\nمصادر الشحنات:\n' + srcLine('bosta', 'قائمة شحنات بوسطة') + '\n' + srcLine('fees', 'سجل محفظة بوسطة') + '\n' + srcLine('shopify', 'شوبيفاي') +
+    '\nتم فحص ' + job.checked + ' شحنة' + (job.failed ? '، وفشل ' + job.failed : '') + (job.more ? '\n⚠️ بقيت شحنات لم تُفحص: ستُفحص في الفحص التلقائي كل ساعة.' : '')).slice(0, 4000));
+}
+/** Bosta's own list of the business's shipments (newest first), kept to the last `days` days. The endpoint can be
+ *  changed with BOSTA_SEARCH_URL. A shape that is not understood is reported, never guessed. */
+function importFromBostaList_(days) {
+  if (!P.getProperty('BOSTA_API_KEY')) return { skipped: 'no BOSTA_API_KEY' };
+  const url = P.getProperty('BOSTA_SEARCH_URL') || 'https://app.bosta.co/api/v2/deliveries/search';
+  const h = {}; h[P.getProperty('BOSTA_AUTH_HEADER_NAME') || 'Authorization'] = P.getProperty('BOSTA_API_KEY');
+  const cutoff = Date.now() - (Number(days) || 14) * 864e5, found = {};
+  let pages = 0, sawDates = false;
+  for (let page = 1; page <= 40; page++) {
+    const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', headers: h, muteHttpExceptions: true,
+      payload: JSON.stringify({ pageNumber: page, pageLimit: 50, limit: 50, page: page }) });
+    if (res.getResponseCode() !== 200) {
+      if (page === 1) throw new Error('Bosta list HTTP ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 120));
+      break;
+    }
+    let j; try { j = JSON.parse(res.getContentText()); } catch (e) { throw new Error('Bosta list: not JSON'); }
+    const d = j && (j.data || j), list = (d && (d.deliveries || d.list || d.results || d.data)) || (Array.isArray(d) ? d : null);
+    if (!Array.isArray(list)) { if (page === 1) throw new Error('Bosta list: unknown answer (' + Object.keys(d || {}).slice(0, 6).join(', ') + ')'); break; }
+    pages++;
+    if (!list.length) break;
+    let recent = 0;
+    list.forEach(function (x) {
+      const tn = String(x.trackingNumber || x.tracking_number || '').replace(/\D/g, '');
+      const t = x.createdAt ? new Date(x.createdAt).getTime() : NaN;
+      if (!isNaN(t)) sawDates = true;
+      if (tn && (isNaN(t) || t >= cutoff)) { found[tn.slice(-10)] = 1; if (!isNaN(t)) recent++; }
+    });
+    if (sawDates && !recent) break;                       // newest first: this page is older than the window
+  }
+  return { pages: pages, found: Object.keys(found).length, added: addTracking_(Object.keys(found)) };
+}
+/** Sheet menu / editor: starts the check of the last 14 days (result on Telegram and in the Today tab). */
 function bulkyLast14Days() {
   const r = bulkyBackfill_(14);
-  const msg = 'الشحنات كبيرة الحجم في آخر 14 يومًا: ' + r.count + (r.count ? ' (الرسوم ' + r.fees + ' جنيه)' : '') + '\nتم فحص ' + r.checked + ' شحنة، وأُضيفت ' + r.added + ' شحنة جديدة.';
+  const msg = r.already ? 'يوجد فحص قيد التشغيل بالفعل. ستصل النتيجة إلى مجموعة تيليجرام وتظهر في تبويب اليوم.'
+    : 'بدأ فحص الشحنات كبيرة الحجم لآخر 14 يومًا. قد يستغرق بضع دقائق، وستصل النتيجة إلى مجموعة تيليجرام وتظهر في تبويب اليوم.';
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
   return r;

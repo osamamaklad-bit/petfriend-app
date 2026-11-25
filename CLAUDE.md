@@ -95,9 +95,13 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   shipment photos, the Bosta wallet feed (`BOSTA_FEES_URL`, up to `BOSTA_FEES_PAGES` pages, default 5) and Bosta
   numbers on Shopify fulfillments (last 7 days). Checked newest first; sizes matching `FLAG_REGEX` (default
   `bulky`) go to `Bulky`. Each run saves `BOSTA_LAST_SYNC` (shown in Today); failures give one Errors line per run.
-  Bulky shipments of the last 14 days: Today section (`bulkyList`, read-only) and "Check with Bosta now" / sheet menu
-  `bulkyLast14Days` (`bulkyCheck` → `bulkyBackfill_`: Shopify fulfillments of the last 14 days, paged, + more wallet-feed
-  pages, then `syncBosta` within 4 min; script lock so two runs never overlap; summary to the group). Dated by Bosta's
+  Bulky shipments of the last 14 days: Today section (`bulkyList`, read-only, + job status) and "Check with Bosta now" /
+  sheet menu `bulkyLast14Days` (`bulkyCheck` → `bulkyBackfill_` starts a BACKGROUND job `bulkyJob` (one-off triggers;
+  a web request is stopped after 6 min): imports from Bosta's own list (`importFromBostaList_`, deliveries/search,
+  newest first, `BOSTA_SEARCH_URL` to change it; the endpoint is not in Bosta's public docs, so a failure is reported,
+  not guessed), the wallet feed (more pages) and Shopify fulfillments (paged), then checks in rounds of 4.5 min that go
+  on where the last stopped (`from`), up to 8 rounds; state in `BULKY_JOB`; the result with what each source brought
+  goes to the group). Found 2026-11-25: Tracking only got photographed shipments after 11/11 (wallet feed added nothing). Dated by Bosta's
   shipment date (`ShipmentDate`, column 15 of `Bulky`), else the day it was found.
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with

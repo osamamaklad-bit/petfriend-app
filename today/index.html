@@ -82,6 +82,7 @@
   <div id="errors"></div>
   <h2>Bulky shipments — last 14 days</h2>
   <div class="exbar"><span id="bkInfo" class="sp" style="color:var(--muted);font-size:13px"></span><button id="bkCheck">&#8635; Check with Bosta now</button></div>
+  <div id="bkJob" class="empty" hidden></div>
   <div id="bkList"><div class="empty">Loading...</div></div>
   <h2>Expiry dates</h2>
   <div class="exbar" id="exbar">
@@ -255,9 +256,22 @@
   });
 
   // ---------- bulky shipments of the last 14 days ----------
-  let bk = null, bkBusy = false;
+  let bk = null, bkBusy = false, bkPoll = null;
+  const T = (x) => (window.pfT ? window.pfT(x) : x);
+  function srcText(x) { return !x ? '?' : x.error ? T('error') + ' (' + x.error + ')' : x.skipped ? T('not set up') : (x.found || 0) + ' ' + T('numbers') + ', ' + (x.added || 0) + ' ' + T('new'); }
+  function renderJob() {
+    const j = bk && bk.job, el = $('bkJob');
+    el.hidden = !j;
+    if (!j) return;
+    if (j.state === 'running') { el.textContent = T('Bosta check running since') + ' ' + fmtWhen(j.startedAt) + ' · ' + j.checked + ' ' + T('shipments checked so far'); $('bkCheck').disabled = true; return; }
+    $('bkCheck').disabled = bkBusy;
+    const s = j.sources || {};
+    el.textContent = (j.state === 'failed' ? T('Last check failed:') + ' ' + (j.error || '') : T('Last check') + ' ' + fmtWhen(j.updatedAt) + ' · ' + j.checked + ' ' + T('shipments checked')) +
+      ' — ' + T('Bosta list') + ': ' + srcText(s.bosta) + ' · ' + T('Wallet feed') + ': ' + srcText(s.fees) + ' · ' + T('Shopify') + ': ' + srcText(s.shopify);
+  }
   function renderBulky() {
     const box = $('bkList'); box.innerHTML = '';
+    renderJob();
     if (!bk) return;
     $('bkInfo').textContent = bk.count ? bk.count + (bk.count === 1 ? ' shipment' : ' shipments') + ' · ' + money(bk.fees) + ' EGP' : '';
     if (!bk.items.length) { box.innerHTML = '<div class="empty">No bulky shipments in the last 14 days.</div>'; return; }
@@ -279,18 +293,24 @@
     if (bkBusy) return;
     const key = store.get('appKey'); if (!key) return;
     bkBusy = true; $('bkCheck').disabled = true;
-    if (check) { $('bkList').innerHTML = '<div class="empty">Checking the last 14 days with Bosta. This can take up to 5 minutes...</div>'; }
+    const wasRunning = bk && bk.job && bk.job.state === 'running';
     try {
       const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: check ? 'bulkyCheck' : 'bulkyList', days: 14 }) });
       const d = await res.json();
       if (!d.ok) throw new Error(d.error === 'Wrong app key' ? 'Wrong Orders pass' : d.error || 'Request failed');
-      bk = d; renderBulky();
-      if (check) say('Bosta check done: ' + d.checked + ' shipments checked, ' + d.count + ' bulky.', 'ok');
+      bk = d;
+      if (check) say(d.already ? 'A Bosta check is already running. The list updates by itself.' : 'Bosta check started. It runs in the background (a few minutes); the list updates by itself and the result goes to the Telegram group.', 'ok');
+      else if (wasRunning && d.job && d.job.state === 'done') say('Bosta check done: ' + d.job.checked + ' shipments checked, ' + d.count + ' bulky.', 'ok');
     } catch (e) { $('bkList').innerHTML = ''; const m = document.createElement('div'); m.className = 'empty'; m.textContent = e.message; $('bkList').appendChild(m); }
-    finally { bkBusy = false; $('bkCheck').disabled = false; }
+    finally {
+      bkBusy = false; renderBulky();
+      // while the job runs: look again every 30 seconds
+      clearTimeout(bkPoll);
+      if (bk && bk.job && bk.job.state === 'running') bkPoll = setTimeout(function () { loadBulky(); }, 30000);
+    }
   }
   $('bkCheck').addEventListener('click', async function () {
-    if (!(await pfConfirm(window.pfT ? pfT('Bring in the Bosta shipments of the last 14 days and check their size now? It can take up to 5 minutes.') : '', { ok: 'Check now' }))) return;
+    if (!(await pfConfirm(T('Bring in the Bosta shipments of the last 14 days and check their size now? It runs in the background and can take several minutes.'), { ok: 'Check now' }))) return;
     loadBulky(true);
   });
 

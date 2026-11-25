@@ -125,6 +125,8 @@ const ctx = {
     else if (url.includes('api.telegram.org') && url.endsWith('/getUpdates') && ctx.__tgUpdates) { ctx.__tgOffsets = (ctx.__tgOffsets || []).concat([body.offset]); ans = { ok: true, result: ctx.__tgUpdates }; ctx.__tgUpdates = []; }
     else if (url.includes('api.telegram.org')) { if (url.endsWith('/getUpdates')) ans = { ok: true, result: [{ message: { chat: { id: -100777, type: 'supergroup', title: 'PetFriend staff' } } }, { message: { chat: { id: 5, type: 'private' } } }] };
       else { ctx.__tg = (ctx.__tg || []).concat([{ url, body }]); ans = { ok: true, result: { message_id: 1 } }; } }
+    else if (url.includes('deliveries/search')) { const pg = body.pageNumber; ans = { data: { deliveries: pg === 1 ? [{ trackingNumber: '4440000001', createdAt: new Date(Date.now() - 2 * 864e5).toISOString() },
+      { trackingNumber: '4440000002', createdAt: new Date(Date.now() - 5 * 864e5).toISOString() }] : [{ trackingNumber: '4440000009', createdAt: new Date(Date.now() - 40 * 864e5).toISOString() }] } }; }
     else if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
@@ -139,7 +141,8 @@ const ctx = {
   Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? (ctx.__today || '2026-11-15') : f === 'HH:mm' ? (ctx.__hm || '11:00') : '20261115', newBlob: (bytes, type, name) => ({ type, name }), base64Decode: () => [], base64Encode: b => Array.isArray(b) && b.length > 4 ? Buffer.from(b).toString('base64') : 'AA==',
     computeDigest: (alg, s) => Array.from(require('crypto').createHash('sha256').update(String(s)).digest()), DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
   LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
-  ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create() {} }) }) }) },
+  ScriptApp: { getProjectTriggers: () => (ctx.__triggers || []).map(h => ({ getHandlerFunction: () => h })), deleteTrigger(t) { ctx.__triggers = (ctx.__triggers || []).filter(h => h !== t.getHandlerFunction()); },
+    newTrigger: h => { const tb = { create() { ctx.__triggers = (ctx.__triggers || []).concat([h]); } }; ['everyHours', 'everyMinutes', 'atHour', 'everyDays', 'after'].forEach(m => { tb[m] = () => tb; }); return { timeBased: () => tb }; } },
   Logger: { log: (...a) => console.log('   LOG', ...a) },
   HtmlService: {}
 };
@@ -823,17 +826,25 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
 }
 
-// ---- Bulky shipments of the last 14 days (Today button / sheet menu)
+// ---- Bulky shipments of the last 14 days (Today button / sheet menu): a background job
 {
-  fetches.length = 0;
+  fetches.length = 0; ctx.__triggers = [];
   let r = post({ action: 'bulkyCheck', key: 'kkk', days: 14 });
-  const shopQ = fetches.find(f => /fulfillment_status:shipped|fulfillments\(first: 5\)/.test(f.q));
-  check('Bulky 14 days: brings in shipments, checks them with Bosta, lists the bulky ones', [r.count, r.checked, r.items && r.items.map(x => x.tn + ':' + x.date)],
-    r.ok && r.days === 14 && r.count >= 1 && r.items.every(x => /Bulky/.test(x.size)) && !!shopQ && /after: \$after/.test(shopQ.q));
-  check('Bulky 14 days: a shipment Bosta dated 2026-10-01 is left out; its date is saved', [r.items.map(x => x.tn), sheets.Bulky.rows.find(x => String(x[0]) === '5550000002')],
-    !r.items.some(x => x.tn === '5550000002') && String((sheets.Bulky.rows.find(x => String(x[0]) === '5550000002') || [])[14]) === '2026-10-01');
-  const r2 = post({ action: 'bulkyList', key: 'kkk', days: 14 });
-  check('Bulky 14 days: the list alone (no Bosta calls) gives the same shipments and total fees', r2, r2.ok && r2.count === r.count && r2.fees === r.count * 55);
+  check('Bulky 14 days: the button starts a background job (Google stops a request after 6 minutes)', [r.started, r.job && r.job.state, ctx.__triggers],
+    r.ok && r.started && r.job.state === 'running' && ctx.__triggers.includes('bulkyJob'));
+  r = post({ action: 'bulkyCheck', key: 'kkk', days: 14 });
+  check('Bulky 14 days: a second press while it runs does not start another', r, r.ok && r.already && !r.started);
+  ctx.bulkyJob();
+  let job = JSON.parse(props.BULKY_JOB);
+  const shopQ = fetches.find(f => /fulfillments\(first: 5\)/.test(f.q));
+  check('Bulky 14 days: the job brings in numbers from Bosta\'s list, the wallet feed and Shopify (paged), checks them and finishes',
+    [job.state, job.sources, job.checked], job.state === 'done' && job.sources.bosta && job.sources.bosta.added === 2 && job.sources.fees && job.sources.shopify && !!shopQ && /after: \$after/.test(shopQ.q) && job.checked > 0
+    && sheets.Tracking.rows.some(x => String(x[0]) === '4440000001') && !sheets.Tracking.rows.some(x => String(x[0]) === '4440000009'));
+  r = post({ action: 'bulkyList', key: 'kkk', days: 14 });
+  check('Bulky 14 days: lists the bulky ones; a shipment Bosta dated 2026-10-01 is left out; its date is saved', [r.count, r.items.map(x => x.tn), r.job && r.job.state],
+    r.ok && r.count >= 1 && r.items.every(x => /Bulky/.test(x.size)) && !r.items.some(x => x.tn === '5550000002') && r.job.state === 'done'
+    && String((sheets.Bulky.rows.find(x => String(x[0]) === '5550000002') || [])[14]) === '2026-10-01' && sheets.Bulky.rows[0][14] === 'ShipmentDate');
+  check('Bulky 14 days: total fees', r.fees, r.fees === r.count * 55);
   r = post({ action: 'bulkyList', key: 'wrong' });
   check('Bulky 14 days: needs the Orders pass', r, r.ok === false);
 }
