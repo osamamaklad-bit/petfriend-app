@@ -59,7 +59,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-23.9';
+const SERVER_VERSION = '2026-11-25.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -381,7 +381,7 @@ function getOrder_(raw, allowDone) {
               lineItem {
                 title variantTitle sku
                 image { url }
-                variant { barcode ${metaQuery_('variant')} product { ${metaQuery_('product')} } }
+                variant { id barcode ${metaQuery_('variant')} product { ${metaQuery_('product')} } }
               }
             } } }
           } } }
@@ -410,6 +410,7 @@ function getOrder_(raw, allowDone) {
         title: li.lineItem.title + (li.lineItem.variantTitle ? ' - ' + li.lineItem.variantTitle : ''),
         sku: li.lineItem.sku || '',
         barcode: (li.lineItem.variant && li.lineItem.variant.barcode) || '',
+        variantId: (li.lineItem.variant && li.lineItem.variant.id) || '',
         image: li.lineItem.image ? li.lineItem.image.url : '',
         binVariant: binValue_(li.lineItem.variant && li.lineItem.variant.vBin),
         binProduct: binValue_(li.lineItem.variant && li.lineItem.variant.product && li.lineItem.variant.product.pBin),
@@ -434,6 +435,7 @@ function getOrder_(raw, allowDone) {
     }
     return { ok: false, error: 'Order ' + order.name + ' has nothing left to fulfill (' + order.displayFulfillmentStatus + ')' };
   }
+  addBarcodes_(items);
   return { ok: true, order: { id: order.id, name: order.name }, items: items };
 }
 
@@ -553,7 +555,7 @@ function getReturnable_(body) {
     '    fulfillment { location { id } }' +
     '    returnableFulfillmentLineItems(first: 100) { nodes {' +
     '      quantity' +
-    '      fulfillmentLineItem { id lineItem { title sku image { url } variant { barcode sku } } }' +
+    '      fulfillmentLineItem { id lineItem { title sku image { url } variant { id barcode sku } } }' +
     '    } }' +
     '  } }' +
     '}',
@@ -573,12 +575,14 @@ function getReturnable_(body) {
         title: li.title || 'Item',
         sku: v.sku || li.sku || '',
         barcode: v.barcode || '',
+        variantId: v.id || '',
         image: li.image ? li.image.url : '',
         need: n.quantity            // how many can be returned
       });
     });
   });
 
+  addBarcodes_(items);
   return { ok: true, order: { id: order.id, name: order.name }, items: items };
 }
 
@@ -782,6 +786,27 @@ function metaDefType_(owner, k) {
   const n = d.metafieldDefinitions.nodes[0];
   return n ? n.type.name : '';
 }
+/** Every barcode of a variant (Shopify 2026 allows several; `barcode` is the first), first one first, no repeats. */
+function barcodes_(v) {
+  if (!v) return [];
+  return [v.barcode].concat(((v.barcodes && v.barcodes.nodes) || []).map(function (b) { return b && b.value; }))
+    .map(function (b) { return String(b || '').trim(); }).filter(function (b, i, a) { return b && a.indexOf(b) === i; });
+}
+/** Adds `barcodes` (all of the variant's barcodes) to items that have a variantId. Asked separately, 50 variants at a
+ *  time, so the big order / purchase order queries stay under Shopify's query-cost limit. If it fails, scanning still
+ *  works with the first barcode. */
+function addBarcodes_(items) {
+  const ids = items.map(function (i) { return i.variantId; }).filter(function (id, k, a) { return id && a.indexOf(id) === k; });
+  const by = {};
+  try {
+    for (let k = 0; k < ids.length; k += 50) {
+      shopifyAt_(RECEIVE_API, 'query($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id barcode barcodes(first: 10) { nodes { value } } } } }',
+        { ids: ids.slice(k, k + 50) }).nodes.forEach(function (n) { if (n && n.id) by[n.id] = barcodes_(n); });
+    }
+  } catch (e) { console.warn('addBarcodes_', e.message); }
+  items.forEach(function (i) { i.barcodes = by[i.variantId] || (i.barcode ? [i.barcode] : []); });
+  return items;
+}
 function digits_(s) { return String(s || '').replace(/\D/g, ''); }
 
 /** All ORDERED purchase orders, page by page (Shopify lists them oldest first and has no sort option). */
@@ -886,6 +911,7 @@ function getPO_(body) {
     }
   });
   if (!items.length) throw new Error('Purchase order ' + po.name + ' has nothing left to receive');
+  addBarcodes_(items);
   return {
     ok: true,
     order: { id: po.id, name: po.name, supplier: po.origin && po.origin.supplierName || '', location: po.destination && po.destination.name || '',

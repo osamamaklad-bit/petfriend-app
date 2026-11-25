@@ -27,8 +27,10 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   too long: its start + "... " + its end, the end being the variant part after " - ", e.g. "... 100 ml"), SKU and expiry
   date (`custom.expiry_date`, never the previous batch's), the item's **barcode** as Code 128 bars + number, and
   "variant bin | product bin". Every item must have a barcode AND both bins, otherwise nothing is printed and what is
-  missing is listed. Purchase orders: one label per unit, exactly the PO quantity of each variant (lines of the same
-  variant added up), not editable. "Save PDF to Drive" builds the PDF in the browser (jsPDF from cdnjs, Latin text only,
+  missing is listed. Arabic text (names, bins) is drawn by the browser with the Cairo font shipped in `fonts/Cairo-Bold.ttf` (OFL)
+  and put in the PDF as a ~400 dpi picture (jsPDF's own Arabic shaping breaks words and mixed text); Latin text stays real
+  PDF text. Purchase orders: one label per unit, exactly the PO quantity of each variant (lines of the same
+  variant added up), not editable. "Save PDF to Drive" builds the PDF in the browser (jsPDF from cdnjs,
   one 50x25 mm page per label) and `saveLabels` stores it in the Drive folder "PetFriend Labels" (`LABELS_FOLDER_ID`);
   "Print here" uses the browser. Tests decode the printed barcodes with html5-qrcode.
 - `sw.js`: offline cache. **Bump `CACHE` on every release.**
@@ -55,6 +57,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
   scanned (camera or USB/Bluetooth scanner). A code matches the item's barcode **or SKU** (store labels carry
   the SKU). Matching is exact (ignoring spaces, dashes, case and leading zeros); real GTINs (valid check digit) also
   match across EAN-13 / UPC-A / UPC-E / ITF-14 / GS1 (01). Different codes must never match.
+  A variant can have several barcodes (Shopify 2026 `barcodes`): every one of them matches. `getOrder`, `getReturnable`
+  and `getPO` add them with `addBarcodes_` (a separate light query, so the big queries stay under the cost limit; if it
+  fails, the first barcode still works).
 - Receive (supplier purchase orders, Admin API 2026-10):
   - POs are listed newest first. No visible remove button: a long press on a PO selects it and shows Remove /
     Cancel. "Remove" only hides a PO in the app (`setPOHidden`, sheet `HiddenPOs`): Shopify's API

@@ -66,6 +66,11 @@
     return v && p && v !== p ? v + '  |  ' + p : v || p;
   }
   // the product / variant name on ONE line: when too long, its start ... its end (the end keeps the variant, e.g. 100 ml)
+  // bins for the Arabic drawing: variant bin on the left, product bin on the right, each in its own direction
+  function binsIso(it) {
+    var v = String(it.binVariant || '').trim(), p = String(it.binProduct || '').trim();
+    return v && p && v !== p ? iso(v) + '  |  ' + iso(p) : iso(v || p);
+  }
   function shortTitle(title, fits) {
     title = String(title || '').replace(/\s+/g, ' ').trim();
     if (fits(title)) return title;
@@ -142,7 +147,48 @@
       document.head.appendChild(s);
     });
   }
-  function latin(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7e]/g, '?'); }   // the PDF font has no Arabic
+  function latin(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7e]/g, '?'); }   // Helvetica has no Arabic
+  // Arabic text (product names, bins): drawn by the browser (it joins the letters and orders mixed Arabic / English
+  // text correctly) with the Cairo font shipped with the app (fonts/Cairo-Bold.ttf), at ~400 dpi, and put in the PDF
+  // as a picture. Latin text stays real PDF text. The font is loaded only when a label needs it.
+  var AR = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/;
+  var BASE = (document.currentScript && document.currentScript.src) || location.href, arFont = null;
+  var PXMM = 16, FAM = 'PFCairo';
+  function loadArabicFont() {
+    if (arFont) return arFont;
+    if (!window.FontFace || !document.fonts) return Promise.resolve(false);           // very old browser: system font
+    var f = new FontFace(FAM, 'url("' + new URL('fonts/Cairo-Bold.ttf', BASE).href + '")', { weight: '700' });
+    arFont = f.load().then(function (x) { document.fonts.add(x); return true; })
+      .catch(function () { arFont = null; return false; });                          // offline: the phone's own Arabic font
+    return arFont;
+  }
+  var meas = null;
+  function arCtx(pt) {
+    meas = meas || document.createElement('canvas').getContext('2d');
+    meas.font = '700 ' + (pt * 0.3528 * PXMM).toFixed(1) + 'px ' + FAM + ', "Noto Sans Arabic", Tahoma, sans-serif';
+    return meas;
+  }
+  function arWidth(text, pt) { return arCtx(pt).measureText(text).width / PXMM; }      // in mm
+  // the first strong letter decides the direction (an Arabic name reads from the right)
+  function isRtl(text) { var m = /[A-Za-z\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/.exec(text); return !!m && AR.test(m[0]); }
+  // each piece keeps its own direction: "start... end" / "name - variant" / "bin | bin" (Unicode first-strong isolates)
+  function iso(t) { return '\u2068' + t + '\u2069'; }
+  function isoName(t) {
+    var k = t.lastIndexOf('... '), sep = '... ';
+    if (k < 0) { k = t.lastIndexOf(' - '); sep = ' - '; }
+    return k > 0 ? iso(t.slice(0, k)) + sep + iso(t.slice(k + sep.length)) : t;
+  }
+  /** Draws one line of text into the PDF as a picture: box x..x+w (mm), baseline y, align left / center / right. */
+  function arText(doc, text, pt, x, y, w, align, dir) {
+    var top = y - pt * 0.3528 * 1.25, h = pt * 0.3528 * 1.75;                       // room for Arabic ascenders / descenders
+    var c = document.createElement('canvas'); c.width = Math.round(w * PXMM); c.height = Math.round(h * PXMM);
+    var g = c.getContext('2d'); g.font = arCtx(pt).font; g.fillStyle = '#000'; g.textBaseline = 'alphabetic';
+    g.direction = dir || (isRtl(text) ? 'rtl' : 'ltr');
+    g.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
+    var tx = align === 'center' ? c.width / 2 : align === 'right' ? c.width : 0;
+    g.fillText(text, tx, (y - top) * PXMM);
+    doc.addImage(c.toDataURL('image/png'), 'PNG', x, top, w, h, 'ar:' + pt + ':' + align + ':' + text, 'FAST');
+  }
   function fitText(doc, text, maxW, size, min) {
     doc.setFontSize(size);
     while (size > min && doc.getTextWidth(text) > maxW) { size -= 0.25; doc.setFontSize(size); }
@@ -152,9 +198,14 @@
     var m = 2, code = codeOf(it), widths = code128(code), wmax = W - 2 * m;
     doc.setTextColor(0); doc.setFillColor(0, 0, 0);
     // 1: product / variant name, one line
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
-    var name = shortTitle(latin(it.title || it.sku || ''), function (t) { return doc.getTextWidth(t) <= wmax; });
-    doc.text(name, m, 2.9);
+    var title = String(it.title || it.sku || '');
+    if (AR.test(title)) {
+      var arName = shortTitle(title, function (t) { return arWidth(t, 6.5) <= wmax; });
+      arText(doc, isoName(arName), 6.5, m, 2.9, wmax, isRtl(arName) ? 'right' : 'left');
+    } else {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+      doc.text(shortTitle(latin(title), function (t) { return doc.getTextWidth(t) <= wmax; }), m, 2.9);
+    }
     // 2: SKU (left) and expiry date (right), values only
     var exp = latin(it.expiry || ''); doc.setFont('helvetica', 'normal');
     fitText(doc, exp, 18, 6.5, 5); var ew = exp ? doc.getTextWidth(exp) : 0;
@@ -167,12 +218,15 @@
     doc.setFont('helvetica', 'normal'); fitText(doc, latin(code), wmax, 7.5, 5);
     doc.text(latin(code), W / 2, 19.1, { align: 'center' });
     // 4: both bins, values only
-    doc.setFont('helvetica', 'bold'); var b = latin(binsText(it)); fitText(doc, b, wmax, 7.5, 4.5);
+    var b = binsText(it);
+    if (AR.test(b)) { var bp = 7.5; while (bp > 4.5 && arWidth(b, bp) > wmax) bp -= 0.25; arText(doc, binsIso(it), bp, m, 23, wmax, 'center', 'ltr'); return; }
+    doc.setFont('helvetica', 'bold'); b = latin(b); fitText(doc, b, wmax, 7.5, 4.5);
     doc.text(b, W / 2, 23, { align: 'center' });
   }
   function makePdf(list) {
-    return loadJsPdf().then(function (JsPDF) {
-      var doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: [H, W], compress: true }), first = true;
+    var needAr = list.some(function (it) { return AR.test(String(it.title || '') + binsText(it)); });
+    return Promise.all([loadJsPdf(), needAr ? loadArabicFont() : null]).then(function (got) {
+      var JsPDF = got[0], doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: [H, W], compress: true }), first = true;
       list.forEach(function (it) {
         for (var i = 0; i < it.copies; i++) { if (!first) doc.addPage([H, W], 'landscape'); first = false; drawLabel(doc, it); }
       });

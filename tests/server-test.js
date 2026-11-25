@@ -48,9 +48,12 @@ function shopifyAnswer(url, body, headers) {
       { id: 'FUL1', status: 'SUCCESS', createdAt: '2026-11-20T10:00:00Z', trackingInfo: (ctx.__trk || []).map(n => ({ number: n, company: 'Bosta', url: null })) } ] : [] }] } } }; }
   if (/fulfillmentTrackingInfoUpdate/.test(q)) { ctx.__trkUpd = body.variables; ctx.__trk = body.variables.t.numbers || [body.variables.t.number];
     return { data: { fulfillmentTrackingInfoUpdate: { fulfillment: { id: body.variables.id }, userErrors: [] } } }; }
+  if (/nodes\(ids: \$ids\) \{ \.\.\. on ProductVariant \{ id barcode barcodes/.test(q)) {
+    if (ctx.__bcFail) return { errors: [{ message: 'boom' }] };
+    return { data: { nodes: body.variables.ids.map(id => ({ id, barcode: id === 'VL3' ? '3' : 'x', barcodes: { nodes: id === 'VL3' ? [{ value: '3' }, { value: '6221234567890' }, { value: '3' }] : [] } })) } }; }
   if (/fulfillmentOrders\(first: 10\)/.test(q)) {
     const li = (id, title, bc, vb, pb) => ({ node: { id, remainingQuantity: 1, lineItem: { title, variantTitle: null, sku: id, image: null,
-      variant: { barcode: bc, vBin: vb ? { value: vb } : null, product: { pBin: pb ? { value: pb } : null, pExp: { value: '2027-01-01' } } } } } });
+      variant: { id: 'V' + id, barcode: bc, vBin: vb ? { value: vb } : null, product: { pBin: pb ? { value: pb } : null, pExp: { value: '2027-01-01' } } } } } });
     return { data: { orders: { edges: [{ node: { id: 'gid://Order/7', name: '#1007', cancelledAt: null, displayFulfillmentStatus: 'UNFULFILLED',
       fulfillmentOrders: { edges: [{ node: { id: 'FO7', status: 'OPEN', assignedLocation: { name: 'Main' }, lineItems: { edges: [
         li('L1', 'No bin', '1', '', ''), li('L2', 'Shelf B-2', '2', '', 'B-2'), li('L3', 'Shelf A-10', '3', 'A-10', 'A-1'), li('L4', 'Shelf A-2', '4', 'A-2', '') ] } } }] } } }] } } };
@@ -325,6 +328,9 @@ check('Pick list: tells when the 1000-order limit was not reached', bp.truncated
 // ---- Today summary, logs, Fulfill bins, pick list order status
 r = post({ action: 'getOrder', key: 'kkk', query: '1007' });
 check('Fulfill: items carry bins and expiry', r.items && r.items[0], r.ok && r.items.find(i => i.title === 'Shelf A-10').binVariant === 'A-10' && r.items[0].expProduct === '2027-01-01');
+check('Fulfill: every barcode of a variant is sent (first one first, no repeats)', r.items.find(i => i.title === 'Shelf A-10').barcodes, JSON.stringify(r.items.find(i => i.title === 'Shelf A-10').barcodes) === '["3","6221234567890"]');
+ctx.__bcFail = true; const rbf = post({ action: 'getOrder', key: 'kkk', query: '1007' }); ctx.__bcFail = false;
+check('Fulfill: barcode list failing -> order still opens with the first barcode', rbf, rbf.ok && JSON.stringify(rbf.items.find(i => i.title === 'Shelf A-10').barcodes) === '["3"]');
 check('Fulfill: items sorted by bin (A-2, A-10, B-2, no bin last)', r.items && r.items.map(i => i.title), r.items.map(i => i.title).join() === 'Shelf A-2,Shelf A-10,Shelf B-2,No bin');
 r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 2 }, { foId: 'FO7', foliId: 'L2', qty: 1 }] });
 const actRows = (sheets.Activity && sheets.Activity.rows) || [];

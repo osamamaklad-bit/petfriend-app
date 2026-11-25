@@ -239,7 +239,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-23.5</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-25.1</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -594,12 +594,13 @@
 
     // Only the product's barcode counts (all modes). A correct scan also unlocks that item's + / − buttons.
     // The code on the label can be the product's barcode or its SKU (many labels carry the SKU)
-    const matches = state.items.filter((i) => (i.barcode && sameCode(code, i.barcode)) || (i.sku && sameCode(code, i.sku)));
+    // A variant can have several barcodes (Shopify 2026): any of them counts
+    const matches = state.items.filter((i) => codesOf(i).some((b) => sameCode(code, b)) || (i.sku && sameCode(code, i.sku)));
     if (!matches.length && !isRcv() && !isRet() && looksLikeWaybill(code)) { checkWaybill(code); return; }
     if (state.order.done) { say('Order ' + state.order.name + ' is already fulfilled. Scan its Bosta waybill to add the tracking number.', 'bad'); feedback('bad'); return; }
     if (!matches.length) {
       // show what was read AND what Shopify has for this order, so a mismatch is easy to see
-      const expected = state.items.filter((i) => (i.barcode || i.sku) && !i.verified).map((i) => i.sku ? (i.barcode ? i.barcode + ' / ' + i.sku : i.sku) : i.barcode)
+      const expected = state.items.filter((i) => (codesOf(i).length || i.sku) && !i.verified).map((i) => codesOf(i).concat(i.sku ? [i.sku] : []).join(' / '))
         .filter((b, k, a) => a.indexOf(b) === k);
       say((isRcv() ? 'Not on this purchase order: ' : isRet() ? 'Not returnable on this order: ' : 'Not in this order: ') + code +
         (expected.length ? '\nShopify barcode / SKU: ' + expected.slice(0, 4).join(', ') + (expected.length > 4 ? ' (+' + (expected.length - 4) + ')' : '') : ''), 'bad');
@@ -633,6 +634,11 @@
     else { say(item.title + ': ' + item.got + ' of ' + item.need, item.got === item.need ? 'ok' : 'warn'); feedback(item.got === item.need ? 'ok' : 'warn'); }
   }
 
+  // every barcode of an item: the list from Shopify (several per variant since 2026), else the single one
+  function codesOf(i) {
+    return (i.barcodes && i.barcodes.length ? i.barcodes : [i.barcode]).concat([i.barcode])
+      .filter((b, k, a) => b && a.indexOf(b) === k);
+  }
   // ---------- Bosta waybill (Fulfill): its tracking number is saved on the fulfillment ----------
   // 9-10 digits, or a longer number that is not a product barcode (GTINs have a check digit)
   function looksLikeWaybill(code) {
@@ -744,7 +750,7 @@
       el.querySelector('.t').textContent = it.title;
       const codes = document.createElement('span');
       codes.dir = 'ltr'; // keep SKU / barcode as written, also in Arabic
-      codes.textContent = [it.sku && 'SKU ' + it.sku, it.barcode ? it.barcode : 'no barcode'].filter(Boolean).join('  ');
+      codes.textContent = [it.sku && 'SKU ' + it.sku, codesOf(it).length ? codesOf(it).join(' · ') : 'no barcode'].filter(Boolean).join('  ');
       el.querySelector('.m').appendChild(codes);
       if (isRcv()) {   // Rejected (needs the item scanned: it is physically here) and Cancelled (not coming)
         const rc = document.createElement('div');
@@ -765,7 +771,7 @@
         });
         el.querySelector('.m').after(rc);
       }
-      if (!it.barcode && !it.sku) {
+      if (!codesOf(it).length && !it.sku) {
         const w = document.createElement('div');
         w.className = 'nobc'; w.textContent = 'No barcode or SKU: add one in Shopify to scan this item';
         el.querySelector('.m').after(w);
@@ -1005,7 +1011,7 @@
     const byVariant = {}, items = [];
     state.items.forEach(function (it) {
       const k = it.variantId || it.inventoryItemId || it.sku || it.title;
-      if (!byVariant[k]) { byVariant[k] = { title: it.title, barcode: it.barcode || '', sku: it.sku || '', binVariant: it.binVariant || '',
+      if (!byVariant[k]) { byVariant[k] = { title: it.title, barcode: it.barcode || (it.barcodes && it.barcodes[0]) || '', sku: it.sku || '', binVariant: it.binVariant || '',
         binProduct: it.binProduct || '', expiry: it.expProduct || '', copies: 0 }; items.push(byVariant[k]); }
       byVariant[k].copies += Math.max(0, Number(it.need) || 0);
     });
