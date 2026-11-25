@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-27.1';
+const SERVER_VERSION = '2026-11-27.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -325,7 +325,9 @@ const ORDER_ACTIONS = {
   dailySummary: function () { return dailySummary_(); },
   expiryReport: function (r) { return expiryReport_(r); },
   lookupProduct: function (r) { return lookupProduct_(r); },
-  saveLabels: function (r) { return saveLabels_(r); }
+  saveLabels: function (r) { return saveLabels_(r); },
+  bulkyList: function (r) { return bulkyRecent_(r.days); },
+  bulkyCheck: function (r) { return bulkyBackfill_(r.days); }
 };
 
 function ordersApi_(r) {
@@ -334,7 +336,7 @@ function ordersApi_(r) {
     if (!key || r.key !== key) return { ok: false, error: 'Wrong app key' };
     return ORDER_ACTIONS[r.action](r);
   } catch (err) {
-    logError_('Orders', r.action, err);
+    if (!err.user) logError_('Orders', r.action, err);    // typing mistakes are shown in the app, not logged
     return { ok: false, error: String(err.message || err) };
   }
 }
@@ -1461,6 +1463,7 @@ function onOpen() {
       .addSeparator()
       .addItem('كلمة مرور المدير للمهام', 'menuSetManagerPin')
       .addItem('تشغيل نظام المهام (تيليجرام)', 'installTasksTriggers')
+      .addItem('الشحنات كبيرة الحجم لآخر 14 يومًا', 'bulkyLast14Days')
       .addItem('فحص كل الإعدادات', 'testAll')
       .addToUi();
   } catch (e) { /* not opened from the spreadsheet */ }
@@ -2379,7 +2382,7 @@ const HEAD = {
   Shipments: ['Time', 'Tracking', 'FileId', 'PhotoURL', 'Note', 'ScannedBy', 'Carrier'],
   Tracking: ['Tracking', 'FirstScanned', 'Photos', 'BostaState', 'Size', 'Done'],
   Bulky: ['Tracking', 'Order', 'Size', 'ExpectedFeeVAT', 'ShippingFee', 'SizeCost', 'MaterialFee',
-    'FinalBostaFees', 'State', 'Items', 'PhotoLinks', 'DetectedAt', 'FinalizedAt', 'Status']
+    'FinalBostaFees', 'State', 'Items', 'PhotoLinks', 'DetectedAt', 'FinalizedAt', 'Status', 'ShipmentDate']
 };
 
 /** Shipments JSON API (body {fn, args}) */
@@ -2559,10 +2562,10 @@ function items_(d) {
  *  (BOSTA_FEES_URL, e.g. .../wallet/transactions?page=1&pageSize=50) and add unseen ones to Tracking with
  *  0 photos. Reads up to BOSTA_FEES_PAGES pages (default 5): page 1 alone holds only the newest 50 entries,
  *  and payouts and other entries without a shipment take room there too. */
-function importFromFees() {
+function importFromFees(pagesWanted) {
   const url = P.getProperty('BOSTA_FEES_URL'); if (!url) return { pages: 0, found: 0, added: 0, skipped: 'no BOSTA_FEES_URL' };
   const h = {}; h[P.getProperty('BOSTA_AUTH_HEADER_NAME') || 'Authorization'] = P.getProperty('BOSTA_API_KEY');
-  const maxPages = /[?&]page=\d+/.test(url) ? Math.max(1, Number(P.getProperty('BOSTA_FEES_PAGES')) || 5) : 1;
+  const maxPages = /[?&]page=\d+/.test(url) ? Math.max(1, Number(pagesWanted) || Number(P.getProperty('BOSTA_FEES_PAGES')) || 5) : 1;
   const found = {};
   let pages = 0;
   for (let n = 1; n <= maxPages; n++) {
@@ -2591,31 +2594,38 @@ function addTracking_(list) {
   return add.length;
 }
 /** Second source: Bosta tracking numbers written on Shopify fulfillments (e.g. by Bosta's Shopify app) in the
- *  last 7 days. A number from another carrier is harmless: Bosta answers 404 and the row is marked NOT IN BOSTA. */
-function importFromShopify_() {
+ *  last `days` days (7 by default; up to 10 pages of 100 orders). A number from another carrier is harmless: Bosta
+ *  answers 404 and the row is marked NOT IN BOSTA. */
+function importFromShopify_(days) {
   if (!P.getProperty('SHOPIFY_STORE')) return { found: 0, added: 0, skipped: 'no SHOPIFY_STORE' };
-  const since = Utilities.formatDate(new Date(Date.now() - 7 * 864e5), 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'");
-  const d = shopify_('query($q: String!) { orders(first: 100, query: $q, sortKey: UPDATED_AT, reverse: true) { nodes { name ' +
-    'fulfillments(first: 5) { trackingInfo(first: 3) { number company url } } } } }', { q: "updated_at:>='" + since + "' fulfillment_status:shipped" });
+  const since = Utilities.formatDate(new Date(Date.now() - (Number(days) || 7) * 864e5), 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'");
   const found = [];
-  d.orders.nodes.forEach(o => (o.fulfillments || []).forEach(f => (f.trackingInfo || []).forEach(t => {
-    const num = String(t.number || '').replace(/\D/g, ''), isBosta = /bosta/i.test((t.company || '') + ' ' + (t.url || ''));
-    if (num.length >= 8 && (isBosta || (!t.company && num.length <= 10))) found.push(num.slice(-10));
-  })));
+  let after = null, pages = 0;
+  do {
+    const d = shopify_('query($q: String!, $after: String) { orders(first: 100, after: $after, query: $q, sortKey: UPDATED_AT, reverse: true) { ' +
+      'pageInfo { hasNextPage endCursor } nodes { name fulfillments(first: 5) { trackingInfo(first: 3) { number company url } } } } }',
+      { q: "updated_at:>='" + since + "' fulfillment_status:shipped", after: after }).orders;
+    d.nodes.forEach(o => (o.fulfillments || []).forEach(f => (f.trackingInfo || []).forEach(t => {
+      const num = String(t.number || '').replace(/\D/g, ''), isBosta = /bosta/i.test((t.company || '') + ' ' + (t.url || ''));
+      if (num.length >= 8 && (isBosta || (!t.company && num.length <= 10))) found.push(num.slice(-10));
+    })));
+    after = d.pageInfo && d.pageInfo.hasNextPage ? d.pageInfo.endCursor : null;
+  } while (after && ++pages < 10);
   return { found: found.length, added: addTracking_(found) };
 }
-function syncBosta(only) {
+function syncBosta(only, opts) {
   if (typeof only !== 'string') only = '';        // a time trigger passes an event object here
+  opts = opts && typeof opts === 'object' && !opts.triggerUid ? opts : {};
   if (!only) watchSecrets_();
   const st = { at: new Date().toISOString(), fees: null, shopify: null, checked: 0, bulkyNew: 0, bulkyUpdated: 0, failed: 0, firstError: '' };
   if (!only) {
-    try { st.fees = importFromFees(); } catch (e) { st.fees = { error: e.message }; logError_('Shipments', 'Bosta fees import', e); }
-    try { st.shopify = importFromShopify_(); } catch (e) { st.shopify = { error: e.message }; logError_('Shipments', 'Bosta numbers from Shopify', e); }
+    try { st.fees = importFromFees(opts.feePages); } catch (e) { st.fees = { error: e.message }; logError_('Shipments', 'Bosta fees import', e); }
+    try { st.shopify = importFromShopify_(opts.days); } catch (e) { st.shopify = { error: e.message }; logError_('Shipments', 'Bosta numbers from Shopify', e); }
   }
-  const t0 = Date.now(), flag = new RegExp(P.getProperty('FLAG_REGEX') || 'bulky', 'i');
+  const t0 = Date.now(), limit = opts.limitMs || 300000, flag = new RegExp(P.getProperty('FLAG_REGEX') || 'bulky', 'i');
   const T = sh_('Tracking'), data = T.getDataRange().getValues();
   // newest first, so new shipments are checked even when an old backlog does not fit in one run
-  for (let i = data.length - 1; i >= 1 && Date.now() - t0 < 300000; i--) {
+  for (let i = data.length - 1; i >= 1 && Date.now() - t0 < limit; i--) {
     if (data[i][5] === true && !only) continue;
     const tn = String(data[i][0]);
     if (only && tn !== only) continue;
@@ -2627,9 +2637,9 @@ function syncBosta(only) {
       const B = sh_('Bulky'), r = findRow_('Bulky', tn), now = new Date();
       const links = rows_('Shipments').filter(x => String(x[1]) === tn).map(x => x[3]).join('\n');
       const row = [ "'" + tn, d.businessReference, p.size, p.vat, p.ship, p.sizeCost, p.material, p.final,
-        d.state && d.state.value, items_(d), links, now, p.final !== '' ? now : '', p.final !== '' ? 'Charged' : 'Flagged' ];
-      if (r) { const cur = B.getRange(r, 1, 1, 14).getValues()[0]; row[11] = cur[11]; if (!row[12]) row[12] = cur[12];
-        B.getRange(r, 1, 1, 14).setValues([row]); st.bulkyUpdated++; }
+        d.state && d.state.value, items_(d), links, now, p.final !== '' ? now : '', p.final !== '' ? 'Charged' : 'Flagged', bostaDate_(d) ];
+      if (r) { const cur = B.getRange(r, 1, 1, 15).getValues()[0]; row[11] = cur[11]; if (!row[12]) row[12] = cur[12]; if (!row[14]) row[14] = cur[14];
+        B.getRange(r, 1, 1, 15).setValues([row]); st.bulkyUpdated++; }
       else { B.appendRow(row); st.bulkyNew++; logActivity_('Shipments', 'bulky', tn, 1, { size: p.size, order: d.businessReference });
         tgNotify_('bulky', '📦 شحنة كبيرة الحجم (Bulky)\nالبوليصة: ' + tn + '\nالطلب: ' + (d.businessReference || '-') + '\nالمقاس: ' + p.size +
           '\nالرسوم: ' + (p.final !== '' ? p.final + ' جنيه (خُصمت)' : (p.vat || '?') + ' جنيه (متوقعة)')); }
@@ -2644,6 +2654,49 @@ function syncBosta(only) {
   if (st.failed) logError_('Shipments', 'Bosta sync', new Error(st.failed + ' shipment(s) failed. First: ' + st.firstError));
   if (!only) try { P.setProperty('BOSTA_LAST_SYNC', JSON.stringify(st)); } catch (e) {}
   return st;
+}
+/** The day Bosta created the shipment (its own date), else ''. */
+function bostaDate_(d) {
+  const v = d && (d.createdAt || (d.creationTimestamp && new Date(d.creationTimestamp).toISOString()) || '');
+  return v ? "'" + String(v).slice(0, 10) : '';
+}
+/** Bulky shipments of the last `days` days (by Bosta's shipment date, else the day it was found), newest first. */
+function bulkyRecent_(days) {
+  days = Math.max(1, Math.min(60, Number(days) || 14));
+  const cutoff = Utilities.formatDate(new Date(Date.now() - days * 864e5), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const day = function (v) { return v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(v || '').replace(/^'/, '').slice(0, 10); };
+  const list = rows_('Bulky').map(function (r) {
+    return { tn: String(r[0]).replace(/^'/, ''), order: String(r[1] || ''), size: String(r[2] || ''), expected: r[3] === '' ? null : Number(r[3]),
+      final: r[7] === '' || r[7] == null ? null : Number(r[7]), state: String(r[8] || ''), items: String(r[9] || ''), status: String(r[13] || ''),
+      date: day(r[14]) || day(r[11]), found: day(r[11]) };
+  }).filter(function (x) { return x.tn && x.date >= cutoff; })
+    .sort(function (a, b) { return b.date.localeCompare(a.date); });
+  const fees = list.reduce(function (t, x) { return t + (x.final != null ? x.final : x.expected || 0); }, 0);
+  return { ok: true, days: days, since: cutoff, count: list.length, fees: Math.round(fees * 100) / 100, items: list };
+}
+/** Brings in the Bosta shipments of the last `days` days (Shopify fulfillments, more pages of the Bosta wallet feed),
+ *  checks them with Bosta, and returns the bulky ones. For the app button and the sheet menu. */
+function bulkyBackfill_(days) {
+  days = Math.max(1, Math.min(60, Number(days) || 14));
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw uerr_('A Bosta check is already running. Try again in a few minutes.');
+  let st;
+  try { st = syncBosta('', { days: days, feePages: Math.max(5, Math.ceil(days / 2) + 3), limitMs: 240000 }); }
+  finally { lock.releaseLock(); }
+  const r = bulkyRecent_(days);
+  logActivity_('Shipments', 'bulky check ' + days + ' days', '', r.count, { checked: st.checked, added: ((st.fees && st.fees.added) || 0) + ((st.shopify && st.shopify.added) || 0) });
+  tgNotify_('bulky', '📦 الشحنات كبيرة الحجم في آخر ' + days + ' يومًا: ' + r.count + (r.count ? ' شحنة · الرسوم ' + r.fees + ' جنيه' : '') +
+    (r.items.length ? '\n' + r.items.slice(0, 15).map(function (x) { return '• ' + x.tn + ' · ' + (x.order || '-') + ' · ' + x.size + ' · ' + x.date; }).join('\n') : '') +
+    '\n(تم فحص ' + st.checked + ' شحنة' + (st.failed ? '، وفشل ' + st.failed : '') + ')');
+  return Object.assign(r, { checked: st.checked, failed: st.failed, added: ((st.fees && st.fees.added) || 0) + ((st.shopify && st.shopify.added) || 0) });
+}
+/** Sheet menu / editor: the bulky shipments of the last 14 days. */
+function bulkyLast14Days() {
+  const r = bulkyBackfill_(14);
+  const msg = 'الشحنات كبيرة الحجم في آخر 14 يومًا: ' + r.count + (r.count ? ' (الرسوم ' + r.fees + ' جنيه)' : '') + '\nتم فحص ' + r.checked + ' شحنة، وأُضيفت ' + r.added + ' شحنة جديدة.';
+  Logger.log(msg);
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+  return r;
 }
 /** For the Today tab: the last automatic Bosta sync, and the open (not finished) shipments. */
 function bostaStatus_() {

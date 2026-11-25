@@ -63,6 +63,8 @@
   .ex .d b { display: block; font-size: 14px; }
   .ex.past { border-color: var(--bad); } .ex.past .d b { color: var(--bad); }
   .ex.soon .d b { color: var(--warn); }
+  .bk .t small { display: block; }
+  .bk .d b { color: var(--warn); } .bk.charged .d b { color: var(--bad); }
   @media (min-width: 700px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } header, main { max-width: 1100px; } }
 </style>
 </head>
@@ -78,6 +80,9 @@
   <div class="tiles" id="tiles"></div>
   <h2 id="errTitle">Errors today</h2>
   <div id="errors"></div>
+  <h2>Bulky shipments — last 14 days</h2>
+  <div class="exbar"><span id="bkInfo" class="sp" style="color:var(--muted);font-size:13px"></span><button id="bkCheck">&#8635; Check with Bosta now</button></div>
+  <div id="bkList"><div class="empty">Loading...</div></div>
   <h2>Expiry dates</h2>
   <div class="exbar" id="exbar">
     <button data-d="0">Expired</button><button data-d="30" class="on">30 days</button><button data-d="60">60 days</button><button data-d="90">90 days</button>
@@ -249,22 +254,62 @@
       } }).then(function (r) { if (r && r.url) say('Labels saved to Google Drive: ' + r.name); });
   });
 
-  $('refreshBtn').addEventListener('click', function () { load(); });
+  // ---------- bulky shipments of the last 14 days ----------
+  let bk = null, bkBusy = false;
+  function renderBulky() {
+    const box = $('bkList'); box.innerHTML = '';
+    if (!bk) return;
+    $('bkInfo').textContent = bk.count ? bk.count + (bk.count === 1 ? ' shipment' : ' shipments') + ' · ' + money(bk.fees) + ' EGP' : '';
+    if (!bk.items.length) { box.innerHTML = '<div class="empty">No bulky shipments in the last 14 days.</div>'; return; }
+    bk.items.forEach(function (x) {
+      const el = document.createElement('div'); el.className = 'ex bk' + (x.final != null ? ' charged' : '');
+      const t = document.createElement('div'); t.className = 't';
+      const b = document.createElement('b'); b.textContent = x.tn + (x.order ? ' · ' + x.order : ''); b.dir = 'ltr'; b.setAttribute('data-no-i18n', ''); t.appendChild(b);
+      const sm = document.createElement('small'); sm.textContent = [x.size, x.state].filter(Boolean).join(' · '); sm.dir = 'ltr'; sm.setAttribute('data-no-i18n', ''); t.appendChild(sm);
+      if (x.items) { const it = document.createElement('small'); it.textContent = x.items.split('\n')[0]; it.dir = 'auto'; it.setAttribute('data-no-i18n', ''); t.appendChild(it); }
+      const d = document.createElement('div'); d.className = 'd';
+      const fee = document.createElement('b'); fee.textContent = money(x.final != null ? x.final : x.expected) + ' EGP';
+      const st = document.createElement('span'); st.textContent = x.final != null ? 'Charged' : 'Expected';
+      const dt = document.createElement('div'); dt.textContent = x.date; dt.dir = 'ltr'; dt.setAttribute('data-no-i18n', '');
+      d.appendChild(fee); d.appendChild(st); d.appendChild(dt);
+      el.appendChild(t); el.appendChild(d); box.appendChild(el);
+    });
+  }
+  async function loadBulky(check) {
+    if (bkBusy) return;
+    const key = store.get('appKey'); if (!key) return;
+    bkBusy = true; $('bkCheck').disabled = true;
+    if (check) { $('bkList').innerHTML = '<div class="empty">Checking the last 14 days with Bosta. This can take up to 5 minutes...</div>'; }
+    try {
+      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key: key, action: check ? 'bulkyCheck' : 'bulkyList', days: 14 }) });
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error === 'Wrong app key' ? 'Wrong Orders pass' : d.error || 'Request failed');
+      bk = d; renderBulky();
+      if (check) say('Bosta check done: ' + d.checked + ' shipments checked, ' + d.count + ' bulky.', 'ok');
+    } catch (e) { $('bkList').innerHTML = ''; const m = document.createElement('div'); m.className = 'empty'; m.textContent = e.message; $('bkList').appendChild(m); }
+    finally { bkBusy = false; $('bkCheck').disabled = false; }
+  }
+  $('bkCheck').addEventListener('click', async function () {
+    if (!(await pfConfirm(window.pfT ? pfT('Bring in the Bosta shipments of the last 14 days and check their size now? It can take up to 5 minutes.') : '', { ok: 'Check now' }))) return;
+    loadBulky(true);
+  });
+
+  $('refreshBtn').addEventListener('click', function () { load(); loadBulky(); });
   $('settingsBtn').addEventListener('click', async function () {
     const v = await pfSettings({ title: 'Settings', fields: [{ key: 'appKey', label: 'Orders pass', hint: 'The same pass opens Orders, Check, Purchase orders, Pick list and Today.', secret: true, value: store.get('appKey') }] });
-    if (v) { store.set('appKey', v.appKey); load(); loadExp(); }
+    if (v) { store.set('appKey', v.appKey); load(); loadExp(); loadBulky(); }
   });
-  document.addEventListener('pf-lang', function () { render(); renderExp(); });
+  document.addEventListener('pf-lang', function () { render(); renderExp(); renderBulky(); });
   // refresh when the tab is opened again, and every 2 minutes while it is visible
   // (a tab hidden inside the app still counts as visible to the browser, so the main page tells us)
   let shown = true;
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin) return;
     if (e.data === 'pf-hide') shown = false;
-    if (e.data === 'pf-show') { shown = true; load(true); loadExp(); }
+    if (e.data === 'pf-show') { shown = true; load(true); loadExp(); loadBulky(); }
   });
   setInterval(function () { if (shown && !document.hidden && store.get('appKey')) load(true); }, 120000);
-  load(); loadExp();
+  load(); loadExp(); loadBulky();
 })();
 </script>
 </body>

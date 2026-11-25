@@ -128,7 +128,7 @@ const ctx = {
     else if (url.includes('wallet/transactions')) { const pg = +(url.match(/page=(\d+)/) || [0, 1])[1]; ctx.__feedPages = (ctx.__feedPages || 0) + 1;
       ans = { data: { transactions: pg === 1 ? [{ type: 'cashout' }, { trackingNumber: '5550000001' }] : pg === 2 ? [{ trackingNumber: 5550000002 }, { delivery: { trackingNumber: '5550000001' } }] : [] } }; }
     else if (url.includes('bosta') && url.split('/').pop() === '7770000001') { code = 401; ans = {}; }
-    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : tn === '8888888888' || tn === '8888888889' ? 'petsfriend-5972:#1008' : '#1001' } }; }
+    else if (url.includes('bosta')) { const tn = url.split('/').pop(); if (tn === '1111111111') { code = 404; ans = {}; } else ans = { data: { createdAt: tn === '5550000002' ? '2026-10-01T09:00:00.000Z' : undefined, state: { value: 'Delivered' }, log: [], wallet: { cashCycle: { size: 'Light Bulky', bosta_fees: 55 } }, businessReference: tn === '2222222222' ? 'petsfriend-5972:#1007' : tn === '8888888888' || tn === '8888888889' ? 'petsfriend-5972:#1008' : '#1001' } }; }
     else ans = shopifyAnswer(url, body);
     return { getResponseCode: () => code, getContentText: () => JSON.stringify(ans) }; } },
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
@@ -821,6 +821,21 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Evaluation: she sees this month and her history', r, r.ok && r.allowed && r.current && r.current.pct === 67 && r.history.length === 1);
   ctx.__today = undefined;
   delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
+}
+
+// ---- Bulky shipments of the last 14 days (Today button / sheet menu)
+{
+  fetches.length = 0;
+  let r = post({ action: 'bulkyCheck', key: 'kkk', days: 14 });
+  const shopQ = fetches.find(f => /fulfillment_status:shipped|fulfillments\(first: 5\)/.test(f.q));
+  check('Bulky 14 days: brings in shipments, checks them with Bosta, lists the bulky ones', [r.count, r.checked, r.items && r.items.map(x => x.tn + ':' + x.date)],
+    r.ok && r.days === 14 && r.count >= 1 && r.items.every(x => /Bulky/.test(x.size)) && !!shopQ && /after: \$after/.test(shopQ.q));
+  check('Bulky 14 days: a shipment Bosta dated 2026-10-01 is left out; its date is saved', [r.items.map(x => x.tn), sheets.Bulky.rows.find(x => String(x[0]) === '5550000002')],
+    !r.items.some(x => x.tn === '5550000002') && String((sheets.Bulky.rows.find(x => String(x[0]) === '5550000002') || [])[14]) === '2026-10-01');
+  const r2 = post({ action: 'bulkyList', key: 'kkk', days: 14 });
+  check('Bulky 14 days: the list alone (no Bosta calls) gives the same shipments and total fees', r2, r2.ok && r2.count === r.count && r2.fees === r.count * 55);
+  r = post({ action: 'bulkyList', key: 'wrong' });
+  check('Bulky 14 days: needs the Orders pass', r, r.ok === false);
 }
 
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));

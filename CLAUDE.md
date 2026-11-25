@@ -95,6 +95,10 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   shipment photos, the Bosta wallet feed (`BOSTA_FEES_URL`, up to `BOSTA_FEES_PAGES` pages, default 5) and Bosta
   numbers on Shopify fulfillments (last 7 days). Checked newest first; sizes matching `FLAG_REGEX` (default
   `bulky`) go to `Bulky`. Each run saves `BOSTA_LAST_SYNC` (shown in Today); failures give one Errors line per run.
+  Bulky shipments of the last 14 days: Today section (`bulkyList`, read-only) and "Check with Bosta now" / sheet menu
+  `bulkyLast14Days` (`bulkyCheck` → `bulkyBackfill_`: Shopify fulfillments of the last 14 days, paged, + more wallet-feed
+  pages, then `syncBosta` within 4 min; script lock so two runs never overlap; summary to the group). Dated by Bosta's
+  shipment date (`ShipmentDate`, column 15 of `Bulky`), else the day it was found.
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with
   `fulfill` (checked again on the server) as trackingInfo company `Bosta` (+ `BOSTA_TRACK_URL` if set) and added

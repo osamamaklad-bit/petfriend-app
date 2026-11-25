@@ -511,6 +511,15 @@
     'Choose who fills the evaluation first': 'حدّد أولًا من يملأ التقييم',
     'Fill in every item': 'املأ كل البنود',
     'The pass mark must be between 1 and 100': 'يجب أن تكون نسبة النجاح بين 1 و100',
+    'Bulky shipments — last 14 days': 'الشحنات كبيرة الحجم — آخر 14 يومًا',
+    '↻ Check with Bosta now': '↻ الفحص مع بوسطة الآن',
+    'No bulky shipments in the last 14 days.': 'لا توجد شحنات كبيرة الحجم في آخر 14 يومًا.',
+    'Charged': 'خُصمت',
+    'Expected': 'متوقعة',
+    'Checking the last 14 days with Bosta. This can take up to 5 minutes...': 'جارٍ فحص شحنات آخر 14 يومًا مع بوسطة. قد يستغرق ذلك حتى 5 دقائق...',
+    'Bring in the Bosta shipments of the last 14 days and check their size now? It can take up to 5 minutes.': 'هل تريد جلب شحنات بوسطة لآخر 14 يومًا وفحص أحجامها الآن؟ قد يستغرق ذلك حتى 5 دقائق.',
+    'Check now': 'افحص الآن',
+    'A Bosta check is already running. Try again in a few minutes.': 'يوجد فحص بوسطة قيد التشغيل. حاول مرة أخرى بعد بضع دقائق.',
     'Searching…': 'جارٍ البحث…',
     'Price': 'السعر',
     'Cart is empty': 'السلة فارغة',
@@ -525,6 +534,8 @@
 
   // Text with names / numbers in it. First match wins, so specific ones come before general ones.
   var PATTERNS = [
+    [/^Bosta check done: (\d+) shipments checked, (\d+) bulky\.$/, 'انتهى فحص بوسطة: فُحصت $1 شحنة، منها $2 كبيرة الحجم.'],
+    [/^(\d+) shipments? · (.+) EGP$/, '$1 شحنة · $2 ج.م'],
     [/^Not a number: (.+)$/, 'ليس رقمًا: $1'],
     [/^(\d+) inspection requests? (?:is|are) waiting for an answer\.$/, '$1 من طلبات المعاينة في انتظار الرد.'],
     [/^Order (\S+) not found in Shopify$/, 'الطلب $1 غير موجود في شوبيفاي'],
