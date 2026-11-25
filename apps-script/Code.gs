@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-26.2';
+const SERVER_VERSION = '2026-11-26.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -2082,7 +2082,8 @@ function reqInit_(r, who) {
   const list = tRows_('Requests').filter(function (x) {
     const first = (REQ_STATUS[x.Kind] || [])[0], t = new Date(x.UpdatedAt || x.CreatedAt).getTime();
     return x.Status === first || x.Status === 'working' || t >= (x.Kind === 'complaint' ? sinceC : since);
-  }).map(reqOut_).sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); });
+  }).sort(function (a, b) { return (new Date(b.CreatedAt) - new Date(a.CreatedAt)) || (b._row - a._row); })   // same time: the lower row is newer
+    .map(reqOut_);
   return { ok: true, role: who.manager ? 'manager' : 'employee', me: who.name, items: list };
 }
 /** The Shopify order behind a request: checked so a mistyped number is caught, and shown in the group message. */
