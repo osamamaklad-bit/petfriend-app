@@ -15,7 +15,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - Pages put `[hidden] { display: none !important; }` first in their CSS, so `hidden` beats classes that set display.
 - `i18n.js`: English → Arabic dictionary (`EXACT`, `PATTERNS`). Screens are written in English and translated
   live. Data (product names, customers, codes, bins, dates) must carry `data-no-i18n` and `dir="ltr"`.
-- `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages.
+- `config.js`: the server URL (`PF_API_URL`), used by every tab. Don't copy the URL into pages. Every server reply
+  carries `sv` (SERVER_VERSION); `PF_MIN_SERVER` is the oldest server the app works with: when the live server is older
+  (or sends no `sv`), every tab shows a warning bar. **Raise `PF_MIN_SERVER` whenever the app needs a new server change.**
 - `settings.js`: the Settings window (PIN / app key, and the English / Arabic choice), shared by every tab, and the
   branded `pfConfirm` / `pfAlert` windows. Never use the browser's `confirm()` / `alert()` / `prompt()`. The tab bar
   has no language button; Today is the HOME screen with no tab button: the app opens on it, Android Back returns to it
@@ -71,7 +73,9 @@ The owner writes in Arabic (Egyptian); answer in the language they use.
 - Bin locations (`custom.bin_location` on the variant and on the product) can be edited **only in Receive** (Purchase
   orders tab: "Edit bin / expiry"; the server only accepts bins with `where: 'receive'`). The product expiry date
   (`custom.expiry_date`) and the expiry date of the previous batch (`custom.expiry_date_of_previous_batch`, product
-  metafield, `EXPIRY_PREV_METAFIELD`) can be edited in Receive and Check. Every edit is logged in the `Edits` sheet (time, where,
+  metafield, `EXPIRY_PREV_METAFIELD`) can be edited in Receive and Check. When the previous batch date is set (and differs
+  from the current one), Fulfill and the Pick list show "Old batch first" (red "do not send it" when it has expired);
+  clear the field once the old batch is gone. Every edit is logged in the `Edits` sheet (time, where,
   product, SKU, field, old value, new value; kept 60 days). Bins are shown in Fulfill, Receive and the Pick list, and
   Fulfill and the Pick list sort by bin.
 - Pick list: **no email**.

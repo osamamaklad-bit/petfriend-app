@@ -63,6 +63,8 @@
     'Variant bin': 'موقع المتغيّر',
     'Expiry date of previous batch': 'تاريخ صلاحية الدفعة السابقة',
     'Previous batch expiry:': 'صلاحية الدفعة السابقة:',
+    'Old batch first, expiry': 'اسحب من الدفعة القديمة الأول، صلاحيتها',
+    'Old batch expired, do not send it:': 'الدفعة القديمة منتهية الصلاحية، متبعتهاش:',
     'Previous batch:': 'الدفعة السابقة:',
     'Edit expiry dates': 'تعديل تواريخ الصلاحية',
     'Product bin': 'موقع المنتج',
@@ -305,6 +307,8 @@
 
   // Text with names / numbers in it. First match wins, so specific ones come before general ones.
   var PATTERNS = [
+    [/^The server is older than this app \(server (.+), app needs (.+)\)\. Changes may not be saved\. Wait a few minutes and reopen the app; if it stays, check the server deploy on GitHub\.$/,
+      'السيرفر أقدم من التطبيق (السيرفر \u2066$1\u2069، والتطبيق محتاج \u2066$2\u2069). التعديلات ممكن ما تتحفظش. استنى دقايق وافتح التطبيق تاني، ولو فضلت الرسالة راجع نشر السيرفر على GitHub.'],
     // Orders
     [/^Loading order (.+)\.\.\.$/, 'جارٍ تحميل الطلب $1...'],
     [/^Order (.+) has nothing to return \(not shipped yet, or already returned\)\.$/, 'الطلب $1 لا يحتوي على منتجات قابلة للإرجاع (لم يُشحن بعد، أو تم إرجاعه بالفعل).'],

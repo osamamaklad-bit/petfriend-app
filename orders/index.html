@@ -145,6 +145,11 @@
   .adj { display: flex; gap: 6px; margin-top: 4px; }
   .adj button { width: 34px; height: 30px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-size: 18px; line-height: 1; color: var(--ink); }
   .adj button.locked { opacity: .35; }
+  .item .bin .oldb { flex-basis: 100%; background: #fff4e5; border: 1px solid #f5c27a; border-radius: 8px; padding: 3px 8px; }
+  .item .bin .oldb span, .item .bin .oldb b { color: #9a3412; font-weight: 700; }
+  .item .bin .oldb.bad { background: var(--bad-bg); border-color: var(--bad); }
+  .item .bin .oldb.bad span, .item .bin .oldb.bad b { color: var(--bad); }
+  @media (prefers-color-scheme: dark) { .item .bin .oldb:not(.bad) { background: #3a2a0f; border-color: #a16207; } .item .bin .oldb:not(.bad) span, .item .bin .oldb:not(.bad) b { color: #fbbf24; } }
   .item .lockhint { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
   footer {
@@ -239,7 +244,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-25.1</span></small></h1>
+  <h1><span id="pageTitle">Pet Friend Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-25.2</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -787,6 +792,15 @@
       if (it.expProduct) bins.push(['Expiry:', it.expProduct, isExpired(it.expProduct)]);
       if (isRcv() && it.expPrevProduct) bins.push(['Previous batch expiry:', it.expPrevProduct, isExpired(it.expPrevProduct)]);
       const binBox = el.querySelector('.bin');
+      // Fulfill: stock of the previous batch may still be on the shelf: take it first (unless it has expired)
+      if (!isRcv() && !isRet() && it.expPrevProduct && it.expPrevProduct !== it.expProduct) {
+        const w = document.createElement('div'), ex = isExpired(it.expPrevProduct);
+        w.className = ex ? 'oldb bad' : 'oldb';
+        const l = document.createElement('span'), v = document.createElement('b');
+        l.textContent = (ex ? 'Old batch expired, do not send it:' : 'Old batch first, expiry') + ' ';
+        v.textContent = it.expPrevProduct; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
+        w.appendChild(l); w.appendChild(v); binBox.appendChild(w);
+      }
       bins.forEach(function (b) {
         const w = document.createElement('div'), lab = document.createElement('span'), val = document.createElement('b');
         lab.textContent = b[0] + ' '; val.textContent = b[1]; val.setAttribute('data-no-i18n', '');

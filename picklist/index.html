@@ -30,6 +30,11 @@
   header button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; }
   main { max-width: 900px; margin: 0 auto; padding: 8px 12px 40px; }
 
+  .row .bins .oldb { flex-basis: 100%; background: #fff4e5; border: 1px solid #f5c27a; border-radius: 8px; padding: 3px 8px; }
+  .row .bins .oldb span, .row .bins .oldb b { color: #9a3412; font-weight: 700; }
+  .row .bins .oldb.bad { background: var(--bad-bg); border-color: var(--bad); }
+  .row .bins .oldb.bad span, .row .bins .oldb.bad b { color: var(--bad); }
+  @media (prefers-color-scheme: dark) { .row .bins .oldb:not(.bad) { background: #3a2a0f; border-color: #a16207; } .row .bins .oldb:not(.bad) span, .row .bins .oldb:not(.bad) b { color: #fbbf24; } }
   .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   .bar button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 10px 14px; font: inherit; font-weight: 600; font-size: 15px; }
   .bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on); }
@@ -266,6 +271,12 @@
     if (navigator.vibrate) try { navigator.vibrate([80, 60, 80]); } catch (e) {} }
 
   // ---------- one pick list ----------
+  function expired(v) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+    if (!m) return false;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return new Date(+m[1], +m[2] - 1, +m[3]) < t;
+  }
   function render() {
     if (!state.current) return;
     const c = state.current, ps = c.items, units = ps.reduce((s, p) => s + p.quantity, 0);
@@ -303,6 +314,14 @@
         l.textContent = b[0] + ' '; v.textContent = b[1]; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
         w.appendChild(l); w.appendChild(v); el.querySelector('.bins').appendChild(w);
       });
+      // the previous batch may still be on the shelf: take it first (unless it has expired)
+      if (p.expPrev && p.expPrev !== p.expiry) {
+        const ex = expired(p.expPrev), w = document.createElement('div'), l = document.createElement('span'), v = document.createElement('b');
+        w.className = ex ? 'oldb bad' : 'oldb';
+        l.textContent = (ex ? 'Old batch expired, do not send it:' : 'Old batch first, expiry') + ' ';
+        v.textContent = p.expPrev; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
+        w.appendChild(l); w.appendChild(v); el.querySelector('.bins').appendChild(w);
+      }
       p.orders.forEach(function (name) {
         const b = document.createElement('button'), done = (c.orderStatus || {})[name] === 'FULFILLED';
         b.className = done ? 'ok' : ''; b.dataset.order = name; b.dir = 'ltr'; b.setAttribute('data-no-i18n', '');

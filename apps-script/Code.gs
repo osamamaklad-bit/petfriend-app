@@ -59,7 +59,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-25.1';
+const SERVER_VERSION = '2026-11-25.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -75,6 +75,8 @@ function doPost(e) {
 }
 
 function json_(obj) {
+  // every reply says which server version answered: the app warns when it is older than the app needs
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) obj.sv = SERVER_VERSION;
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -1042,7 +1044,7 @@ const PICK_API = RECEIVE_API;   // 2026-10
 
 function pickOrdersQuery_() {
   const img = 'preview { image { url(transform: { maxWidth: 200, maxHeight: 200 }) } }';
-  const bv = metaKey_('binVariant'), bp = metaKey_('binProduct');
+  const bv = metaKey_('binVariant'), bp = metaKey_('binProduct'), ex = metaKey_('expProduct'), ep = metaKey_('expPrevProduct');
   // small pages keep each request under Shopify's query-cost limit (1000)
   return 'query($cursor: String, $q: String, $sort: OrderSortKeys) { orders(first: 10, after: $cursor, query: $q, sortKey: $sort) {' +
     ' pageInfo { hasNextPage endCursor }' +
@@ -1050,7 +1052,8 @@ function pickOrdersQuery_() {
     '  lineItems(first: 40) { nodes { quantity title variantTitle' +
     '   variant { id sku title media(first: 1) { nodes { ' + img + ' } }' +
     '    metafield(namespace: "' + bv.namespace + '", key: "' + bv.key + '") { value }' +
-    '    product { id title featuredMedia { ' + img + ' } metafield(namespace: "' + bp.namespace + '", key: "' + bp.key + '") { value } } } } } } } }';
+    '    product { id title featuredMedia { ' + img + ' } metafield(namespace: "' + bp.namespace + '", key: "' + bp.key + '") { value }' +
+    '     pExp: metafield(namespace: "' + ex.namespace + '", key: "' + ex.key + '") { value } pExpPrev: metafield(namespace: "' + ep.namespace + '", key: "' + ep.key + '") { value } } } } } } } }';
 }
 
 function pickEligible_(order) {
@@ -1079,10 +1082,11 @@ function buildPickList_(q, sort, skip) {
         const pick = function (m) { return m && m.preview && m.preview.image && m.preview.image.url || ''; };
         const image = pick(v.media && v.media.nodes && v.media.nodes[0]) || pick(prod.featuredMedia);
         const productBin = binValue_(prod.metafield), variantBin = binValue_(v.metafield);
+        const expiry = binValue_(prod.pExp), expPrev = binValue_(prod.pExpPrev);   // the previous batch is picked first
         const qty = Number(li.quantity) || 0;
         const e = products[v.id];
         if (!e) products[v.id] = { key: v.id, image: image, title: title, variantName: variantName, sku: v.sku || '', quantity: qty,
-          productBin: productBin, variantBin: variantBin, orders: [order.name || ''] };
+          productBin: productBin, variantBin: variantBin, expiry: expiry, expPrev: expPrev, orders: [order.name || ''] };
         else {
           e.quantity += qty;
           if (e.orders.indexOf(order.name) === -1) e.orders.push(order.name);

@@ -75,7 +75,8 @@ function shopifyAnswer(url, body, headers) {
   if (/orders\(first: 10, after: \$cursor, query: \$q, sortKey: \$sort\)/.test(q)) {
     ctx.__pickQ = (ctx.__pickQ || []).concat([body.variables]);
     const V = (id, sku, name, vb, pb, img) => ({ id, sku, title: name, media: { nodes: img ? [{ preview: { image: { url: img } } }] : [] }, metafield: vb ? { value: vb } : null,
-      product: { id: 'P' + id, title: 'Prod ' + id, featuredMedia: { preview: { image: { url: 'https://cdn/p-' + id + '.jpg' } } }, metafield: pb ? { value: pb } : null } });
+      product: { id: 'P' + id, title: 'Prod ' + id, featuredMedia: { preview: { image: { url: 'https://cdn/p-' + id + '.jpg' } } }, metafield: pb ? { value: pb } : null,
+        pExp: id === 'v1' ? { value: '2027-05-01' } : null, pExpPrev: id === 'v1' ? { value: '2026-12-15' } : null } });
     const O = (id, name, extra, items) => Object.assign({ id, name, cancelledAt: null, displayFulfillmentStatus: 'UNFULFILLED', displayFinancialStatus: 'PENDING', tags: [] }, extra,
       { lineItems: { nodes: items } });
     const LI = (q, title, vt, v) => ({ quantity: q, title, variantTitle: vt, variant: v });
@@ -320,6 +321,10 @@ post({ action: 'createPickList', key: 'kkk' });
 const app = ctx.__rawAppends.find(x => String(x[0]).indexOf('PL-') === 0);
 check('Pick list: data cells written as text (leading apostrophe)', app && app.slice(5).map(c => String(c)[0]), app && app.slice(5).every(c => String(c)[0] === "'"));
 r = post({ action: 'getPickList', key: 'kkk', id: app && app[0] });
+check('Pick list: items carry the expiry date and the previous batch expiry', r.pickList.items.find(i => i.sku === '6723085'),
+  r.pickList.items.find(i => i.sku === '6723085').expiry === '2027-05-01' && r.pickList.items.find(i => i.sku === '6723085').expPrev === '2026-12-15' && r.pickList.items.find(i => i.sku === 'TOY').expPrev === '');
+check('Every reply says the server version (app warns when it is older)', [r.sv, post({ action: 'x' }).sv, post({ action: 'today', pin: 'bad' }).sv, post({ fn: 'checkPin', args: ['bad'] }).sv],
+  [r.sv, post({ action: 'x' }).sv, post({ action: 'today', pin: 'bad' }).sv, post({ fn: 'checkPin', args: ['bad'] }).sv].every(v => v === ctx.SERVER_VERSION || v === '2026-11-25.2'));
 check('Pick list: reads back after the text marker', r.ok && r.pickList.items.length, r.ok && r.pickList.items.length === 3);
 const bp = ctx.buildPickList_('status:open', 'CREATED_AT');
 check('Pick list: tells when the 1000-order limit was not reached', bp.truncated, bp.truncated === false);
