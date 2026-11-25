@@ -242,4 +242,31 @@
   window.pfSettings = pfSettings;
   window.pfConfirm = pfConfirm;
   window.pfAlert = pfAlert;
+
+  // ---------- swipe left / right to move between the app's pages (the main page decides where) ----------
+  // Only a quick, mostly sideways swipe counts. Not while a window is open, and not when it starts on something that
+  // moves sideways itself (a text box, a list that scrolls sideways, the camera, a slider).
+  (function () {
+    if (window.parent === window || !('ontouchstart' in window)) return;
+    var x0 = 0, y0 = 0, t0 = 0, ok = false;
+    function blocked(el) {
+      for (var n = el; n && n !== document.body; n = n.parentElement) {
+        if (/^(INPUT|TEXTAREA|SELECT|VIDEO|CANVAS)$/.test(n.tagName) || n.isContentEditable || n.id === 'reader') return true;
+        if (n.scrollWidth > n.clientWidth + 4 && /(auto|scroll)/.test(getComputedStyle(n).overflowX)) return true;
+      }
+      return !!document.querySelector('dialog[open]');
+    }
+    document.addEventListener('touchstart', function (e) {
+      ok = e.touches.length === 1 && !blocked(e.target);
+      if (!ok) return;
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now();
+    }, { passive: true });
+    document.addEventListener('touchend', function (e) {
+      if (!ok) return; ok = false;
+      var t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+      if (Date.now() - t0 > 700 || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.55) return;
+      if (window.getSelection && String(window.getSelection()).length) return;   // selecting text, not swiping
+      try { window.parent.postMessage({ type: 'pf-swipe', dir: dx < 0 ? 'left' : 'right' }, location.origin); } catch (x) {}
+    }, { passive: true });
+  })();
 })();
