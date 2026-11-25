@@ -96,7 +96,7 @@
 (function () {
   // Each tool is its own page with its own login (PIN / key); loaded on first use and kept alive after that,
   // so e.g. a POS cart survives while you check a shipment.
-  const PAGES = { pos: 'pos/index.html', check: 'orders/index.html?only=check', orders: 'orders/index.html', receive: 'orders/index.html?only=receive', picklist: 'picklist/index.html', shipments: 'shipments/index.html', returns: 'shipments/index.html?only=returns', tasks: 'tasks/index.html', customers: 'customers/index.html', today: 'today/index.html' };
+  const PAGES = { pos: 'pos/index.html', check: 'orders/index.html?only=check', orders: 'orders/index.html', receive: 'orders/index.html?only=receive', picklist: 'picklist/index.html', shipments: 'shipments/index.html', returns: 'shipments/index.html?only=returns', tasks: 'tasks/index.html', customers: 'customers/index.html', dashboard: 'today/index.html?view=dashboard', today: 'today/index.html' };
   const frames = {};
   let current = null;
 

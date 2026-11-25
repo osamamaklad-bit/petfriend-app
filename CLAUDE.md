@@ -111,8 +111,10 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   refuses without them (`needShipmentPhoto_`, "Step 1/2" messages, not logged). After Shopify accepts, `saveOrderPhoto_`
   saves the photo like a Shipments photo (Drive + `Shipments` sheet, note "Order #…"; carrier `Bosta` / `<carrier>` /
   `… return`; a Bosta fulfill photo also counts in `Tracking`). A photo that fails to save never fails the action.
-- Today (home) starts with big buttons to Orders, Pick list, Shipments, POS, Purchase orders, Return shipments
-  (`pf-go` message to the main page).
+- Today (home) shows ONLY big buttons: Orders, Pick list, Shipments, POS, Purchase orders, Return shipments, and a
+  full-width Dashboard (`pf-go` message to the main page). The Dashboard is the same page with `?view=dashboard`
+  (tab `dashboard`, no tab-bar button, Back returns home): today's tiles, errors, bulky shipments, expiry dates. Home
+  makes no server calls.
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with
   `fulfill` (checked again on the server) as trackingInfo company `Bosta` (+ `BOSTA_TRACK_URL` if set) and added

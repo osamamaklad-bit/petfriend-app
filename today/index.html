@@ -50,6 +50,8 @@
   .go button span { font-size: 18px; font-weight: 800; line-height: 1.2; }
   .go button small { font-size: 12px; color: var(--muted); }
   .go button.a { background: var(--accent); border-color: var(--accent); color: var(--on); }
+  .go button.d { grid-column: 1 / -1; min-height: 88px; flex-direction: row; align-items: center; gap: 12px; flex-wrap: wrap; border-color: var(--teal); }
+  .go button.d svg { stroke: var(--teal); margin: 0; } .go button.d span { flex: 1; } .go button.d small { flex-basis: 100%; }
   .go button.a svg { stroke: var(--on); } .go button.a small { color: var(--on); opacity: .85; }
   @media (min-width: 700px) { .go { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   .err-row { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; font-size: 13px; }
@@ -93,7 +95,9 @@
     <button data-go="pos"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M7 8h4"/></svg><span>POS</span><small>Sell in the store</small></button>
     <button data-go="receive"><svg viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="17.5" r="1.7"/><circle cx="17" cy="17.5" r="1.7"/></svg><span>Purchase orders</span><small>Receive stock</small></button>
     <button data-go="returns"><svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5v-3M9 17l-3-3 3-3M6 14h7"/></svg><span>Return shipments</span><small>Packages that came back</small></button>
+    <button data-go="dashboard" class="d"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Dashboard</span><small>Today's numbers, errors, bulky, expiry</small></button>
   </nav>
+  <div id="dash">
   <div class="bar"><button id="refreshBtn">↻ Refresh</button></div>
   <div id="banner">Today's work in one place.</div>
   <div class="tiles" id="tiles"></div>
@@ -113,11 +117,19 @@
   </div>
   <div id="expInfo"></div>
   <div id="expList"><div class="empty">Loading...</div></div>
+  </div>
 </main>
 <script>
 (function () {
   // Same server and app key as the Orders tab
   const API_URL = window.PF_API_URL;
+  // home: the big buttons only. The dashboard (today's numbers, errors, bulky, expiry) is the same page with
+  // ?view=dashboard, opened from its big button as its own tab, so the phone's Back button comes home.
+  const DASH = new URLSearchParams(location.search).get('view') === 'dashboard';
+  document.getElementById('goBtns').hidden = DASH;
+  document.getElementById('dash').hidden = !DASH;
+  if (DASH) document.querySelector('header h1').firstChild.textContent = 'Pet Friend Dashboard';
+  else document.getElementById('when').textContent = new Date().toLocaleDateString(window.pfLang && window.pfLang.get() === 'ar' ? 'ar-EG-u-nu-latn' : [], { weekday: 'long', day: 'numeric', month: 'long' });
   const $ = (id) => document.getElementById(id);
   const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
   let last = null, busy = false;
@@ -350,10 +362,10 @@
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin) return;
     if (e.data === 'pf-hide') shown = false;
-    if (e.data === 'pf-show') { shown = true; load(true); loadExp(); loadBulky(); }
+    if (e.data === 'pf-show') { shown = true; if (DASH) { load(true); loadExp(); loadBulky(); } }
   });
-  setInterval(function () { if (shown && !document.hidden && store.get('appKey')) load(true); }, 120000);
-  load(); loadExp(); loadBulky();
+  setInterval(function () { if (DASH && shown && !document.hidden && store.get('appKey')) load(true); }, 120000);
+  if (DASH) { load(); loadExp(); loadBulky(); }
 })();
 </script>
 </body>
