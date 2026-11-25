@@ -101,7 +101,8 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   newest first, `BOSTA_SEARCH_URL` to change it; the endpoint is not in Bosta's public docs, so a failure is reported,
   not guessed), the wallet feed (more pages) and Shopify fulfillments (paged), then checks in rounds of 4.5 min that go
   on where the last stopped (`from`), up to 8 rounds; state in `BULKY_JOB`; the result with what each source brought
-  goes to the group). Found 2026-11-25: Tracking only got photographed shipments after 11/11 (wallet feed added nothing). Dated by Bosta's
+  goes to the group). The long Bosta runs use their own cache flag `bosta_busy` (`bostaBusy_`), never the script lock for
+  minutes (that blocked adding an employee: "Lock timeout"); the hourly run skips while the job runs. Found 2026-11-25: Tracking only got photographed shipments after 11/11 (wallet feed added nothing). Dated by Bosta's
   shipment date (`ShipmentDate`, column 15 of `Bulky`), else the day it was found.
 - Fulfill + Bosta waybill: a scanned code that is not an item and looks like a waybill (9-10 digits, or longer and not a
   GTIN) is checked with `checkWaybill` (exists in Bosta, and its businessReference order matches). It is sent with

@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-27.3';
+const SERVER_VERSION = '2026-11-27.4';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1702,7 +1702,8 @@ function tPut_(name, o) {
 }
 function tId_(prefix) { return prefix + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
 function withTaskLock_(fn) {
-  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) { throw uerr_('The app is busy right now. Try again in a minute.'); }
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
@@ -2616,6 +2617,12 @@ function importFromShopify_(days) {
 function syncBosta(only, opts) {
   if (typeof only !== 'string') only = '';        // a time trigger passes an event object here
   opts = opts && typeof opts === 'object' && !opts.triggerUid ? opts : {};
+  // the hourly run: not while the 14-day job (or another run) is checking; the job holds the flag itself
+  const own = !only && !opts.skipImport;
+  if (own && !bostaBusy_(true)) return { skipped: 'busy' };
+  try { return syncBostaRun_(only, opts); } finally { if (own) bostaBusy_(false); }
+}
+function syncBostaRun_(only, opts) {
   if (!only) watchSecrets_();
   const st = { at: new Date().toISOString(), fees: null, shopify: null, checked: 0, bulkyNew: 0, bulkyUpdated: 0, failed: 0, firstError: '' };
   if (!only && !opts.skipImport) {
@@ -2705,13 +2712,23 @@ function bulkyJobTrigger_(minutes) {
   ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'bulkyJob'; }).forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('bulkyJob').timeBased().after(Math.max(1, minutes) * 60000).create();
 }
+/** The long Bosta runs (hourly check, bulky job) never run together: a flag in the cache (6 min at most), set and
+ *  checked under a short script lock. take = true: take the flag (false if already taken); false: give it back. */
+function bostaBusy_(take) {
+  const c = CacheService.getScriptCache();
+  if (!take) { c.remove('bosta_busy'); return true; }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return false;
+  try { if (c.get('bosta_busy')) return false; c.put('bosta_busy', String(Date.now()), 360); return true; }
+  finally { lock.releaseLock(); }
+}
 /** Time trigger (one-off): one round of the bulky job. */
 function bulkyJob() {
   const job = bulkyJobState_();
   ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'bulkyJob'; }).forEach(function (t) { ScriptApp.deleteTrigger(t); });
   if (!job || job.state !== 'running') return;
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) { bulkyJobTrigger_(2); return; }      // the hourly check is busy: try again shortly
+  // its own "busy" flag, NOT the script lock: a round takes minutes, and the script lock would block every other action
+  if (!bostaBusy_(true)) { bulkyJobTrigger_(2); return; }      // the hourly check is busy: try again shortly
   const save = function () { job.updatedAt = new Date().toISOString(); P.setProperty('BULKY_JOB', JSON.stringify(job)); };
   let st;
   try {
@@ -2728,7 +2745,7 @@ function bulkyJob() {
     job.state = 'failed'; job.error = String(e.message || e).slice(0, 300); save();
     logError_('Shipments', 'bulky check', e);
     return;
-  } finally { lock.releaseLock(); }
+  } finally { bostaBusy_(false); }
   job.rounds++; job.checked += st.checked; job.failed += st.failed;
   if (st.more && job.rounds < BULKY_JOB_MAX_ROUNDS) { save(); bulkyJobTrigger_(1); return; }
   job.state = 'done'; job.more = !!st.more; save();

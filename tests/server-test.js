@@ -849,5 +849,26 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Bulky 14 days: needs the Orders pass', r, r.ok === false);
 }
 
+// ---- The long Bosta runs never block other actions
+{
+  ctx.__cache = ctx.__cache || {}; ctx.__cache.bosta_busy = '1';
+  const st = ctx.syncBosta();
+  check('Bosta: the hourly check skips while the 14-day job is running (no overlap)', st, st && st.skipped === 'busy');
+  delete ctx.__cache.bosta_busy;
+  const realLock = ctx.LockService;
+  ctx.LockService = { getScriptLock: () => ({ waitLock() { throw new Error('Lock timeout: another process was holding the lock for too long.'); }, tryLock: () => false, releaseLock() {} }) };
+  const r = post({ action: 'tasksInit', tpin: 'x' });
+  ctx.LockService = realLock;
+  props.MANAGER_PIN = 'boss9';
+  ctx.LockService = { getScriptLock: () => ({ waitLock() { throw new Error('Lock timeout: another process was holding the lock for too long.'); }, tryLock: () => false, releaseLock() {} }) };
+  const r2 = post({ action: 'staffSave', tpin: 'boss9', staff: { name: 'Sara', pin: '7777' } });
+  ctx.LockService = realLock;
+  check('Tasks: when the app is busy, a clear "try again" message (not "Lock timeout"), not logged', r2, r2.ok === false && /busy right now/.test(r2.error) && !((sheets.Errors || { rows: [] }).rows.some(x => /Lock timeout/.test(x[3]))));
+  ctx.__cache.bosta_busy = '1';
+  const r3 = post({ action: 'staffSave', tpin: 'boss9', staff: { name: 'Sara', pin: '7777' } });
+  check('Tasks: adding an employee works while the Bosta job runs', r3, r3.ok && r3.staff.name === 'Sara');
+  delete ctx.__cache.bosta_busy;
+}
+
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));
 process.exit(failed ? 1 : 0);

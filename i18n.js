@@ -535,6 +535,7 @@
     'A Bosta check is already running. The list updates by itself.': 'يوجد فحص بوسطة قيد التشغيل بالفعل. تتحدث القائمة تلقائيًا.',
     'Bosta check started. It runs in the background (a few minutes); the list updates by itself and the result goes to the Telegram group.': 'بدأ فحص بوسطة. يعمل في الخلفية (بضع دقائق)، وتتحدث القائمة تلقائيًا، وتُرسل النتيجة إلى مجموعة تيليجرام.',
     'Bring in the Bosta shipments of the last 14 days and check their size now? It runs in the background and can take several minutes.': 'هل تريد جلب شحنات بوسطة لآخر 14 يومًا وفحص أحجامها الآن؟ يعمل الفحص في الخلفية وقد يستغرق عدة دقائق.',
+    'The app is busy right now. Try again in a minute.': 'التطبيق مشغول الآن. حاول مرة أخرى بعد دقيقة.',
     'Searching…': 'جارٍ البحث…',
     'Price': 'السعر',
     'Cart is empty': 'السلة فارغة',
