@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-28.2';
+const SERVER_VERSION = '2026-11-28.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -2532,7 +2532,8 @@ function expiryReport_(r) {
  * Shipments: photos + Bosta bulky tracker
  * ===================================================================================== */
 
-const SHIP_FNS = { saveShipment: saveShipment, saveReturn: saveReturn, saveOther: saveOther, getShipment: getShipment, checkPin: checkPin };
+const SHIP_FNS = { saveShipment: saveShipment, saveReturn: saveReturn, saveOther: saveOther, getShipment: getShipment, checkPin: checkPin,
+  getShipmentLog: getShipmentLog, getShipmentThumbs: getShipmentThumbs };
 const DEFAULT_URL = 'https://app.bosta.co/api/v2/deliveries/business/{tn}';
 const HEAD = {
   Shipments: ['Time', 'Tracking', 'FileId', 'PhotoURL', 'Note', 'ScannedBy', 'Carrier'],
@@ -2649,6 +2650,54 @@ function saveOther(pin, carrier, ref, photos, note, isReturn) {
     logActivity_('Shipments', isReturn ? 'return photo' : 'photo', ref, photos.length, { carrier: carrier });
     return { saved: photos.length, ref: ref };
   } finally { lock.releaseLock(); }
+}
+
+/** The photo log (Shipments tab: outgoing, Return shipments tab: returns): one entry per tracking number in the period,
+ *  newest first: number, carrier, when it was photographed (first and last), how many photos, notes (e.g. "Order #1234")
+ *  and who. period: 'today' | 'yesterday' | '7' | '30'. text: part of a number or a note. The photos come with
+ *  getShipmentThumbs (small thumbnails), only when an entry is opened. */
+function getShipmentLog(pin, period, kind, text) {
+  pin_(pin);
+  const tz = 'Africa/Cairo', day = function (d) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); };
+  const now = new Date(), today = day(now), yest = day(new Date(now.getTime() - 864e5));
+  const from = period === 'yesterday' ? yest : period === '30' ? day(new Date(now.getTime() - 29 * 864e5)) : period === '7' ? day(new Date(now.getTime() - 6 * 864e5)) : today;
+  const to = period === 'yesterday' ? yest : today;
+  const q = String(text || '').trim().toUpperCase().replace(/\s+/g, ''), wantRet = kind === 'ret';
+  const groups = {}, order = [];
+  rows_('Shipments').forEach(function (r) {
+    if (!r[0] || !r[1]) return;
+    const t = new Date(r[0]), d = day(t);
+    if (d < from || d > to) return;
+    const carrier = String(r[6] || 'Bosta'), isRet = /return$/i.test(carrier);
+    if (isRet !== wantRet) return;
+    const tn = String(r[1]).replace(/^'/, ''), note = String(r[4] || '');
+    if (q && tn.toUpperCase().indexOf(q) === -1 && note.toUpperCase().replace(/\s+/g, '').indexOf(q) === -1) return;
+    const k = tn + '|' + carrier;
+    let g = groups[k];
+    if (!g) { g = groups[k] = { tn: tn, carrier: carrier.replace(/\s*return$/i, '') || 'Bosta', first: t, last: t, count: 0, notes: [], by: [], files: [] }; order.push(k); }
+    g.count++; if (t < g.first) g.first = t; if (t > g.last) g.last = t;
+    if (note && g.notes.indexOf(note) === -1) g.notes.push(note);
+    const who = String(r[5] || ''); if (who && who !== 'app' && g.by.indexOf(who) === -1) g.by.push(who);
+    if (r[2]) g.files.push(String(r[2]));
+  });
+  const list = order.map(function (k) { return groups[k]; }).sort(function (a, b) { return b.last - a.last; });
+  const fmt = function (d) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'); };
+  return { from: from, to: to, total: list.length, photos: list.reduce(function (t, g) { return t + g.count; }, 0),
+    items: list.slice(0, 300).map(function (g) {
+      return { tn: g.tn, carrier: g.carrier, first: fmt(g.first), last: fmt(g.last), count: g.count, notes: g.notes.slice(0, 3), by: g.by.slice(0, 2), files: g.files.slice(-12) };
+    }) };
+}
+/** Small thumbnails of up to 12 photos of the log (Drive files are private), with their Drive links. */
+function getShipmentThumbs(pin, ids) {
+  pin_(pin);
+  return (ids || []).slice(0, 12).map(function (id) {
+    try {
+      const f = DriveApp.getFileById(String(id));
+      let b = null; try { b = f.getThumbnail(); } catch (e) {}
+      if (!b) b = f.getBlob();
+      return { id: id, url: f.getUrl(), thumb: 'data:' + (b.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(b.getBytes()) };
+    } catch (e) { return { id: id, missing: true }; }
+  });
 }
 
 /** q = Bosta tracking (last 10 digits used) or any other-carrier reference / OTH- code. */

@@ -952,5 +952,35 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   delete ctx.__cache.bosta_busy;
 }
 
+// ---- Shipment photo log (Shipments / Return shipments: "Log")
+{
+  const realFmt = ctx.Utilities.formatDate;
+  const pad = n => String(n).padStart(2, '0');
+  ctx.Utilities.formatDate = (d, tz, f) => { const c = new Date(d.getTime() + 2 * 3600e3);   // Cairo = UTC+2 for the test
+    const ymd = c.getUTCFullYear() + '-' + pad(c.getUTCMonth() + 1) + '-' + pad(c.getUTCDate());
+    return f === 'yyyy-MM-dd' ? ymd : f === 'yyyy-MM-dd HH:mm' ? ymd + ' ' + pad(c.getUTCHours()) + ':' + pad(c.getUTCMinutes()) : realFmt(d, tz, f); };
+  const S = sheets.Shipments, now = Date.now(), base = S.rows.length;
+  S.rows.push([new Date(now - 3 * 60e3), '7000000001', 'fa', 'https://drive/fa', 'Order #2001', 'app', 'Bosta'],
+              [new Date(now - 2 * 60e3), '7000000001', 'fb', 'https://drive/fb', 'Order #2001', 'app', 'Bosta'],
+              [new Date(now - 60e3), 'RET-9', 'fc', 'https://drive/fc', '', 'app', 'Customer return'],
+              [new Date(now - 3 * 864e5), '7000000002', 'fd', 'https://drive/fd', '', 'app', 'Bosta'],
+              [new Date(now - 40 * 864e5), '7000000003', 'fe', 'https://drive/fe', '', 'app', 'Bosta']);
+  let r = post({ fn: 'getShipmentLog', args: ['2222', 'today', 'out', ''] });
+  const e = r.result && r.result.items.find(x => x.tn === '7000000001');
+  check('Photo log: today\'s shipments, one entry per number with its 2 photos, time and order', r.result && r.result.items.map(x => x.tn + ':' + x.count),
+    e && e.count === 2 && e.carrier === 'Bosta' && e.notes[0] === 'Order #2001' && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(e.first) && e.files.join() === 'fa,fb' && !r.result.items.some(x => x.tn === 'RET-9' || x.tn === '7000000002'));
+  r = post({ fn: 'getShipmentLog', args: ['2222', '7', 'out', ''] });
+  check('Photo log: last 7 days, newest first, older ones left out', r.result.items.map(x => x.tn), r.result.items.findIndex(x => x.tn === '7000000001') < r.result.items.findIndex(x => x.tn === '7000000002') && r.result.items.some(x => x.tn === '7000000002') && !r.result.items.some(x => x.tn === '7000000003'));
+  r = post({ fn: 'getShipmentLog', args: ['2222', '30', 'ret', ''] });
+  check('Photo log: the returns log shows returns only (carrier without "return")', r.result.items.map(x => x.tn + ':' + x.carrier), r.result.items.some(x => x.tn === 'RET-9' && x.carrier === 'Customer') && r.result.items.every(x => !/^7000/.test(x.tn)));
+  r = post({ fn: 'getShipmentLog', args: ['2222', '30', 'out', '#2001'] });
+  check('Photo log: search by a number or an order', r.result.items.map(x => x.tn), r.result.items.length === 1 && r.result.items[0].tn === '7000000001');
+  r = post({ fn: 'getShipmentThumbs', args: ['2222', ['fa', 'gone']] });
+  check('Photo log: thumbnails with Drive links; a deleted photo does not break it', r.result, r.result[0].thumb.startsWith('data:image/png;base64,') && r.result[0].url === 'https://drive/fa' && r.result[1].missing === true);
+  r = post({ fn: 'getShipmentLog', args: ['bad', 'today', 'out', ''] });
+  check('Photo log: needs the Shipments pass', r, !!r.error);
+  S.rows.length = base; ctx.Utilities.formatDate = realFmt;
+}
+
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));
 process.exit(failed ? 1 : 0);

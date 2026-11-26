@@ -132,6 +132,10 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
 - Pick list finished mark: `setPickListDone` (sheet `PickListsDone`); finished lists are hidden in the app.
 - Return shipments (own tab): `saveReturn` saves photos with carrier `Bosta return` (other carriers: `<carrier> return`),
   never touches `Tracking`; logged as `return photo`.
+- Photo log ("Log" in Shipments and Return shipments): `getShipmentLog(pin, period, kind, text)` reads the `Shipments`
+  sheet: one entry per tracking number in the period (today / yesterday / 7 / 30 days; outgoing or returns), newest
+  first, with first / last photo time (Cairo), carrier, notes ("Order #…"), photo count; search by number or note.
+  Opening an entry loads small thumbnails (`getShipmentThumbs`, ≤12, Drive links).
 - Telegram group notifications (server only): `tgNotify_` sends to `TELEGRAM_CHAT_ID` with `TELEGRAM_BOT_TOKEN` (Script
   Properties, never in code): new pick list, new bulky shipment, errors (once per part/action per 30 min; wrong passes
   excluded) and the 21:00 daily report (`dailyTelegramReport`, trigger from `installTelegramTrigger`). Setup helpers:

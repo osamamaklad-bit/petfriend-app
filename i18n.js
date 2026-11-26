@@ -597,6 +597,10 @@
     'Photos can be added to complaints, returns and exchanges only': 'تُضاف الصور إلى الشكاوى وطلبات الإرجاع والاستبدال فقط',
     'At most 10 photos per complaint': '10 صور بحد أقصى لكل طلب',
     'Approve it first (free or paid by the customer)': 'وافق عليه أولًا (مجانًا أو على حساب العميل)',
+    'Log': 'السجل',
+    '7 days': '7 أيام',
+    'Tracking number or order': 'رقم التتبع أو الطلب',
+    'No photos in this period.': 'لا توجد صور في هذه الفترة.',
     'Searching…': 'جارٍ البحث…',
     'Price': 'السعر',
     'Cart is empty': 'السلة فارغة',
@@ -611,6 +615,7 @@
 
   // Text with names / numbers in it. First match wins, so specific ones come before general ones.
   var PATTERNS = [
+    [/^(\d+) shipments? · (\d+) photos?$/, '$1 شحنة · $2 صورة'],
     [/^(\d+) requests? (?:is|are) waiting for approval or an answer\.$/, '$1 من الطلبات في انتظار الموافقة أو الرد.'],
     [/^(\d+) photos? added and sent to the Telegram group\.$/, 'أُضيفت $1 صورة وأُرسلت إلى مجموعة تيليجرام.'],
     [/^Waiting for approval · (\d+)$/, 'في انتظار الموافقة · $1'],
