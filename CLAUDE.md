@@ -25,7 +25,8 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   (one history entry above home; Back from ANY page, the Dashboard too, goes to the big-buttons home, never closes the
   app: Android Chrome ignores a history step pushed without a real tap (swipes, taps inside a page frame), so `go` pushes
   only while `navigator.userActivation.isActive`, else `ensureStep` adds it at the next tap: pages send `pf-act` on
-  pointerup, see settings.js), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
+  pointerup, see settings.js; settings.js also sets `html{touch-action:pan-y pinch-zoom}` so a sideways swipe is not a
+  browser scroll and counts as a real touch), and a tab's header logo, the desktop side-bar logo or tapping the open tab again go
   home. Tab bar: POS · Check · Orders · Purchase orders · Pick list · Shipments · Return shipments (7, a bit larger;
   Customers and Tasks moved to big home buttons at the owner's request; all fit from 320px). Swipe left / right on any page moves to the next / previous page (mirrored in Arabic): `settings.js` sends
   `pf-swipe` (quick, mostly sideways, not from text boxes / sideways-scrolling lists / the camera / open windows), the main

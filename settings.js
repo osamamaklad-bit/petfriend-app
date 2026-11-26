@@ -243,6 +243,15 @@
   window.pfConfirm = pfConfirm;
   window.pfAlert = pfAlert;
 
+  // ---------- pages scroll only up and down: then a sideways swipe is not a browser scroll, so Chrome counts it as a
+  // real touch and the main page can save its Back step at once (lists that scroll sideways keep working: a scrolling
+  // box uses its own touch-action) ----------
+  (function () {
+    var st = document.createElement('style');
+    st.textContent = 'html{touch-action:pan-y pinch-zoom}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
+
   // ---------- every real tap is reported to the main page, so its Back step (back to home) is saved then ----------
   if (window.parent !== window) {
     // a little after the tap, so a button that opens another page (its click comes right after) is handled first
