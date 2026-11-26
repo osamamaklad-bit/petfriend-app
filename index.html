@@ -149,7 +149,10 @@
   // A tab's header logo -> home.
   // Swipe left / right (sent by every page, see settings.js) moves to the next / previous page in this order.
   // In Arabic the screen is mirrored, so the directions are too.
-  const ORDER = ['today', 'orders', 'picklist', 'shipments', 'pos', 'receive', 'returns', 'check', 'customers', 'tasks', 'dashboard'];
+  // The order follows the tab bar exactly (read from it, so it stays in step): home first, then the tab-bar pages left to
+  // right as they stand on the screen, then the pages that only have a home button.
+  const ORDER = ['today'].concat([].map.call(document.querySelectorAll('#tabs button[data-t]'), function (b) { return b.dataset.t; }),
+    ['customers', 'tasks', 'dashboard'].filter(function (t) { return !document.querySelector('#tabs button[data-t="' + t + '"]'); }));
   function swipe(dir) {
     const rtl = document.documentElement.dir === 'rtl', step = (dir === 'left') !== rtl ? 1 : -1;
     const i = ORDER.indexOf(current), next = ORDER[(i + step + ORDER.length) % ORDER.length];
