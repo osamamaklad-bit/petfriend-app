@@ -129,12 +129,21 @@
     });
   }
   // open a tab: from home it adds one history entry (so Back comes home); between tabs it replaces it
+  // Back must always bring a page back to HOME (the big buttons), never close the app. Android Chrome ignores a history
+  // step added without a real tap (a swipe, or a tap inside a page frame that did not reach this page), and then Back
+  // leaves the app. So the step is added only while this page has a real tap (navigator.userActivation); otherwise it
+  // is added at the next tap anywhere in the app (the pages send 'pf-act', see settings.js).
+  function tapNow() { return !navigator.userActivation || navigator.userActivation.isActive; }
+  function ensureStep() {
+    if (current === HOME || (history.state && history.state.tab) || !tapNow()) return;
+    history.pushState({ tab: current }, '', '#' + current);
+  }
   function go(t) {
     if (!PAGES[t] || t === current) return;
     if (t === HOME) { goHome(); return; }
     if (history.state && history.state.tab) history.replaceState({ tab: t }, '', '#' + t);
-    else history.pushState({ tab: t }, '', '#' + t);
-    show(t);
+    else if (tapNow()) history.pushState({ tab: t }, '', '#' + t);
+    show(t);                                        // without a tap: the step is added at the next tap (ensureStep)
   }
   function goHome() {
     if (current === HOME) return;
@@ -164,6 +173,7 @@
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data) return;
     if (e.data === 'pf-home') { goHome(); return; }
+    if (e.data === 'pf-act') { ensureStep(); return; }
     if (e.data.type === 'pf-swipe') { swipe(e.data.dir); return; }
     if (e.data.type === 'pf-go' && PAGES[e.data.tab]) { go(e.data.tab); return; }   // the big buttons on Today
     if (e.data.type !== 'pf-open-order') return;
@@ -172,6 +182,7 @@
     if (f.dataset.ready) send(); else f.addEventListener('load', function () { setTimeout(send, 50); }, { once: true });
   });
 
+  document.addEventListener('pointerup', ensureStep, true);      // a tap on the tab bar also counts
   document.getElementById('tabs').addEventListener('click', function (e) {
     if (e.target.closest('.brand')) { goHome(); return; }
     const b = e.target.closest('button[data-t]');

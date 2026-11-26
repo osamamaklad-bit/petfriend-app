@@ -243,6 +243,14 @@
   window.pfConfirm = pfConfirm;
   window.pfAlert = pfAlert;
 
+  // ---------- every real tap is reported to the main page, so its Back step (back to home) is saved then ----------
+  if (window.parent !== window) {
+    // a little after the tap, so a button that opens another page (its click comes right after) is handled first
+    document.addEventListener('pointerup', function () {
+      setTimeout(function () { try { window.parent.postMessage('pf-act', location.origin); } catch (x) {} }, 30);
+    }, { capture: true, passive: true });
+  }
+
   // ---------- swipe left / right to move between the app's pages (the main page decides where) ----------
   // Only a quick, mostly sideways swipe counts. Not while a window is open, and not when it starts on something that
   // moves sideways itself (a text box, a list that scrolls sideways, the camera, a slider).
