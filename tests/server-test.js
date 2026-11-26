@@ -136,7 +136,7 @@ const ctx = {
   ContentService: { createTextOutput: t => ({ setMimeType() { return this; }, getContent: () => t }), MimeType: { JSON: 'json' } },
   SpreadsheetApp: { getActive: () => ({ getSheetByName: n => sheets[n] || null, insertSheet: n => sheet(n) }) },
   DriveApp: { createFolder: (n) => { ctx.__folders = (ctx.__folders || []).concat([n]); return { getId: () => 'F', getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }; },
-    getFolderById: () => ({ getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }), getFileById: () => ({ getBlob: () => ({ getBytes: () => [1] }) }) },
+    getFolderById: () => ({ getUrl: () => 'https://drive/folder/F', createFile: b => { ctx.__files = (ctx.__files || []).concat([b]); return { getId: () => 'file1', getUrl: () => 'https://drive/file1' }; } }), getFileById: (id) => { if (id === 'gone') throw new Error('not found'); return { getUrl: () => 'https://drive/' + id, getThumbnail: () => ({ getBytes: () => [1, 2, 3, 4, 5, 6], getContentType: () => 'image/png' }), getBlob: () => ({ getBytes: () => [1], getContentType: () => 'image/jpeg' }) }; } },
   Session: { getActiveUser: () => ({ getEmail: () => 'me@x' }), getScriptTimeZone: () => 'Africa/Cairo' },
   Utilities: { getUuid: () => 'uuid-' + Math.random().toString(36).slice(2), formatDate: (d, tz, f) => f === 'u' ? String(ctx.__day || 1) : f === 'H' ? String(ctx.__hour || 11) : f === 'yyyyMMdd-HHmm' ? '20261118-1000' : f === 'yyyy-MM-dd' ? (ctx.__today || '2026-11-15') : f === 'HH:mm' ? (ctx.__hm || '11:00') : '20261115', newBlob: (bytes, type, name) => ({ type, name }), base64Decode: () => [], base64Encode: b => Array.isArray(b) && b.length > 4 ? Buffer.from(b).toString('base64') : 'AA==',
     computeDigest: (alg, s) => Array.from(require('crypto').createHash('sha256').update(String(s)).digest()), DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, sleep: ms => { ctx.__slept = (ctx.__slept || 0) + ms; } },
@@ -809,8 +809,67 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Requests: status change saved and told in the group', [r.item, grp().map(x => x.body.text)], r.ok && r.item.status === 'done' && r.item.updatedBy === 'Mona' && /إلغاء طلب #1001: تم التنفيذ[\s\S]*Cancelled in Shopify/.test(grp()[0].body.text));
   r = post({ action: 'reqStatus', tpin: '1234', id: comp, status: 'done' });
   check('Requests: a status of another kind is refused', r, r.ok === false);
+
+  // ---- Complaint photos
+  props.TELEGRAM_BOT_TOKEN = '123:abc'; props.TELEGRAM_CHAT_ID = '-100777';
+  ctx.__tg = []; ctx.__files = [];
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'complaint', customer: 'Nour', channel: 'whatsapp', category: 'damaged', details: 'Bag torn', photos: [PH, PH] } });
+  const cph = r.item;
+  check('Complaint photos: saved in Drive with the complaint, count shown, sent to the group as an album', [r.item && r.item.photos, ctx.__files.length, ctx.__tg.map(x => x.url.split('/').pop())],
+    r.ok && r.item.photos === 2 && ctx.__files.length === 2 && /Complaint_Nour/.test(ctx.__files[0].name) && ctx.__tg.some(x => /sendMediaGroup/.test(x.url) && JSON.parse(x.body.media).length === 2)
+    && ctx.__tg.some(x => /sendMessage/.test(x.url) && /📷 2 صورة/.test(x.body.text)));
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'complaint', customer: 'Nour', details: 'x', photos: [PH, PH, PH, PH, PH, PH] } });
+  check('Complaint photos: at most 5 at a time', r, r.ok === false && /At most 5/.test(r.error));
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'complaint', customer: 'Nour', details: 'x', photos: ['data:text/html;base64,AAA'] } });
+  check('Complaint photos: only pictures', r, r.ok === false && /Not a photo/.test(r.error));
+  ctx.__tg = [];
+  r = post({ action: 'reqAddPhotos', tpin: '1234', id: cph.id, photos: [PH] });
+  check('Complaint photos: more can be added later (one photo -> sendPhoto)', [r.item && r.item.photos, ctx.__tg.map(x => x.url.split('/').pop())],
+    r.ok && r.item.photos === 3 && ctx.__tg.some(x => /sendPhoto/.test(x.url) && /صور مضافة إلى شكوى Nour/.test(x.body.caption)));
+  r = post({ action: 'reqAddPhotos', tpin: '1234', id: cq, photos: [PH] });
+  check('Complaint photos: not for other kinds of requests', r, r.ok === false && /complaints, returns and exchanges only/.test(r.error));
+  r = post({ action: 'reqPhotos', tpin: '1234', id: cph.id });
+  check('Complaint photos: thumbnails read through the server, with a Drive link', r.photos, r.ok && r.photos.length === 3 && /^data:image\/png;base64,/.test(r.photos[0].thumb) && /^https:\/\/drive\//.test(r.photos[0].url));
+  r = post({ action: 'reqInit', tpin: '1234' });
+  check('Complaint photos: the list shows the photo count', r.items.find(x => x.id === cph.id).photos, r.items.find(x => x.id === cph.id).photos === 3);
+
+  // ---- Return and exchange requests
+  ctx.__tg = []; ctx.__files = [];
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'ret', order: '1001', details: 'Wrong size', photos: [PH] } });
+  check('Return request: saved for the Shopify order, with its photo, told in the group', [r.item, ctx.__tg.map(x => x.url.split('/').pop() + ':' + (x.body.text || x.body.caption || ''))],
+    r.ok && r.item.kind === 'ret' && r.item.order === '#1001' && r.item.status === 'pending' && r.item.photos === 1 && ctx.__tg.some(x => /طلب إرجاع جديد — يُرجى الموافقة/.test(x.body.text || ''))
+    && ctx.__tg.some(x => /sendPhoto/.test(x.url) && /طلب إرجاع/.test(x.body.caption)));
+  const apMsg = ctx.__tg.find(x => /يُرجى الموافقة/.test(x.body.text || ''));
+  check('Return request: the group gets 3 buttons (free / customer pays / refuse)', apMsg && apMsg.body.reply_markup,
+    apMsg && JSON.stringify(apMsg.body.reply_markup.inline_keyboard.flat().map(b => b.callback_data.split(':')[0])) === '["rf","rp","rr"]');
+  const retId = r.item.id;
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'exchange', order: '1001', details: '' } });
+  check('Exchange request: needs the details (what to exchange)', r, r.ok === false && /details/.test(r.error));
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'exchange', order: '1001', details: '2kg instead of 4kg' } });
+  check('Exchange request: saved', r, r.ok && r.item.kind === 'exchange' && r.item.photos === 0);
+  r = post({ action: 'reqStatus', tpin: '1234', id: retId, status: 'done' });
+  check('Return request: cannot be carried out before it is approved', r, r.ok === false && /Approve it first/.test(r.error));
+  r = post({ action: 'reqStatus', tpin: '1234', id: retId, status: 'free' });
+  check('Return request: an employee cannot approve it', r, r.ok === false && /Only the manager/.test(r.error));
+  r = post({ action: 'reqInit', tpin: '1234' });
+  check('Return request: listed as waiting for approval', r.items.find(x => x.id === retId).status, r.items.find(x => x.id === retId).status === 'pending');
+  ctx.__tg = [];
+  ctx.__tgUpdates = [{ update_id: 60, callback_query: { id: 'c60', from: { id: 1, first_name: 'Osama' }, data: 'rp:' + retId, message: { chat: { id: -100777 }, message_id: 9, text: 'طلب إرجاع' } } }];
+  ctx.tgPoll();
+  const retRow = sheets.Requests.rows.find(x => x[0] === retId);
+  check('Return request: approved in the group "customer pays", with the name; message updated', [retRow[8], retRow[12], ctx.__tg.map(x => x.url.split('/').pop() + ':' + x.body.text)],
+    retRow[8] === 'paid' && /Osama/.test(retRow[12]) && ctx.__tg.some(x => /editMessageText/.test(x.url) && /موافَق عليه — على حساب العميل — Osama/.test(x.body.text)));
+  ctx.__tg = [];
+  r = post({ action: 'reqStatus', tpin: '1234', id: retId, status: 'done', note: 'Return created in Shopify' });
+  check('Return request: then carried out by the employee, told in the group', ctx.__tg.map(x => x.body.text), r.ok && ctx.__tg.some(x => /إرجاع #1001: تم التنفيذ/.test(x.body.text)));
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'exchange', order: '1001', details: 'Blue instead of red' } });
+  const exId = r.item.id;
+  r = tp({ action: 'reqStatus', id: exId, status: 'free', note: 'Our mistake' });
+  check('Exchange request: the manager approves it in the app as free', r, r.ok && r.item.status === 'free' && r.item.note === 'Our mistake');
+  r = post({ action: 'reqSave', tpin: '1234', req: { kind: 'cancel', order: '1001', photos: [PH] } });
+  check('Cancel request: photos are not kept (not a photo kind)', r, r.ok && r.item.photos === 0);
   r = tp({ action: 'reqInit' });
-  check('Requests: the list shows every entry, newest first', r.items.map(x => x.kind + ':' + x.status), r.ok && r.items.length === 3 && r.items[0].kind === 'inspect');
+  check('Requests: the list shows every entry, newest first', r.items.map(x => x.kind + ':' + x.status), r.ok && r.items.length === 8 && r.items[0].kind === 'cancel' && r.items[1].kind === 'exchange');
 
   // ---- Monthly evaluation (social media): the owner's sheet, Aya's numbers
   r = post({ action: 'evalInit', tpin: '1234' });

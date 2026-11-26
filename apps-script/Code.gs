@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-28.1';
+const SERVER_VERSION = '2026-11-28.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -2015,7 +2015,7 @@ function tgPoll() {
 function tgHandle_(u) {
   const staff = tRows_('TaskStaff').filter(function (e) { return e.Active !== false; });
   if (u.callback_query) {
-    const qa = /^(ia|in):(\w+)$/.exec(u.callback_query.data || '');
+    const qa = /^(ia|in|rf|rp|rr):(\w+)$/.exec(u.callback_query.data || '');
     if (qa) { reqAnswer_(u.callback_query, qa); return; }        // inspection answer in the group
     const q = u.callback_query, m = /^td:(\w+)$/.exec(q.data || ''), chat = String(q.from && q.from.id);
     const emp = staff.filter(function (e) { return String(e.ChatId) === chat; })[0];
@@ -2103,35 +2103,131 @@ function installTasksTriggers() {
  * Sheet "Requests" (one row per entry).
  * ===================================================================================== */
 TASK_SHEETS.Requests = ['Id', 'Kind', 'Order', 'Customer', 'Phone', 'Channel', 'Category', 'Details', 'Status', 'CreatedAt', 'CreatedBy',
-  'UpdatedAt', 'UpdatedBy', 'Note', 'OrderInfo'];
-const REQ_KINDS = { cancel: 'إلغاء طلب', edit: 'تعديل طلب', inspect: 'معاينة', complaint: 'شكوى' };
+  'UpdatedAt', 'UpdatedBy', 'Note', 'OrderInfo', 'Photos'];
+const REQ_KINDS = { cancel: 'إلغاء طلب', edit: 'تعديل طلب', ret: 'إرجاع', exchange: 'استبدال', inspect: 'معاينة', complaint: 'شكوى' };
+const REQ_PHOTO_KINDS = { complaint: 1, ret: 1, exchange: 1 };   // the kinds that can carry photos
 const REQ_STATUS = {   // the statuses each kind can have; the first is the starting one
-  cancel: ['open', 'done', 'rejected'], edit: ['open', 'done', 'rejected'],
+  cancel: ['open', 'done', 'rejected'], edit: ['open', 'done', 'rejected'], ret: ['pending', 'free', 'paid', 'rejected', 'done'], exchange: ['pending', 'free', 'paid', 'rejected', 'done'],
   inspect: ['pending', 'allowed', 'denied'], complaint: ['open', 'working', 'resolved']
 };
 const REQ_STATUS_AR = { open: 'مفتوح', done: 'تم التنفيذ', rejected: 'مرفوض', pending: 'في انتظار الرد', allowed: 'مسموح بالمعاينة',
-  denied: 'غير مسموح بالمعاينة', working: 'قيد المتابعة', resolved: 'تم الحل' };
+  denied: 'غير مسموح بالمعاينة', working: 'قيد المتابعة', resolved: 'تم الحل', free: 'موافَق عليه — مجانًا', paid: 'موافَق عليه — على حساب العميل' };
+// still to handle (shown under "Open" in the app, kept in the list whatever their age)
+const REQ_OPEN = { open: 1, pending: 1, working: 1, free: 1, paid: 1 };
+// return / exchange: the approval (free, customer pays, or refused) is the manager's (app) or the group's (Telegram)
+const REQ_DECISIONS = { free: 1, paid: 1, rejected: 1 };
+function reqApprovalButtons_(id) {
+  return { inline_keyboard: [[{ text: '✅ موافقة — مجاني', callback_data: 'rf:' + id }, { text: '✅ موافقة — على حساب العميل', callback_data: 'rp:' + id }],
+    [{ text: '❌ رفض', callback_data: 'rr:' + id }]] };
+}
 const COMPLAINT_CATS = { quality: 'جودة المنتج', late: 'تأخر التوصيل', wrong: 'منتج خطأ أو ناقص', damaged: 'منتج تالف', staff: 'تعامل الموظفين',
   price: 'السعر', delivery: 'شركة الشحن', other: 'أخرى' };
 const COMPLAINT_CHANNELS = { phone: 'مكالمة', whatsapp: 'واتساب', facebook: 'فيسبوك', instagram: 'إنستجرام', store: 'في المحل', other: 'أخرى' };
 Object.assign(TASK_ACTIONS, {
   reqInit: function (r, who) { return reqInit_(r, who); },
   reqSave: function (r, who) { return reqSave_(r, who); },
-  reqStatus: function (r, who) { return reqStatus_(r, who); }
+  reqStatus: function (r, who) { return reqStatus_(r, who); },
+  reqAddPhotos: function (r, who) { return reqAddPhotos_(r, who); },
+  reqPhotos: function (r, who) { return reqPhotos_(r, who); }
 });
 
 function reqOut_(x) {
   let info = null; try { info = x.OrderInfo ? JSON.parse(x.OrderInfo) : null; } catch (e) {}
   return { id: x.Id, kind: x.Kind, order: x.Order, customer: x.Customer, phone: x.Phone, channel: x.Channel, category: x.Category,
     details: x.Details, status: x.Status, createdAt: x.CreatedAt ? new Date(x.CreatedAt).toISOString() : '', createdBy: x.CreatedBy,
-    updatedAt: x.UpdatedAt ? new Date(x.UpdatedAt).toISOString() : '', updatedBy: x.UpdatedBy || '', note: x.Note || '', info: info };
+    updatedAt: x.UpdatedAt ? new Date(x.UpdatedAt).toISOString() : '', updatedBy: x.UpdatedBy || '', note: x.Note || '', info: info,
+    photos: reqPhotoIds_(x).length };
+}
+
+/* ---- Complaint photos: saved in the Drive folder "Complaint Photos" (COMPLAINT_FOLDER_ID), their ids in the row's
+ * Photos column (JSON list). Shown in the app as small thumbnails read through the server (Drive files are private),
+ * and sent to the Telegram group. At most 5 photos per save, 10 per complaint. */
+const REQ_MAX_PHOTOS = 10;
+function reqPhotoIds_(x) { try { const a = JSON.parse(x.Photos || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function reqPhotoFolder_() {
+  const id = P.getProperty('COMPLAINT_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* deleted: make a new one */ } }
+  const f = DriveApp.createFolder('Customer Service Photos');
+  P.setProperty('COMPLAINT_FOLDER_ID', f.getId());
+  return f;
+}
+function reqCheckPhotos_(photos) {
+  photos = (photos || []).filter(Boolean);
+  if (photos.length > 5) throw uerr_('At most 5 photos at a time');
+  photos.forEach(function (d) {
+    if (!/^data:image\/(jpeg|png|webp);base64,/.test(String(d))) throw uerr_('Not a photo');
+    if (String(d).length > 8 * 1024 * 1024) throw uerr_('The photo is too large: take it again');
+  });
+  return photos;
+}
+/** Saves the photos in Drive; returns their blobs (for Telegram) and ids. */
+function reqSavePhotoFiles_(x, photos) {
+  const folder = reqPhotoFolder_(), now = new Date(), blobs = [], ids = [];
+  const base = ('Complaint_' + (x.Order || x.Customer || x.Id)).replace(/[^\w\u0600-\u06FF#-]+/g, '_').slice(0, 60) + '_' +
+    Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss');
+  photos.forEach(function (d, i) {
+    const mime = (/^data:(image\/\w+);/.exec(d) || [])[1] || 'image/jpeg';
+    const blob = Utilities.newBlob(Utilities.base64Decode(String(d).split(',')[1]), mime, base + '_' + (i + 1) + '.jpg');
+    ids.push(folder.createFile(blob).getId()); blobs.push(blob);
+  });
+  return { ids: ids, blobs: blobs };
+}
+/** Photos to the Telegram group (one album, the caption on the first). Never fails the action. */
+function tgGroupPhotos_(blobs, caption) {
+  const token = P.getProperty('TELEGRAM_BOT_TOKEN'), chat = P.getProperty('TELEGRAM_CHAT_ID');
+  if (!token || !chat || !blobs.length) return false;
+  try {
+    if (blobs.length === 1) {
+      const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendPhoto', { method: 'post', muteHttpExceptions: true,
+        payload: { chat_id: chat, caption: String(caption || '').slice(0, 1000), photo: blobs[0] } });
+      return res.getResponseCode() === 200;
+    }
+    const payload = { chat_id: chat };
+    payload.media = JSON.stringify(blobs.slice(0, 10).map(function (b, i) {
+      return Object.assign({ type: 'photo', media: 'attach://p' + i }, i === 0 && caption ? { caption: String(caption).slice(0, 1000) } : {});
+    }));
+    blobs.slice(0, 10).forEach(function (b, i) { payload['p' + i] = b; });
+    const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMediaGroup', { method: 'post', muteHttpExceptions: true, payload: payload });
+    return res.getResponseCode() === 200;
+  } catch (e) { console.error('Telegram photos', e.message); return false; }
+}
+/** Adds photos to a complaint already saved. */
+function reqAddPhotos_(r, who) {
+  const photos = reqCheckPhotos_(r.photos);
+  if (!photos.length) throw uerr_('Choose at least one photo');
+  const x = tRows_('Requests').filter(function (y) { return y.Id === r.id; })[0];
+  if (!x) throw uerr_('Not found');
+  if (!REQ_PHOTO_KINDS[x.Kind]) throw uerr_('Photos can be added to complaints, returns and exchanges only');
+  if (reqPhotoIds_(x).length + photos.length > REQ_MAX_PHOTOS) throw uerr_('At most 10 photos per complaint');
+  const saved = reqSavePhotoFiles_(x, photos);
+  withTaskLock_(function () {
+    const cur = tRows_('Requests').filter(function (y) { return y.Id === r.id; })[0];
+    cur.Photos = JSON.stringify(reqPhotoIds_(cur).concat(saved.ids)); cur.UpdatedAt = new Date(); cur.UpdatedBy = who.name;
+    tPut_('Requests', cur); x.Photos = cur.Photos;
+  });
+  logActivity_('Customers', 'complaint photos', x.Order || x.Customer, saved.ids.length, { by: who.name });
+  tgGroupPhotos_(saved.blobs, '📷 صور مضافة إلى ' + (x.Kind === 'complaint' ? 'شكوى' : 'طلب ' + REQ_KINDS[x.Kind]) + ' ' + (x.Customer || '') + (x.Order ? ' — ' + x.Order : '') + '\n✍️ ' + who.name);
+  return { ok: true, item: reqOut_(x), added: saved.ids.length };
+}
+/** The complaint's photos as small thumbnails (Drive files are private), with a link to open each in Drive. */
+function reqPhotos_(r, who) {
+  const x = tRows_('Requests').filter(function (y) { return y.Id === r.id; })[0];
+  if (!x) throw uerr_('Not found');
+  return { ok: true, photos: reqPhotoIds_(x).map(function (id) {
+    try {
+      const f = DriveApp.getFileById(id);
+      let b = null; try { b = f.getThumbnail(); } catch (e) {}
+      if (!b) b = f.getBlob();
+      return { id: id, url: f.getUrl(), thumb: 'data:' + (b.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(b.getBytes()) };
+    } catch (e) { return { id: id, url: '', thumb: '', missing: true }; }
+  }) };
 }
 /** Open entries, and closed ones of the last 30 days (90 for complaints), newest first. */
 function reqInit_(r, who) {
   const since = Date.now() - 30 * 864e5, sinceC = Date.now() - 90 * 864e5;
   const list = tRows_('Requests').filter(function (x) {
     const first = (REQ_STATUS[x.Kind] || [])[0], t = new Date(x.UpdatedAt || x.CreatedAt).getTime();
-    return x.Status === first || x.Status === 'working' || t >= (x.Kind === 'complaint' ? sinceC : since);
+    return x.Status === first || REQ_OPEN[x.Status] || t >= (x.Kind === 'complaint' ? sinceC : since);
   }).sort(function (a, b) { return (new Date(b.CreatedAt) - new Date(a.CreatedAt)) || (b._row - a._row); })   // same time: the lower row is newer
     .map(reqOut_);
   return { ok: true, role: who.manager ? 'manager' : 'employee', me: who.name, items: list };
@@ -2157,6 +2253,7 @@ function reqText_(x, head) {
   if (x.Order) L.push('🧾 الطلب: ' + x.Order + (info && info.customer ? ' — ' + info.customer : '') + (info && info.city ? ' (' + info.city + ')' : ''));
   if (info && info.total) L.push('💰 ' + info.total + (info.fulfillment ? ' · ' + (FUL_AR[info.fulfillment] || info.fulfillment) : '') + (info.cancelled ? ' · ملغى بالفعل' : ''));
   if (info && /FULFILLED/.test(info.fulfillment || '') && (x.Kind === 'cancel' || x.Kind === 'edit')) L.push('⚠️ تنبيه: الطلب جُهِّز بالفعل');
+  if (info && info.fulfillment === 'UNFULFILLED' && (x.Kind === 'ret' || x.Kind === 'exchange')) L.push('⚠️ تنبيه: الطلب لم يُجهَّز بعد');
   if (x.Customer) L.push('👤 ' + x.Customer + (x.Phone ? ' · ' + x.Phone : ''));
   if (x.Kind === 'complaint') L.push('🏷️ ' + (COMPLAINT_CATS[x.Category] || 'أخرى') + ' · ' + (COMPLAINT_CHANNELS[x.Channel] || ''));
   if (x.Details) L.push('📝 ' + x.Details);
@@ -2167,21 +2264,31 @@ function reqSave_(r, who) {
   const x = r.req || {}, kind = x.kind;
   if (!REQ_KINDS[kind]) throw uerr_('Choose the type');
   const details = String(x.details || '').trim().slice(0, 1500);
-  if ((kind === 'edit' || kind === 'complaint') && !details) throw uerr_('Write the details');
+  if ((kind === 'edit' || kind === 'exchange' || kind === 'complaint') && !details) throw uerr_('Write the details');
   let info = null, order = String(x.order || '').trim();
   if (kind !== 'complaint' || order) { info = reqOrder_(order); order = info.name; }
   const row = { Id: tId_('Q'), Kind: kind, Order: order, Customer: String(x.customer || (info && info.customer) || '').trim().slice(0, 80),
     Phone: String(x.phone || '').replace(/[^\d+]/g, '').slice(0, 20), Channel: kind === 'complaint' ? (COMPLAINT_CHANNELS[x.channel] ? x.channel : 'other') : '',
     Category: kind === 'complaint' ? (COMPLAINT_CATS[x.category] ? x.category : 'other') : '', Details: details, Status: REQ_STATUS[kind][0],
     CreatedAt: new Date(), CreatedBy: who.name, UpdatedAt: '', UpdatedBy: '', Note: '', OrderInfo: info ? JSON.stringify(info) : '' };
-  withTaskLock_(function () { tPut_('Requests', row); });
+  const photos = REQ_PHOTO_KINDS[kind] ? reqCheckPhotos_(x.photos) : [];
+  let saved = { ids: [], blobs: [] };
+  if (photos.length) { saved = reqSavePhotoFiles_(row, photos); row.Photos = JSON.stringify(saved.ids); }
+  withTaskLock_(function () {
+    const s = tSheet_('Requests');
+    if (!s.getRange(1, TASK_SHEETS.Requests.length).getValue()) s.getRange(1, TASK_SHEETS.Requests.length).setValue('Photos');   // older sheet
+    tPut_('Requests', row);
+  });
   logActivity_('Customers', kind, order || row.Customer, 0, { by: who.name });
-  const icon = { cancel: '🛑', edit: '✏️', inspect: '🔍', complaint: '📣' }[kind];
+  const icon = { cancel: '🛑', edit: '✏️', ret: '↩️', exchange: '🔄', inspect: '🔍', complaint: '📣' }[kind];
   const head = icon + ' ' + (kind === 'inspect' ? 'طلب معاينة — يُرجى الرد' : kind === 'complaint' ? 'شكوى عميل جديدة' : 'طلب ' + REQ_KINDS[kind].replace('طلب', '').trim() + ' جديد');
   let sent;
-  if (kind === 'inspect') sent = tgGroup_(reqText_(row, head), { inline_keyboard: [[{ text: '✅ يُسمح بالمعاينة', callback_data: 'ia:' + row.Id }, { text: '❌ لا يُسمح', callback_data: 'in:' + row.Id }]] });
-  else sent = tgNotify_('requests', reqText_(row, head));
-  return { ok: true, item: reqOut_(row), sent: !!sent, warn: info && /FULFILLED/.test(info.fulfillment || '') && (kind === 'cancel' || kind === 'edit') ? 'fulfilled' : info && info.cancelled ? 'cancelled' : '' };
+  if (kind === 'ret' || kind === 'exchange') sent = tgGroup_(reqText_(row, head + ' — يُرجى الموافقة') + (saved.ids.length ? '\n📷 ' + saved.ids.length + ' صورة' : ''), reqApprovalButtons_(row.Id));
+  else if (kind === 'inspect') sent = tgGroup_(reqText_(row, head), { inline_keyboard: [[{ text: '✅ يُسمح بالمعاينة', callback_data: 'ia:' + row.Id }, { text: '❌ لا يُسمح', callback_data: 'in:' + row.Id }]] });
+  else sent = tgNotify_('requests', reqText_(row, head) + (saved.ids.length ? '\n📷 ' + saved.ids.length + ' صورة' : ''));
+  if (saved.blobs.length && sent) tgGroupPhotos_(saved.blobs, '📷 صور ' + (kind === 'complaint' ? 'الشكوى' : 'طلب ' + REQ_KINDS[kind]) + ' — ' + (row.Customer || '') + (row.Order ? ' — ' + row.Order : ''));
+  return { ok: true, item: reqOut_(row), sent: !!sent, warn: info && /FULFILLED/.test(info.fulfillment || '') && (kind === 'cancel' || kind === 'edit') ? 'fulfilled'
+    : info && info.fulfillment === 'UNFULFILLED' && (kind === 'ret' || kind === 'exchange') ? 'notshipped' : info && info.cancelled ? 'cancelled' : '' };
 }
 /** Change the status (and note) of an entry. Inspection answers: the manager only (or the group buttons). */
 function reqStatus_(r, who) {
@@ -2190,6 +2297,9 @@ function reqStatus_(r, who) {
     if (!x) throw uerr_('Not found');
     if ((REQ_STATUS[x.Kind] || []).indexOf(r.status) === -1) throw uerr_('Choose the status');
     if (x.Kind === 'inspect' && !who.manager) throw uerr_('Only the manager can do this');
+    const rx = x.Kind === 'ret' || x.Kind === 'exchange';
+    if (rx && (REQ_DECISIONS[r.status] || r.status === 'pending') && !who.manager) throw uerr_('Only the manager can do this');
+    if (rx && r.status === 'done' && x.Status !== 'free' && x.Status !== 'paid') throw uerr_('Approve it first (free or paid by the customer)');
     const changed = x.Status !== r.status;
     x.Status = r.status; x.Note = String(r.note == null ? x.Note : r.note).trim().slice(0, 1000);
     x.UpdatedAt = new Date(); x.UpdatedBy = who.name;
@@ -2211,14 +2321,14 @@ function reqAnswer_(q, m) {
     x = tRows_('Requests').filter(function (y) { return y.Id === m[2]; })[0];
     if (!x) { say = 'الطلب غير موجود'; return; }
     if (x.Status !== 'pending') { say = 'تم الرد بالفعل: ' + REQ_STATUS_AR[x.Status]; return; }
-    x.Status = m[1] === 'ia' ? 'allowed' : 'denied'; x.UpdatedAt = new Date(); x.UpdatedBy = name + ' (تيليجرام)';
+    x.Status = { ia: 'allowed', in: 'denied', rf: 'free', rp: 'paid', rr: 'rejected' }[m[1]]; x.UpdatedAt = new Date(); x.UpdatedBy = name + ' (تيليجرام)';
     tPut_('Requests', x); say = 'تم: ' + REQ_STATUS_AR[x.Status];
   });
   tgApi_('answerCallbackQuery', { callback_query_id: q.id, text: say });
   if (x && /^تم:/.test(say)) {
-    logActivity_('Customers', 'inspect ' + x.Status, x.Order, 0, { by: name });
+    logActivity_('Customers', x.Kind + ' ' + x.Status, x.Order, 0, { by: name });
     tgApi_('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id,
-      text: String(q.message.text || '').slice(0, 3700) + '\n\n' + (x.Status === 'allowed' ? '✅ ' : '❌ ') + REQ_STATUS_AR[x.Status] + ' — ' + name });
+      text: String(q.message.text || '').slice(0, 3700) + '\n\n' + (/^(allowed|free|paid)$/.test(x.Status) ? '✅ ' : '❌ ') + REQ_STATUS_AR[x.Status] + ' — ' + name });
   }
 }
 /** A message to the store's group (with optional buttons). */

@@ -88,6 +88,11 @@
   .card a.tel { color: var(--accent); font-weight: 700; text-decoration: none; }
   .tag.k { background: var(--ink); color: var(--paper); }
   .card .acts button.no { color: var(--bad); border-color: var(--bad); }
+  .phs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .phs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; }
+  .phs .ph { position: relative; } .phs .ph .x { position: absolute; top: -6px; inset-inline-end: -6px; width: 24px; height: 24px; border-radius: 50%;
+    border: 0; background: var(--bad); color: #fff; font-size: 12px; line-height: 24px; padding: 0; cursor: pointer; }
+  .phpick { margin-top: 4px; } .phpick > button { border: 2px dashed var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer; }
   .seg button[data-n]:not([data-n="0"])::after { content: attr(data-n); display: inline-block; min-width: 18px; margin-inline-start: 5px; padding: 0 5px; border-radius: 99px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; }
 </style>
 </head>
@@ -100,7 +105,7 @@
 <main>
   <div id="banner">Open Settings and enter the Tasks pass.</div>
   <div class="seg" id="seg">
-    <button data-v="change" class="on">Cancel / change</button>
+    <button data-v="change" class="on">Order requests</button>
     <button data-v="inspect">Inspection</button>
     <button data-v="complaint">Complaints</button>
   </div>
@@ -121,11 +126,13 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   };
   const state = { data: null, view: 'change', closed: false, busy: false };
-  const KINDS = { change: ['cancel', 'edit'], inspect: ['inspect'], complaint: ['complaint'] };
-  const FIRST = { cancel: 'open', edit: 'open', inspect: 'pending', complaint: 'open' };
+  const KINDS = { change: ['cancel', 'edit', 'ret', 'exchange'], inspect: ['inspect'], complaint: ['complaint'] };
   const STATUS = { open: 'Not handled yet', done: 'Carried out', rejected: 'Rejected', pending: 'Waiting for an answer', allowed: 'Inspection allowed',
-    denied: 'Inspection not allowed', working: 'Following up', resolved: 'Resolved' };
-  const KIND = { cancel: 'Cancel order', edit: 'Change order', inspect: 'Inspection', complaint: 'Complaint' };
+    denied: 'Inspection not allowed', working: 'Following up', resolved: 'Resolved', free: 'Approved: free', paid: 'Approved: customer pays' };
+  const KIND = { cancel: 'Cancel order', edit: 'Change order', ret: 'Return request', exchange: 'Exchange request', inspect: 'Inspection', complaint: 'Complaint' };
+  const OPEN = { open: 1, pending: 1, working: 1, free: 1, paid: 1 };        // still to handle
+  const RX = { ret: 1, exchange: 1 }, PHOTO_KINDS = { complaint: 1, ret: 1, exchange: 1 };
+  const statusText = (x) => x.status === 'pending' && RX[x.kind] ? 'Waiting for approval' : STATUS[x.status];
   const CATS = [['quality', 'Product quality'], ['late', 'Late delivery'], ['wrong', 'Wrong or missing item'], ['damaged', 'Damaged item'],
     ['staff', 'Staff behaviour'], ['price', 'Price'], ['delivery', 'Shipping company'], ['other', 'Other']];
   const CHANNELS = [['phone', 'Phone call'], ['whatsapp', 'WhatsApp'], ['facebook', 'Facebook'], ['instagram', 'Instagram'], ['store', 'In the store'], ['other', 'Other']];
@@ -154,7 +161,7 @@
       render();
       if (!quiet) {
         const waiting = state.data.items.filter((x) => x.status === 'pending').length;
-        say(waiting ? waiting + (waiting === 1 ? ' inspection request is waiting for an answer.' : ' inspection requests are waiting for an answer.') : 'Up to date.', waiting ? 'bad' : 'ok');
+        say(waiting ? waiting + (waiting === 1 ? ' request is waiting for approval or an answer.' : ' requests are waiting for approval or an answer.') : 'Up to date.', waiting ? 'bad' : 'ok');
       }
     } catch (e) { say(e.message, 'bad'); }
   }
@@ -167,7 +174,7 @@
     return e;
   }
   function btn(text, cls, fn) { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', fn); return b; }
-  const isOpen = (x) => x.status === FIRST[x.kind] || x.status === 'working';
+  const isOpen = (x) => !!OPEN[x.status];
 
   function render() {
     const d = state.data;
@@ -176,17 +183,22 @@
       b.classList.toggle('on', b.dataset.v === state.view);
       b.dataset.n = n;
     });
-    $('newBtn').textContent = T({ change: '＋ New cancel / change request', inspect: '＋ New inspection request', complaint: '＋ New complaint' }[state.view]);
+    $('newBtn').textContent = T({ change: '＋ New order request', inspect: '＋ New inspection request', complaint: '＋ New complaint' }[state.view]);
     if (!d) return;
     const mine = d.items.filter((x) => KINDS[state.view].indexOf(x.kind) !== -1);
-    const open = mine.filter(isOpen), closed = mine.filter((x) => !isOpen(x));
+    const open = mine.filter(isOpen), closed = mine.filter((x) => !isOpen(x)), wait = mine.filter((x) => x.status === 'pending');
     const chips = $('chips'); chips.innerHTML = '';
-    [[false, T('Open items') + ' · ' + open.length], [true, T('Closed items') + ' · ' + closed.length]].forEach(function (c) {
+    // filters: open, waiting for approval (or an answer), closed
+    const F = [['open', T('Open items') + ' · ' + open.length]];
+    if (state.view !== 'complaint') F.push(['wait', T('Waiting for approval') + ' · ' + wait.length]);
+    F.push(['closed', T('Closed items') + ' · ' + closed.length]);
+    if (state.closed === true) state.closed = 'closed'; if (!state.closed) state.closed = 'open';
+    F.forEach(function (c) {
       chips.appendChild(btn(c[1], 'chip' + (state.closed === c[0] ? ' on' : ''), function () { state.closed = c[0]; render(); }));
     });
     const list = $('list'); list.innerHTML = '';
-    const show = state.closed ? closed : open;
-    if (!show.length) list.appendChild(el('div', 'empty', state.closed ? 'Nothing closed in the last 30 days.' : 'Nothing open.'));
+    const show = state.closed === 'closed' ? closed : state.closed === 'wait' ? wait : open;
+    if (!show.length) list.appendChild(el('div', 'empty', state.closed === 'closed' ? 'Nothing closed in the last 30 days.' : state.closed === 'wait' ? 'Nothing is waiting for approval.' : 'Nothing open.'));
     show.forEach((x) => list.appendChild(card(x)));
   }
 
@@ -194,7 +206,8 @@
     const c = el('div', 'card' + (x.status === 'pending' ? ' late' : isOpen(x) ? '' : ' done'));
     const top = el('div', 'who');
     top.appendChild(el('span', 'tag k', KIND[x.kind]));
-    top.appendChild(el('span', 'tag ' + (x.status === 'rejected' || x.status === 'denied' ? 'late' : isOpen(x) ? 'warn' : 'ok'), STATUS[x.status]));
+    top.appendChild(el('span', 'tag ' + (x.status === 'rejected' || x.status === 'denied' ? 'late' : x.status === 'free' || x.status === 'paid' ? 'ok' : isOpen(x) ? 'warn' : 'ok'), statusText(x)));
+    if (x.photos) top.appendChild(el('span', 'tag', '📷 ' + x.photos));
     c.appendChild(top);
     const title = x.order ? x.order + (x.customer ? ' — ' + x.customer : '') : x.customer || '—';
     const t = el('div', 't', title, true); t.style.marginTop = '6px'; c.appendChild(t);
@@ -206,6 +219,7 @@
       c.appendChild(o);
       if (isOpen(x) && (x.kind === 'cancel' || x.kind === 'edit') && /FULFILLED/.test(x.info.fulfillment || '')) c.appendChild(el('div', 'warn', 'This order is already fulfilled'));
       if (isOpen(x) && x.info.cancelled) c.appendChild(el('div', 'warn', 'This order is already cancelled'));
+      if (isOpen(x) && RX[x.kind] && x.info.fulfillment === 'UNFULFILLED') c.appendChild(el('div', 'warn', 'This order has not been fulfilled yet'));
     }
     if (x.kind === 'complaint') {
       const o = el('div', 'ord');
@@ -220,8 +234,18 @@
     m.appendChild(el('span', '', T('Written by') + ' ')); m.appendChild(el('span', '', x.createdBy, true)); m.appendChild(el('span', '', ' · ' + when(x.createdAt), true));
     if (x.updatedBy) { m.appendChild(el('span', '', ' · ' + T('Last change by') + ' ')); m.appendChild(el('span', '', x.updatedBy, true)); }
     c.appendChild(m);
+    const ph = el('div', 'phs'); c.appendChild(ph);
     const a = el('div', 'acts'), mgr = state.data.role === 'manager';
-    if (x.kind === 'cancel' || x.kind === 'edit') {
+    if (RX[x.kind]) {
+      // return / exchange: approval first (free, or the customer pays the shipping), then it is carried out
+      if (x.status === 'pending' && mgr) {
+        a.appendChild(btn('✓ Approve: free', 'done', () => setStatus(x, 'free', true)));
+        a.appendChild(btn('✓ Approve: customer pays', 'done', () => setStatus(x, 'paid', true)));
+        a.appendChild(btn('Reject', 'no', () => setStatus(x, 'rejected', true)));
+      } else if (x.status === 'pending') a.appendChild(el('span', 'meta', 'Waiting for approval in the Telegram group.'));
+      else if (x.status === 'free' || x.status === 'paid') a.appendChild(btn('✓ Carried out', 'done', () => setStatus(x, 'done', true)));
+      else if (mgr) a.appendChild(btn('Open again', '', () => setStatus(x, 'pending')));
+    } else if (x.kind === 'cancel' || x.kind === 'edit') {
       if (isOpen(x)) { a.appendChild(btn('✓ Carried out', 'done', () => setStatus(x, 'done', true))); a.appendChild(btn('Reject', 'no', () => setStatus(x, 'rejected', true))); }
       else a.appendChild(btn('Open again', '', () => setStatus(x, 'open')));
     } else if (x.kind === 'inspect') {
@@ -232,8 +256,60 @@
       if (isOpen(x)) a.appendChild(btn('✓ Resolved', 'done', () => setStatus(x, 'resolved', true, true)));
       else a.appendChild(btn('Open again', '', () => setStatus(x, 'open')));
     }
+    if (PHOTO_KINDS[x.kind]) {
+      if (x.photos) a.appendChild(btn('📷 Photos', '', () => showPhotos(x, ph)));
+      if (x.photos < 10) a.appendChild(btn('＋ Add photos', '', () => addPhotos(x)));
+    }
     if (a.children.length) c.appendChild(a);
     return c;
+  }
+
+  // ---------- photos (complaints, returns, exchanges) ----------
+  function shrinkPhoto(file) {   // longest side 1600 px, JPEG: fast on mobile data
+    return new Promise(function (ok, bad) {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); bad(new Error('Could not read the photo. Take it again.')); };
+      img.src = url;
+    });
+  }
+  function pickPhotos(max) {     // camera or gallery (the phone asks), several at once
+    return new Promise(function (resolve) {
+      const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
+      i.addEventListener('change', async function () {
+        const files = [].slice.call(i.files || [], 0, max), out = [];
+        for (const f of files) { try { out.push(await shrinkPhoto(f)); } catch (e) {} }
+        resolve(out);
+      });
+      i.click();
+    });
+  }
+  async function showPhotos(x, box) {
+    if (box.childElementCount) { box.innerHTML = ''; return; }
+    box.appendChild(el('div', 'meta', 'Loading...'));
+    try {
+      const r = await api({ action: 'reqPhotos', id: x.id });
+      box.innerHTML = '';
+      r.photos.forEach(function (p) {
+        if (!p.thumb) return;
+        const aEl = el('a'); aEl.href = p.url; aEl.target = '_blank'; aEl.rel = 'noopener';
+        const im = el('img'); im.src = p.thumb; im.alt = ''; aEl.appendChild(im); box.appendChild(aEl);
+      });
+    } catch (e) { box.innerHTML = ''; box.appendChild(el('div', 'meta', e.message)); }
+  }
+  async function addPhotos(x) {
+    const photos = await pickPhotos(Math.min(5, 10 - (x.photos || 0)));
+    if (!photos.length) return;
+    await run('Saving...', async function () {
+      await api({ action: 'reqAddPhotos', id: x.id, photos: photos });
+      await load(true);
+      say(photos.length + (photos.length === 1 ? ' photo added and sent to the Telegram group.' : ' photos added and sent to the Telegram group.'), 'ok');
+    });
   }
 
   // ---------- the form window (same as the Tasks tab) ----------
@@ -245,12 +321,29 @@
       fields.forEach(function (x) {
         const lab = el('label'); lab.appendChild(document.createTextNode(T(x.label)));
         let i;
-        if (x.type === 'select') { i = el('select'); x.options.forEach(function (o) { const op = el('option', '', T(o[1])); op.value = o[0]; i.appendChild(op); }); }
+        if (x.type === 'photos') {   // a button that adds photos (camera or gallery) + small previews, each removable
+          i = el('div', 'phpick'); i._photos = [];
+          const add = btn('📷 Add photos', '', async function () {
+            const more = await pickPhotos(5 - i._photos.length); i._photos = i._photos.concat(more).slice(0, 5); draw();
+          });
+          const prev = el('div', 'phs');
+          const draw = function () {
+            prev.innerHTML = '';
+            i._photos.forEach(function (p, k) {
+              const w = el('span', 'ph'), im = el('img'); im.src = p; im.alt = '';
+              const x2 = btn('✕', 'x', function () { i._photos.splice(k, 1); draw(); });
+              w.appendChild(im); w.appendChild(x2); prev.appendChild(w);
+            });
+            add.disabled = i._photos.length >= 5;
+          };
+          i.appendChild(add); i.appendChild(prev);
+        } else if (x.type === 'select') { i = el('select'); x.options.forEach(function (o) { const op = el('option', '', T(o[1])); op.value = o[0]; i.appendChild(op); }); }
         else if (x.type === 'textarea') i = el('textarea');
         else { i = el('input'); i.type = x.type || 'text'; if (x.mode) i.inputMode = x.mode; }
         if (x.value != null) i.value = x.value;
         if (x.data) { i.setAttribute('data-no-i18n', ''); i.dir = 'auto'; }
-        i.name = x.key; lab.appendChild(i);
+        if (x.type !== 'photos') i.name = x.key;
+        lab.appendChild(i);
         if (x.hint) lab.appendChild(el('small', 'hint', x.hint));
         inputs[x.key] = i; lab.dataset.k = x.key; f.appendChild(lab);
       });
@@ -261,7 +354,7 @@
       f.addEventListener('input', () => onInput && onInput(inputs, f));
       f.addEventListener('submit', function (e) {
         e.preventDefault();
-        const v = {}; Object.keys(inputs).forEach((k) => { v[k] = inputs[k].value.trim(); });
+        const v = {}; Object.keys(inputs).forEach((k) => { v[k] = inputs[k]._photos ? inputs[k]._photos.slice() : inputs[k].value.trim(); });
         const miss = fields.filter((x) => (typeof x.required === 'function' ? x.required(v) : x.required) && !v[x.key])[0];
         if (miss) { err.textContent = T('Fill in:') + ' ' + T(miss.label); return; }
         result = v; d.close();
@@ -281,10 +374,16 @@
   }
   async function newEntry() {
     let fields, kind;
-    if (state.view === 'change') fields = [
-      { key: 'kind', label: 'Request', type: 'select', options: [['cancel', 'Cancel the order'], ['edit', 'Change the order']] },
-      { key: 'order', label: 'Order number', mode: 'numeric', required: true, data: true },
-      { key: 'details', label: 'Details', type: 'textarea', data: true, required: (v) => v.kind === 'edit', hint: 'For a change: what should change. For a cancel: the reason (optional).' }];
+    let onInput = null;
+    if (state.view === 'change') {
+      fields = [
+        { key: 'kind', label: 'Request', type: 'select', options: [['cancel', 'Cancel the order'], ['edit', 'Change the order'], ['ret', 'Return items'], ['exchange', 'Exchange items']] },
+        { key: 'order', label: 'Order number', mode: 'numeric', required: true, data: true },
+        { key: 'details', label: 'Details', type: 'textarea', data: true, required: (v) => v.kind === 'edit' || v.kind === 'exchange',
+          hint: 'Change or exchange: what should change. Cancel or return: the reason.' },
+        { key: 'photos', label: 'Photos (optional)', type: 'photos' }];
+      onInput = function (inputs, f) { f.querySelector('label[data-k="photos"]').hidden = !RX[inputs.kind.value]; };   // photos: returns and exchanges
+    }
     else if (state.view === 'inspect') { kind = 'inspect'; fields = [
       { key: 'order', label: 'Order number', mode: 'numeric', required: true, data: true },
       { key: 'details', label: 'Notes (optional)', type: 'textarea', data: true }]; }
@@ -294,21 +393,24 @@
       { key: 'order', label: 'Order number (optional)', mode: 'numeric', data: true },
       { key: 'channel', label: 'Came by', type: 'select', options: CHANNELS },
       { key: 'category', label: 'Complaint about', type: 'select', options: CATS },
-      { key: 'details', label: 'Details', type: 'textarea', required: true, data: true }]; }
-    const title = { change: 'New cancel / change request', inspect: 'New inspection request', complaint: 'New complaint' }[state.view];
-    const v = await form(T(title), fields);
+      { key: 'details', label: 'Details', type: 'textarea', required: true, data: true },
+      { key: 'photos', label: 'Photos (optional)', type: 'photos' }]; }
+    const title = { change: 'New order request', inspect: 'New inspection request', complaint: 'New complaint' }[state.view];
+    const v = await form(T(title), fields, onInput);
     if (!v) return;
     await run('Saving...', async function () {
+      if (v.photos && !PHOTO_KINDS[kind || v.kind]) delete v.photos;
       const r = await api({ action: 'reqSave', req: Object.assign({ kind: kind || v.kind }, v) });
       await load(true);
       const tg = r.sent ? 'Saved and sent to the Telegram group.' : 'Saved. (Not sent: check the Telegram group settings.)';
-      say(r.warn === 'fulfilled' ? tg + '\n' + T('Note: this order is already fulfilled.') : r.warn === 'cancelled' ? tg + '\n' + T('Note: this order is already cancelled.') : tg, r.sent && !r.warn ? 'ok' : '');
+      say(r.warn === 'fulfilled' ? tg + '\n' + T('Note: this order is already fulfilled.') : r.warn === 'cancelled' ? tg + '\n' + T('Note: this order is already cancelled.')
+        : r.warn === 'notshipped' ? tg + '\n' + T('Note: this order has not been fulfilled yet.') : tg, r.sent && !r.warn ? 'ok' : '');
     });
   }
   async function setStatus(x, status, askNote, needNote) {
     let note = x.note;
     if (askNote) {
-      const v = await form(T(STATUS[status]) + (x.order ? ' — ' + x.order : ''), [{ key: 'note', label: needNote ? 'How was it resolved?' : 'Note (optional)', type: 'textarea', value: x.note || '', data: true, required: !!needNote }]);
+      const v = await form(T(status === 'pending' && RX[x.kind] ? 'Waiting for approval' : STATUS[status]) + (x.order ? ' — ' + x.order : ''), [{ key: 'note', label: needNote ? 'How was it resolved?' : 'Note (optional)', type: 'textarea', value: x.note || '', data: true, required: !!needNote }]);
       if (!v) return;
       note = v.note;
     }
@@ -319,7 +421,7 @@
     });
   }
 
-  $('seg').addEventListener('click', function (e) { const b = e.target.closest('button[data-v]'); if (!b) return; state.view = b.dataset.v; state.closed = false; render(); });
+  $('seg').addEventListener('click', function (e) { const b = e.target.closest('button[data-v]'); if (!b) return; state.view = b.dataset.v; state.closed = 'open'; render(); });
   $('newBtn').addEventListener('click', newEntry);
   $('refreshBtn').addEventListener('click', () => load());
   window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'pf-show' && !state.busy) load(true); });

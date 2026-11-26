@@ -165,6 +165,13 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   answer) and customer complaints (open → working → resolved with a note; category + channel). The order number is
   checked in Shopify (`reqOrder_`) and its total / fulfillment status shown; a cancel / change on a fulfilled order is
   flagged. Every new entry and status change goes to the group (kind `requests`).
+  Order requests also include RETURN (`ret`) and EXCHANGE (`exchange`) requests: pending → approval by the manager (app)
+  or the group (Telegram buttons `rf:` free / `rp:` customer pays / `rr:` refuse, first answer wins, name saved) →
+  `free` / `paid` / `rejected`; only an approved one can be marked `done` (anyone). An exchange needs details; a return /
+  exchange on an order not fulfilled yet is flagged. The app has a "Waiting for approval" filter. Photos (camera or
+  gallery, ≤5 per save, ≤10 per request, shrunk to 1600 px) for complaints, returns and exchanges: Drive folder
+  "Customer Service Photos" (`COMPLAINT_FOLDER_ID`), ids in the `Photos` column, thumbnails read through the server
+  (`reqPhotos`), more added later (`reqAddPhotos`), sent to the group as an album (`tgGroupPhotos_`).
 - Monthly evaluation (Tasks tab, "Evaluation"; actions `evalInit`, `evalSave`, `evalConfig`; sheet `Evaluations`, one
   row per month; settings in Script Property `EVAL_CONFIG`): the owner's social media sheet: conversations started
   (target 70), posts (8, sanction below 3), stories (8, below 3), response rate % (96.4, below 95), response time in
