@@ -276,6 +276,7 @@
     'Private courier': 'مندوب خاص',
     'Wrong PIN, try again': 'رقم سري خاطئ، حاول مرة أخرى',
     'Wrong PIN': 'رقم سري خاطئ',
+    'Too many wrong passes: this login is locked for 15 minutes': 'محاولات دخول خاطئة كثيرة: أُوقف هذا الدخول 15 دقيقة',
     'Scan or type the tracking number, then take the photo': 'امسح أو اكتب رقم التتبع، ثم التقط الصورة',
     'Point the camera at the barcode...': 'وجّه الكاميرا نحو الباركود...',
     'Camera blocked here. Type the number or take a photo of the label instead.': 'الكاميرا محجوبة هنا. اكتب الرقم أو صوّر الملصق بدلاً من ذلك.',

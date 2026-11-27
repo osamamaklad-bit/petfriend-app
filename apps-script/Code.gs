@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-29.1';
+const SERVER_VERSION = '2026-11-29.2';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -162,7 +162,8 @@ const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100; // Shopify
 
 function posApi_(r) {
   try {
-    if (r.pin !== P.getProperty('POS_PIN')) throw new Error('Wrong PIN');
+    const posPin = P.getProperty('POS_PIN');
+    if (!loginOk_('POS', !!posPin && String(r.pin) === posPin)) throw new Error('Wrong PIN');
     if (r.action === 'sale') return { ok: true, data: posSaleOnce_(r) };
     return { ok: true, data: POS_ACTIONS[r.action](r) };
   } catch (err) {
@@ -333,7 +334,7 @@ const ORDER_ACTIONS = {
 function ordersApi_(r) {
   try {
     const key = P.getProperty('APP_KEY');
-    if (!key || r.key !== key) return { ok: false, error: 'Wrong app key' };
+    if (!loginOk_('Orders', !!key && String(r.key) === key)) return { ok: false, error: 'Wrong app key' };
     return ORDER_ACTIONS[r.action](r);
   } catch (err) {
     if (!err.user) logError_('Orders', r.action, err);    // typing mistakes are shown in the app, not logged
@@ -521,7 +522,7 @@ function saveOrderPhoto_(o) {
       const mime = (/^data:(image\/\w+);/.exec(o.photo) || [])[1] || 'image/jpeg';
       const file = folder_().createFile(Utilities.newBlob(Utilities.base64Decode(String(o.photo).split(',')[1]), mime,
         (o.isReturn ? 'RETURN_' : '') + tn.replace(/[^\w-]/g, '_') + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_1.jpg'));
-      carrierCol_().appendRow([now, "'" + tn, file.getId(), file.getUrl(), 'Order ' + (o.order || ''), user, o.carrier + (o.isReturn ? ' return' : '')]);
+      carrierCol_().appendRow([now, "'" + tn, file.getId(), file.getUrl(), sheetText_('Order ' + (o.order || '')), user, sheetText_(o.carrier + (o.isReturn ? ' return' : ''))]);
       if (!o.isReturn && o.carrier === 'Bosta') {                       // followed by the bulky check, like a Shipments photo
         const r = findRow_('Tracking', tn), t = sh_('Tracking');
         if (r) t.getRange(r, 3).setValue(Number(t.getRange(r, 3).getValue()) + 1);
@@ -1333,9 +1334,21 @@ function logActivity_(part, action, ref, qty, details) {
   try { logSheet_('Activity').appendRow([new Date(), part, action, "'" + String(ref || ''), Number(qty) || 0, details ? "'" + JSON.stringify(details) : '']); }
   catch (e) { console.error('logActivity_', e.message); }
 }
+/* Wrong passes: the web-app address is public, so passes could be guessed one after another. After LOGIN_MAX wrong
+ * tries in 15 minutes a login (POS / Orders / Shipments / Tasks) is locked for 15 minutes (the right pass too) and the
+ * group is told once. ok = whether this try was right; final = false for a first check that another check follows. */
+const LOGIN_MAX = 30;
+function loginOk_(kind, ok, final) {
+  const c = CacheService.getScriptCache(), k = 'badlogin_' + kind, n = Number(c.get(k)) || 0;
+  if (n >= LOGIN_MAX) { const e = new Error('Too many wrong passes: this login is locked for 15 minutes'); e.user = true; throw e; }
+  if (ok || final === false) return ok;
+  c.put(k, String(n + 1), 900);
+  if (n + 1 === LOGIN_MAX) tgNotify_('errors', '🔒 ' + LOGIN_MAX + ' محاولة دخول خاطئة إلى ' + kind + ' خلال 15 دقيقة: أُوقف هذا الدخول 15 دقيقة. إن لم تكن من الموظفين فغيِّر كلمة المرور.');
+  return false;
+}
 function logError_(part, action, err) {
   const msg = String((err && err.message) || err || '');
-  if (/^Wrong (PIN|app key|Tasks pass)$/.test(msg)) return;     // someone typing a wrong login is not a fault
+  if (/^Wrong (PIN|app key|Tasks pass)$|^Too many wrong passes/.test(msg)) return;     // someone typing a wrong login is not a fault
   try { logSheet_('Errors').appendRow([new Date(), part, action || '', "'" + msg.slice(0, 1000)]); }
   catch (e) { console.error('logError_', e.message); }
   // Telegram: at most one message per part / action every 30 minutes, so a repeating error does not flood the group
@@ -1713,11 +1726,12 @@ function taskWho_(pin) {
   pin = String(pin || '').trim();
   const mgr = P.getProperty('MANAGER_PIN');
   if (!mgr) throw uerr_('Set MANAGER_PIN in Script Properties (the manager\'s Tasks pass)');
-  if (!pin) throw uerr_('Wrong Tasks pass');
-  if (pin === mgr) return { manager: true, name: 'Manager' };
-  const h = passHash_(pin), e = tRows_('TaskStaff').filter(function (x) { return x.Active !== false && x.PassHash === h; })[0];
-  if (!e) throw uerr_('Wrong Tasks pass');
-  return { manager: false, id: e.Id, name: e.Name };
+  if (!loginOk_('Tasks', !!pin && pin === mgr, false)) {     // not the manager: maybe an employee
+    const h = pin ? passHash_(pin) : '', e = h && tRows_('TaskStaff').filter(function (x) { return x.Active !== false && x.PassHash === h; })[0];
+    if (!loginOk_('Tasks', !!e, true)) throw uerr_('Wrong Tasks pass');
+    return { manager: false, id: e.Id, name: e.Name };
+  }
+  return { manager: true, name: 'Manager' };
 }
 function needManager_(who) { if (!who.manager) throw uerr_('Only the manager can do this'); }
 
@@ -2105,7 +2119,7 @@ function tgHandle_(u) {
     withTaskLock_(function () {
       // one chat = one employee: an older link of the same chat is removed
       staff.forEach(function (e) { if (String(e.ChatId) === chat && e.Id !== emp.Id) { e.ChatId = ''; tPut_('TaskStaff', e); } });
-      emp.ChatId = chat; tPut_('TaskStaff', emp);
+      emp.ChatId = chat; emp.LinkCode = tLinkCode_(); tPut_('TaskStaff', emp);   // the used link stops working
     });
     logActivity_('Tasks', 'telegram linked', emp.Name, 0);
     tgNotify_('tasks', '🔗 ربط ' + emp.Name + ' حسابه على تيليجرام بمهامه.');
@@ -2596,19 +2610,21 @@ const HEAD = {
 /** Shipments JSON API (body {fn, args}) */
 function shipmentsApi_(q) {
   try {
-    if (!Object.prototype.hasOwnProperty.call(SHIP_FNS, q.fn)) throw new Error('Bad request');
+    if (!Object.prototype.hasOwnProperty.call(SHIP_FNS, q.fn) || (q.args != null && !Array.isArray(q.args))) return { error: 'Bad request' };
     return { result: SHIP_FNS[q.fn].apply(null, q.args || []) };
   } catch (err) { logError_('Shipments', q.fn, err); return { error: err.message }; }
 }
 
 function checkPin(pin) { pin_(pin); return true; }
+/** Text typed in the app, written to a sheet: kept as text (a leading = + - @ would otherwise run as a formula). */
+function sheetText_(v) { v = String(v == null ? '' : v).slice(0, 500); return v ? "'" + v : ''; }
 function sh_(name) {
   const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID'));
   let s = ss.getSheetByName(name);
   if (!s) { s = ss.insertSheet(name); s.appendRow(HEAD[name]); s.setFrozenRows(1); }
   return s;
 }
-function pin_(p) { if (String(p) !== P.getProperty('APP_PIN')) throw new Error('Wrong PIN'); }
+function pin_(p) { const k = P.getProperty('APP_PIN'); if (!loginOk_('Shipments', !!k && String(p) === k)) throw new Error('Wrong PIN'); }
 function folder_() {
   let id = P.getProperty('PHOTO_FOLDER_ID');
   if (!id) { id = DriveApp.createFolder('Shipment Photos').getId(); P.setProperty('PHOTO_FOLDER_ID', id); }
@@ -2644,7 +2660,7 @@ function saveShipment(pin, tn, photos, note, force) {
       const blob = Utilities.newBlob(Utilities.base64Decode(d.split(',')[1]), 'image/jpeg',
         tn + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg');
       const file = f.createFile(blob);
-      carrierCol_().appendRow([now, "'" + tn, file.getId(), file.getUrl(), note || '', user, 'Bosta']);
+      carrierCol_().appendRow([now, "'" + tn, file.getId(), file.getUrl(), sheetText_(note), user, 'Bosta']);
     });
     const r = findRow_('Tracking', tn), t = sh_('Tracking');
     if (r) t.getRange(r, 3).setValue(Number(t.getRange(r, 3).getValue()) + photos.length);
@@ -2675,7 +2691,7 @@ function saveReturn(pin, tn, photos, note, force) {
     photos.forEach((d, i) => {
       const file = f.createFile(Utilities.newBlob(Utilities.base64Decode(d.split(',')[1]), 'image/jpeg',
         'RETURN_' + tn + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg'));
-      s.appendRow([now, "'" + tn, file.getId(), file.getUrl(), note || '', user, 'Bosta return']);
+      s.appendRow([now, "'" + tn, file.getId(), file.getUrl(), sheetText_(note), user, 'Bosta return']);
     });
     logActivity_('Shipments', 'return photo', tn, photos.length);
     return { saved: photos.length };
@@ -2696,7 +2712,7 @@ function saveOther(pin, carrier, ref, photos, note, isReturn) {
     photos.forEach((d, i) => {
       const file = f.createFile(Utilities.newBlob(Utilities.base64Decode(d.split(',')[1]), 'image/jpeg',
         ref.replace(/[^\w-]/g, '_') + '_' + Utilities.formatDate(now, 'Africa/Cairo', 'yyyyMMdd-HHmmss') + '_' + (i + 1) + '.jpg'));
-      s.appendRow([now, "'" + ref, file.getId(), file.getUrl(), note || '', user, carrier]);
+      s.appendRow([now, sheetText_(ref), file.getId(), file.getUrl(), sheetText_(note), user, sheetText_(carrier)]);
     });
     logActivity_('Shipments', isReturn ? 'return photo' : 'photo', ref, photos.length, { carrier: carrier });
     return { saved: photos.length, ref: ref };
@@ -2741,7 +2757,11 @@ function getShipmentLog(pin, period, kind, text) {
 /** Small thumbnails of up to 12 photos of the log (Drive files are private), with their Drive links. */
 function getShipmentThumbs(pin, ids) {
   pin_(pin);
-  return (ids || []).slice(0, 12).map(function (id) {
+  // only shipment photos (their ids are in the Shipments sheet): any other Drive file of the owner is refused
+  const known = {};
+  rows_('Shipments').forEach(function (r) { known[String(r[2])] = 1; });
+  return (Array.isArray(ids) ? ids : []).slice(0, 12).map(function (id) {
+    if (!known[String(id)]) return { id: id, missing: true };
     try {
       const f = DriveApp.getFileById(String(id));
       let b = null; try { b = f.getThumbnail(); } catch (e) {}
@@ -2759,8 +2779,8 @@ function getShipment(pin, q) {
   const isRet = r => /return$/i.test(String(r[6] || ''));
   const photos = rows.slice(-8).map(r => ({
     time: Utilities.formatDate(new Date(r[0]), 'Africa/Cairo', 'dd MMM HH:mm'), note: r[4], url: r[3], ret: isRet(r),
-    img: 'data:image/jpeg;base64,' + Utilities.base64Encode(DriveApp.getFileById(r[2]).getBlob().getBytes())
-  }));
+    img: (function () { try { return 'data:image/jpeg;base64,' + Utilities.base64Encode(DriveApp.getFileById(r[2]).getBlob().getBytes()); } catch (e) { return ''; } })()
+  })).filter(function (p) { return p.img; });
   const out = rows.filter(r => !isRet(r)), retRows = rows.filter(isRet);
   const carrier = out.length ? String(out[out.length - 1][6] || 'Bosta')
     : retRows.length ? String(retRows[retRows.length - 1][6]).replace(/\s*return$/i, '') || 'Bosta' : (t10 ? 'Bosta' : '');

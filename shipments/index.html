@@ -131,7 +131,7 @@ function saveOther(list){
   try{localStorage.setItem('pfs_car',car)}catch(e){}
   busy=true; say('Saving...');
   google.script.run.withSuccessHandler(r=>{ busy=false; $('ref').value=''; $('note').value=''; $('th').innerHTML='';
-    $('msg').innerHTML=(ret?'Return saved: ':'Saved ')+r.saved+' photo(s) · '+car+'<br><b style="font-size:22px;color:var(--ink)">'+r.ref+'</b>'; $('msg').className='msg';
+    $('msg').innerHTML=(ret?'Return saved: ':'Saved ')+r.saved+' photo(s) · '+car+'<br><b style="font-size:22px;color:var(--ink)">'+esc(r.ref)+'</b>'; $('msg').className='msg';
   }).withFailureHandler(fail).saveOther(pin,car,$('ref').value,list,$('note').value,ret)
 }
 function autoSave(list,force){
@@ -146,9 +146,9 @@ function find(){
   const tn=$('q').value.trim(); if(!tn) return; say('Searching...'); $('res').innerHTML='';
   google.script.run.withSuccessHandler(r=>{ say('');
     if(!r.photos.length&&!r.state) return say('Nothing saved for '+tn,true);
-    const b=r.bulky, h='<div class="card">'+(r.returned?'<span class="rtag">Returned</span>':'')+'<b>'+r.tn+'</b><div class="msg">'+(r.carrier&&r.carrier!=='Bosta'?r.carrier:(r.state||'Not synced with Bosta yet')+(r.size?' · size '+r.size:''))+'</div>'+
-      (b?'<div class="tag">'+b.size+' · '+b.status+' · '+(b.final||b.expected)+' EGP</div><pre>'+b.items+'</pre>':'')+'</div>';
-    $('res').innerHTML=h+r.photos.map(p=>'<div class="ph card"><img src="'+p.img+'"><div class="msg">'+(p.ret?'<span class="rtag">Return photo</span>':'')+p.time+(p.note?' · '+p.note:'')+'</div></div>').join('')
+    const b=r.bulky, h='<div class="card">'+(r.returned?'<span class="rtag">Returned</span>':'')+'<b>'+esc(r.tn)+'</b><div class="msg">'+esc(r.carrier&&r.carrier!=='Bosta'?r.carrier:(r.state||'Not synced with Bosta yet')+(r.size?' · size '+r.size:''))+'</div>'+
+      (b?'<div class="tag">'+esc(b.size+' · '+b.status+' · '+(b.final||b.expected)+' EGP')+'</div><pre>'+esc(b.items)+'</pre>':'')+'</div>';
+    $('res').innerHTML=h+r.photos.map(p=>'<div class="ph card"><img src="'+(/^data:image\//.test(p.img)?esc(p.img):'')+'"><div class="msg">'+(p.ret?'<span class="rtag">Return photo</span>':'')+esc(p.time+(p.note?' · '+p.note:''))+'</div></div>').join('')
   }).withFailureHandler(fail).getShipment(pin,tn)
 }
 // ---------- Log: the shipments photographed in a period (Shipments: outgoing, Return shipments: returns) ----------
@@ -176,7 +176,7 @@ $('lList').addEventListener('click',e=>{
   const c=e.target.closest('.lg'); if(!c) return;
   const box=c.querySelector('.ims'); if(box.childElementCount){ box.innerHTML=''; return }
   const x=logData.items[+c.dataset.i]; box.innerHTML='<div class="msg">'+esc(T('Loading...'))+'</div>';
-  google.script.run.withSuccessHandler(ps=>{ box.innerHTML=ps.filter(p=>p.thumb).map(p=>'<a href="'+esc(p.url)+'" target="_blank" rel="noopener"><img src="'+p.thumb+'" alt=""></a>').join('') })
+  google.script.run.withSuccessHandler(ps=>{ box.innerHTML=ps.filter(p=>p.thumb).map(p=>'<a href="'+esc(p.url)+'" target="_blank" rel="noopener"><img src="'+(/^data:image\//.test(p.thumb)?esc(p.thumb):'')+'" alt=""></a>').join('') })
     .withFailureHandler(e=>{box.innerHTML='';fail(e)}).getShipmentThumbs(pin,x.files)
 });
 document.addEventListener('pf-lang',drawLog);

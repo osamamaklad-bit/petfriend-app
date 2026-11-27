@@ -717,6 +717,11 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Tasks: /start <code> links the employee and sends her open tasks with done buttons; the group is told', ctx.__tg.map(x => x.body.text),
     sheets.TaskStaff.rows[1][3] === '555' && dm().length === 1 && dm()[0].body.chat_id === '555' && /أهلًا Mona/.test(dm()[0].body.text) && /Post 3 reels/.test(dm()[0].body.text)
     && dm()[0].body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + t1 && grp().length === 1 && /ربط Mona/.test(grp()[0].body.text));
+  ctx.__tg = []; ctx.__tgUpdates = [{ update_id: 12, message: { chat: { id: 4242, type: 'private' }, from: { id: 4242 }, text: '/start ' + code } }];
+  ctx.tgPoll();
+  check('Security: an employee\'s Telegram link works only once (a forwarded link cannot take her tasks)', [sheets.TaskStaff.rows[1], ctx.__tg.map(x => x.body.text)],
+    sheets.TaskStaff.rows[1][3] === '555' && ctx.__tg.length === 1 && /قديم/.test(ctx.__tg[0].body.text));
+  props.TG_OFFSET = '12';
   check('Tasks: the next poll starts after the last update; groups seen are kept for telegramFindChat', [props.TG_OFFSET, props.TG_SEEN_GROUPS], props.TG_OFFSET === '12' && /PetFriend staff/.test(props.TG_SEEN_GROUPS));
   ctx.__tg = [];
   r = tp({ action: 'taskSave', task: { title: 'Answer comments', employeeId: mona.id, due: '2026-11-15' } });
@@ -1007,6 +1012,38 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   r = post({ fn: 'getShipmentLog', args: ['bad', 'today', 'out', ''] });
   check('Photo log: needs the Shipments pass', r, !!r.error);
   S.rows.length = base; ctx.Utilities.formatDate = realFmt;
+}
+
+// ---- Security review (2026-11-29.2)
+{
+  let r = post({ fn: 'getShipmentThumbs', args: ['2222', ['SHEET-ID-OF-THE-OWNER']] });
+  check('Security: thumbnails only for shipment photos, never any other Drive file', r.result, r.result.length === 1 && r.result[0].missing === true && !r.result[0].thumb);
+  const errs = () => (sheets.Errors || { rows: [] }).rows.length, e0 = errs(), tg0 = (ctx.__tg || []).length;
+  r = post({ fn: 'madeUp1', args: [] }); post({ fn: 'madeUp2' }); post({ fn: 'getShipment', args: 'x' });
+  check('Security: unknown Shipments functions are refused without filling Errors / Telegram', [r, errs() - e0], r.error === 'Bad request' && errs() === e0 && (ctx.__tg || []).length === tg0);
+  const pos = props.POS_PIN; delete props.POS_PIN;
+  r = post({ action: 'today', pin: null });
+  check('Security: POS with no POS_PIN set refuses every pin (also null)', r, r.ok === false && /Wrong PIN/.test(r.error));
+  props.POS_PIN = pos;
+  const before = sheets.Shipments.rows.length;
+  post({ fn: 'saveOther', args: ['2222', '=IMPORTDATA("https://x")', '=1+1', ['data:image/jpeg;base64,AA'], '=HYPERLINK("x")', false] });
+  const row = ctx.__rawAppends.slice().reverse().find(x => x.length === 7 && /^https:\/\/drive/.test(x[3]));
+  check('Security: text typed in the app is written as text, never as a sheet formula', row, row && row[4] === "'=HYPERLINK(\"x\")" && row[6] === "'=IMPORTDATA(\"https://x\")" && row[1] === "'=1+1");
+  sheets.Shipments.rows.length = before;
+  // guessing: 30 wrong passes lock the login for 15 minutes (also the right pass), the group is told once
+  ctx.__tg = []; delete ctx.__cache['badlogin_Orders']; props.TELEGRAM_BOT_TOKEN = '123:abc'; props.TELEGRAM_CHAT_ID = '-100777';
+  for (let i = 0; i < 29; i++) post({ action: 'listOrders', key: 'guess' + i });
+  r = post({ action: 'listOrders', key: 'kkk' });
+  check('Security: the right pass still works after 29 wrong ones', r, r.ok !== false);
+  post({ action: 'listOrders', key: 'guess-last' });
+  r = post({ action: 'listOrders', key: 'kkk' });
+  check('Security: after 30 wrong passes the login is locked (right pass too), the group told once, not logged', [r, ctx.__tg.map(x => x.body.text)],
+    r.ok === false && /Too many wrong passes/.test(r.error) && ctx.__tg.filter(x => /محاولة دخول خاطئة/.test(x.body.text)).length === 1);
+  r = post({ fn: 'checkPin', args: ['2222'] });
+  check('Security: other logins are not locked by it', r, r.result === true);
+  delete ctx.__cache['badlogin_Orders']; delete props.TELEGRAM_BOT_TOKEN; delete props.TELEGRAM_CHAT_ID; ctx.__tg = [];
+  r = post({ action: 'listOrders', key: 'kkk' });
+  check('Security: after the 15 minutes the right pass works again', r, r.ok !== false);
 }
 
 console.log('\n' + (failed ? failed + ' check(s) FAILED' : 'All checks passed'));

@@ -194,6 +194,18 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
 - Logs: the `Activity` sheet records fulfill / return / receive / pick list / photo actions, and the `Errors`
   sheet records server errors (wrong PIN or app key excluded). Both are kept for 60 days and summed up in the Today tab.
 
+## Security rules (review 2026-11-29)
+
+- The web-app URL is public (config.js): every action checks its pass on the server. An unset pass never matches
+  (also `null`). Wrong passes: `loginOk_` locks a login (POS / Orders / Shipments / Tasks) for 15 min after
+  `LOGIN_MAX` (30) wrong tries and tells the group once.
+- Never return a Drive file by an id the app sends unless that id is in our own sheet (`getShipmentThumbs` checks
+  the `Shipments` FileId column; `reqPhotos` reads ids from `Requests`).
+- Text typed in the app goes to sheets as text: `sheetText_` / `tCell_` (a leading ' so = + - @ never run as formulas).
+- Server data shown with `innerHTML` must go through `esc` (or use textContent); image sources must be `data:image/`.
+- Unknown actions / functions are answered "Bad request" without logging (no Errors / Telegram flood).
+- A Telegram link code works once (a new code is made when it is used).
+
 ## Checking UI changes
 
 Use Playwright with the routes mocked (see the existing tests), in English and Arabic, at phone width (390px)
