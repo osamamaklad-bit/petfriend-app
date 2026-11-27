@@ -162,6 +162,10 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
     (every minute, `getUpdates` with `TG_OFFSET`) handles /start, /tasks and the buttons (only the task's own employee
     can finish it); a finished task is announced in the group (kind `tasks`). Triggers: `installTasksTriggers`
     (sheet menu). `tgPoll` reads the bot's messages, so group ids seen are kept in `TG_SEEN_GROUPS` for `telegramFindChat`.
+  - Manual reminders (manager only, on top of the automatic notices): "🔔 Remind" on an open task (`taskRemind`, optional
+    message, sent again with the done button, copy to the group, counted in `Reminders` / `LastReminder`) and
+    "🔔 Remind about all tasks" on an employee (`staffRemind`, the open-task list with buttons). An employee who has not
+    linked Telegram: only the group gets it (the app says so). Older sheets get new column headings automatically (`tSheet_`).
 - Customer service (own tab, `customers/index.html`; actions `reqInit`, `reqSave`, `reqStatus`, same Tasks pass so each
   entry records who wrote it; sheet `Requests`): order cancel / change requests (open → done / rejected), inspection
   requests (pending → allowed / denied: two buttons in the Telegram group, `ia:` / `in:` callbacks handled by `tgPoll`,

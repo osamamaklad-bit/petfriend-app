@@ -761,6 +761,33 @@ ctx.resetTokens(); check('resetTokens clears both', ctx.__cache, !ctx.__cache[ct
   check('Tasks: morning summary to linked employees with done buttons, and one list of everyone\'s tasks in the group', ctx.__tg.map(x => x.body.chat_id + ':' + x.body.text.slice(0, 20)),
     dm().length === 1 && dm()[0].body.chat_id === '555' && /صباح الخير Mona/.test(dm()[0].body.text) && dm()[0].body.reply_markup.inline_keyboard.length >= 2
     && grp().length === 1 && /مهام اليوم المفتوحة[\s\S]*Mona[\s\S]*Ali/.test(grp()[0].body.text));
+
+  // ---- Manual reminders
+  ctx.__tg = [];
+  r = tp({ action: 'taskSave', task: { title: 'Clean the shelves', employeeId: mona.id, due: '2026-11-15 10:00' } });
+  const rt = r.id;
+  ctx.__tg = [];
+  r = post({ action: 'taskRemind', tpin: '1234', id: rt });
+  check('Reminder: only the manager can send one', r, r.ok === false && /Only the manager/.test(r.error));
+  ctx.__hm = '12:00';
+  r = tp({ action: 'taskRemind', id: rt, message: 'Before 5 please' });
+  check('Reminder: the employee gets it again with the done button and the message; the group gets a copy; counted',
+    [r.sent, r.task && r.task.reminders, ctx.__tg.map(x => x.body.chat_id + ':' + (x.body.text || '').slice(0, 40))],
+    r.ok && r.sent === true && r.task.reminders === 1 && !!r.task.lastReminder
+    && dm().some(x => /تذكير بمهمة \(متأخرة\)[\s\S]*Clean the shelves[\s\S]*Before 5 please/.test(x.body.text) && x.body.reply_markup.inline_keyboard[0][0].callback_data === 'td:' + rt)
+    && grp().some(x => /تذكير لـ Mona: Clean the shelves/.test(x.body.text)));
+  ctx.__hm = '11:00';
+  r = tp({ action: 'taskRemind', id: rt });
+  check('Reminder: the new columns get their headings', sheets.Tasks.rows[0].slice(10, 12), sheets.Tasks.rows[0][10] === 'Reminders' && sheets.Tasks.rows[0][11] === 'LastReminder');
+  check('Reminder: a second one counts 2', r.task && r.task.reminders, r.ok && r.task.reminders === 2);
+  r = tp({ action: 'tasksInit' });
+  check('Reminder: the list shows the count', r.tasks.find(x => x.id === rt).reminders, r.tasks.find(x => x.id === rt).reminders === 2);
+  ctx.__tg = [];
+  r = tp({ action: 'staffRemind', id: mona.id, message: 'Today please' });
+  check('Reminder: all of an employee\'s open tasks at once, with buttons', [r, dm().map(x => x.body.text.slice(0, 40))],
+    r.ok && r.count >= 1 && dm().some(x => /تذكير بمهامك المفتوحة/.test(x.body.text) && x.body.reply_markup.inline_keyboard.length === r.count) && grp().some(x => /بمهامه المفتوحة/.test(x.body.text)));
+  r = tp({ action: 'staffRemind', id: ali.id });
+  check('Reminder: an employee without open tasks -> clear message', r, r.ok === false && /no open tasks/.test(r.error) || r.ok);
   ctx.__today = undefined;
   r = tp({ action: 'staffRelink', id: mona.id });
   check('Tasks: a new link unlinks the old chat', r, r.ok && !r.staff.linked && r.staff.link !== mona.link);

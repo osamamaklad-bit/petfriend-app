@@ -244,12 +244,17 @@
     const dv = el('span', '', dueLabel(t.due, state.data.today), true); due.appendChild(dv); w.appendChild(due);
     if (t.status === 'open' && t.late) w.appendChild(el('span', 'tag late', 'Late'));
     if (t.repeatId) w.appendChild(el('span', 'tag', 'Recurring'));
+    if (t.reminders && t.status === 'open') {
+      const rm = el('span', 'tag warn'); rm.appendChild(el('span', '', '🔔 ' + t.reminders + ' · ', true)); rm.appendChild(el('span', '', dueLabel(t.lastReminder.slice(0, 10), state.data.today) + ' ' + new Date(t.lastReminder).toLocaleTimeString(loc(), { hour: '2-digit', minute: '2-digit' }), true));
+      w.appendChild(rm);
+    }
     if (t.status === 'done') w.appendChild(el('span', 'tag ok', t.doneVia === 'telegram' ? 'Done on Telegram' : 'Done'));
     c.appendChild(w);
     if (t.notes) c.appendChild(el('div', 'notes', t.notes, true));
     const a = el('div', 'acts');
     if (t.status === 'open') a.appendChild(btn('✓ Done', 'done', () => setDone(t, true)));
     else a.appendChild(btn('Not done', '', () => setDone(t, false)));
+    if (mgr && t.status === 'open') a.appendChild(btn('🔔 Remind', '', () => remind(t)));
     if (mgr) {
       a.appendChild(btn('Edit', '', () => editTask(t)));
       a.appendChild(btn('Delete', 'del', () => delTask(t)));
@@ -292,6 +297,7 @@
       const a = el('div', 'acts');
       if (e.link) a.appendChild(btn(e.linked ? 'Copy link' : 'Send link', e.linked ? '' : 'done', () => shareLink(e)));
       if (e.linked) a.appendChild(btn('New link', '', () => relink(e)));
+      if (open) a.appendChild(btn('🔔 Remind about all tasks', '', () => remindAll(e, open)));
       a.appendChild(btn('Change pass', '', () => editStaff(e)));
       a.appendChild(btn('Remove', 'del', () => delStaff(e)));
       c.appendChild(a); box.appendChild(c);
@@ -461,6 +467,25 @@
       const r = await api({ action: 'taskSave', task: { id: t && t.id, title: v.title, employeeId: v.employeeId, due: v.date + (v.time ? ' ' + v.time : ''), notes: v.notes } });
       await load(true);
       say(r.sent ? 'Saved and sent on Telegram.' : r.linked ? 'Saved. (Not sent: check the Telegram bot.)' : 'Saved. The employee has not linked Telegram yet, so it was not sent.', r.sent ? 'ok' : '');
+    });
+  }
+  // manual reminders on Telegram (the notice sent when the task was made stays as it is)
+  async function remind(t) {
+    const v = await form(T('Send a reminder'), [{ key: 'message', label: 'Message (optional)', type: 'textarea', data: true, hint: 'Sent with the task to the employee on Telegram, and to the group.' }]);
+    if (!v) return;
+    await run('Sending...', async function () {
+      const r = await api({ action: 'taskRemind', id: t.id, message: v.message });
+      await load(true);
+      say(r.sent ? 'Reminder sent on Telegram.' : 'The employee has not linked Telegram yet: the reminder went to the group only.', r.sent ? 'ok' : 'bad');
+    });
+  }
+  async function remindAll(e, n) {
+    const v = await form(T('Remind about all open tasks'), [{ key: 'message', label: 'Message (optional)', type: 'textarea', data: true }]);
+    if (!v) return;
+    await run('Sending...', async function () {
+      const r = await api({ action: 'staffRemind', id: e.id, message: v.message });
+      await load(true);
+      say(r.sent ? 'Reminder sent on Telegram.' : 'The employee has not linked Telegram yet: the reminder went to the group only.', r.sent ? 'ok' : 'bad');
     });
   }
   async function delTask(t) {

@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-28.3';
+const SERVER_VERSION = '2026-11-29.1';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -1674,7 +1674,7 @@ function dailyTelegramReport() {
  * ===================================================================================== */
 const TASK_SHEETS = {
   TaskStaff: ['Id', 'Name', 'PassHash', 'ChatId', 'LinkCode', 'Active', 'CreatedAt'],
-  Tasks: ['Id', 'Title', 'Notes', 'EmployeeId', 'Due', 'Status', 'CreatedAt', 'DoneAt', 'DoneVia', 'RepeatId'],
+  Tasks: ['Id', 'Title', 'Notes', 'EmployeeId', 'Due', 'Status', 'CreatedAt', 'DoneAt', 'DoneVia', 'RepeatId', 'Reminders', 'LastReminder'],
   TaskRepeats: ['Id', 'Title', 'Notes', 'EmployeeId', 'Freq', 'Day', 'DueDays', 'Active', 'LastMade', 'CreatedAt']
 };
 const TASK_ACTIONS = {
@@ -1686,7 +1686,9 @@ const TASK_ACTIONS = {
   staffDelete: function (r, who) { return staffDelete_(r, who); },
   staffRelink: function (r, who) { return staffRelink_(r, who); },
   repeatSave: function (r, who) { return repeatSave_(r, who); },
-  repeatDelete: function (r, who) { return repeatDelete_(r, who); }
+  repeatDelete: function (r, who) { return repeatDelete_(r, who); },
+  taskRemind: function (r, who) { return taskRemind_(r, who); },
+  staffRemind: function (r, who) { return staffRemind_(r, who); }
 };
 const WEEKDAYS_AR = ['', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'];
 
@@ -1724,8 +1726,14 @@ function tSheet_(name) {
   const ss = SpreadsheetApp.getActive() || SpreadsheetApp.openById(P.getProperty('SHEET_ID') || P.getProperty('SPREADSHEET_ID'));
   let s = ss.getSheetByName(name);
   if (!s) { s = ss.insertSheet(name); s.appendRow(TASK_SHEETS[name]); s.setFrozenRows(1); }
+  else if (!tHeadOk_[name]) {         // a sheet made by an older version: add the headings of new columns (once per run)
+    const head = TASK_SHEETS[name], have = s.getRange(1, 1, 1, head.length).getValues()[0];
+    head.forEach(function (h, i) { if (!have[i]) s.getRange(1, i + 1).setValue(h); });
+  }
+  tHeadOk_[name] = true;
   return s;
 }
+const tHeadOk_ = {};
 function tRows_(name) {
   const s = tSheet_(name), n = s.getLastRow(), head = TASK_SHEETS[name];
   if (n < 2) return [];
@@ -1777,7 +1785,8 @@ function staffOut_(e, bot) {
 function taskOut_(t, names) {
   return { id: t.Id, title: t.Title, notes: t.Notes, employeeId: t.EmployeeId, employee: names[t.EmployeeId] || '', due: t.Due, status: t.Status,
     late: t.Status === 'open' && isLate_(t.Due), createdAt: t.CreatedAt ? new Date(t.CreatedAt).toISOString() : '',
-    doneAt: t.DoneAt ? new Date(t.DoneAt).toISOString() : '', doneVia: t.DoneVia || '', repeatId: t.RepeatId || '' };
+    doneAt: t.DoneAt ? new Date(t.DoneAt).toISOString() : '', doneVia: t.DoneVia || '', repeatId: t.RepeatId || '',
+    reminders: Number(t.Reminders) || 0, lastReminder: t.LastReminder ? new Date(t.LastReminder).toISOString() : '' };
 }
 function tasksInit_(who) {
   const staff = tRows_('TaskStaff'), names = {};
@@ -1840,6 +1849,48 @@ function markTask_(t, done, via) {
   const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === t.EmployeeId; })[0] || {};
   logActivity_('Tasks', done ? 'done' : 'reopen', t.Title, 0, { employee: emp.Name || '', via: via });
   if (done) tgNotify_('tasks', '✅ أنجز ' + (emp.Name || '') + ' المهمة: ' + t.Title + (isLate_(t.Due) ? ' (متأخرة، كان موعدها ' + t.Due + ')' : ''));
+}
+/* Manual reminders (manager): one open task again to its employee (with the done button and an optional short message),
+ * or all of an employee's open tasks at once. The group gets a copy. The notice sent when the task was made is unchanged. */
+function taskRemind_(r, who) {
+  needManager_(who);
+  const msg = String(r.message || '').trim().slice(0, 300);
+  const t = tRows_('Tasks').filter(function (x) { return x.Id === r.id; })[0];
+  if (!t || t.Status === 'cancelled') throw uerr_('Task not found');
+  if (t.Status !== 'open') throw uerr_('This task is already done');
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === t.EmployeeId && e.Active !== false; })[0];
+  if (!emp) throw uerr_('Employee not found');
+  const late = isLate_(t.Due);
+  const sent = emp.ChatId ? !!tgApi_('sendMessage', { chat_id: emp.ChatId,
+    text: ('🔔 تذكير بمهمة' + (late ? ' (متأخرة)' : '') + '\n\n' + t.Title + (t.Notes ? '\n\n📝 ' + t.Notes : '') + '\n\n⏰ الموعد النهائي: ' + dueText_(t.Due) +
+      (msg ? '\n\n💬 ' + msg : '')).slice(0, 4000),
+    reply_markup: { inline_keyboard: [[{ text: '✅ أنجزت', callback_data: 'td:' + t.Id }]] } }) : false;
+  tgNotify_('tasks', '🔔 تذكير لـ ' + emp.Name + ': ' + t.Title + '\n⏰ ' + dueText_(t.Due) + (late ? ' (متأخرة)' : '') + (msg ? '\n💬 ' + msg : ''));
+  withTaskLock_(function () {
+    const cur = tRows_('Tasks').filter(function (x) { return x.Id === t.Id; })[0];
+    cur.Reminders = (Number(cur.Reminders) || 0) + 1; cur.LastReminder = new Date(); tPut_('Tasks', cur);
+    t.Reminders = cur.Reminders; t.LastReminder = cur.LastReminder;
+  });
+  logActivity_('Tasks', 'reminder', t.Title, 1, { employee: emp.Name, sent: sent });
+  const names = {}; names[emp.Id] = emp.Name;
+  return { ok: true, sent: sent, linked: !!emp.ChatId, task: taskOut_(t, names) };
+}
+function staffRemind_(r, who) {
+  needManager_(who);
+  const emp = tRows_('TaskStaff').filter(function (e) { return e.Id === r.id && e.Active !== false; })[0];
+  if (!emp) throw uerr_('Employee not found');
+  const open = tRows_('Tasks').filter(function (t) { return t.EmployeeId === emp.Id && t.Status === 'open'; });
+  if (!open.length) throw uerr_('This employee has no open tasks');
+  const msg = String(r.message || '').trim().slice(0, 300);
+  const sent = emp.ChatId ? !!sendOpenList_(emp, '🔔 تذكير بمهامك المفتوحة (' + open.length + ')' + (msg ? '\n💬 ' + msg : '')) : false;
+  tgNotify_('tasks', '🔔 تذكير لـ ' + emp.Name + ' بمهامه المفتوحة: ' + open.length + (msg ? '\n💬 ' + msg : ''));
+  withTaskLock_(function () {
+    tRows_('Tasks').forEach(function (t) {
+      if (t.EmployeeId === emp.Id && t.Status === 'open') { t.Reminders = (Number(t.Reminders) || 0) + 1; t.LastReminder = new Date(); tPut_('Tasks', t); }
+    });
+  });
+  logActivity_('Tasks', 'reminder all', emp.Name, open.length, { sent: sent });
+  return { ok: true, sent: sent, linked: !!emp.ChatId, count: open.length };
 }
 function taskDelete_(r, who) {
   needManager_(who);
