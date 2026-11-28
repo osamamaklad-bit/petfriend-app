@@ -112,7 +112,9 @@ messages is Modern Standard Arabic (فصحى), never colloquial** (owner's rule)
   goes to the group). The long Bosta runs use their own cache flag `bosta_busy` (`bostaBusy_`), never the script lock for
   minutes (that blocked adding an employee: "Lock timeout"); the hourly run skips while the job runs. Found 2026-11-25: Tracking only got photographed shipments after 11/11 (wallet feed added nothing). Dated by Bosta's
   shipment date (`ShipmentDate`, column 15 of `Bulky`), else the day it was found.
-- Fulfill, Returns and "Save tracking" (order already fulfilled) REQUIRE two steps (owner's rule), shown as a 2-step panel
+- Fulfill: the waybill scan and the photo are OPTIONAL (owner, 2026-11-28): Fulfill works with neither; a scanned waybill
+  is still checked and saved, a photo (only after a waybill) still saved. Panel shows "Optional: ..." (`optSteps()`).
+- Returns and "Save tracking" (order already fulfilled) REQUIRE two steps (owner's rule), shown as a 2-step panel
   (`#trackLine.steps`): 1. scan the shipment barcode (Bosta waybill; in Returns the return shipment's barcode, any order;
   another carrier's label → "Other carrier" asks the carrier name and keeps the code as typed), 2. take its photo
   (`#photoIn`, camera, shrunk to 1600 px JPEG). The action button stays disabled until both are done, and the server

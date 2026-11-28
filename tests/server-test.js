@@ -487,10 +487,16 @@ check('Fulfill: tracking in the Activity log', sheets.Activity.rows.filter(x => 
 delete props.BOSTA_TRACK_URL; ctx.__ful = null;
 r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '3333333333', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
 check('Fulfill: waybill of another order refused, nothing fulfilled', r, r.ok === false && /for order #1001/.test(r.error) && ctx.__ful === null);
-r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
-check('Fulfill: refused without the shipment barcode (step 1), nothing fulfilled', r, r.ok === false && /Step 1/.test(r.error) && ctx.__ful === null);
+ctx.__ful = null; let shN = (sheets.Shipments ? sheets.Shipments.rows.length : 0);
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: works without a waybill and without a photo (optional, owner 2026-11-28); no tracking, no photo saved', [r, ctx.__ful],
+  r.ok && r.tracking === '' && r.photo === false && ctx.__ful && !ctx.__ful.trackingInfo && (sheets.Shipments ? sheets.Shipments.rows.length : 0) === shN);
+ctx.__ful = null;
 r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
-check('Fulfill: refused without the shipment photo (step 2), not logged as an error', r, r.ok === false && /Step 2/.test(r.error) && ctx.__ful === null && !sheets.Errors.rows.some(x => /Step 2/.test(x[3])));
+check('Fulfill: a waybill without a photo is still saved on the fulfillment', [r, ctx.__ful], r.ok && ctx.__ful.trackingInfo.number === '2222222222' && r.photo === false);
+ctx.__ful = null;
+r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', photo: 'not a photo', items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
+check('Fulfill: a broken photo is refused, nothing fulfilled', r, r.ok === false && ctx.__ful === null);
 const shBefore = (sheets.Shipments ? sheets.Shipments.rows.length : 0);
 r = post({ action: 'fulfill', key: 'kkk', orderName: '#1007', notify: false, tracking: '2222222222', photo: PH, items: [{ foId: 'FO7', foliId: 'L1', qty: 1 }] });
 const phRow = sheets.Shipments.rows.at(-1);

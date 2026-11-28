@@ -5,7 +5,7 @@ window.PF_API_URL = 'https://script.google.com/macros/s/AKfycbxCt3AtTpBYGvVmicXQ
 /* The oldest server (SERVER_VERSION in apps-script/Code.gs) this app works with. Raise it when the app starts using
  * something new on the server: if the live server is older (deploy failed or not finished), every tab shows a warning
  * instead of edits silently not being saved. */
-window.PF_MIN_SERVER = '2026-11-29.1';
+window.PF_MIN_SERVER = '2026-11-29.3';
 
 /* Clear messages instead of the browser's "Failed to fetch" when the server can't be reached, and instead of
  * "Unexpected token <" when Google answers with a web page (sign-in, quota, error page) instead of data. */

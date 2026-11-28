@@ -61,7 +61,7 @@ const P = PropertiesService.getScriptProperties();
  * ===================================================================================== */
 
 // Shown when the web-app URL is opened in a browser: tells which version of this file is deployed.
-const SERVER_VERSION = '2026-11-29.2';
+const SERVER_VERSION = '2026-11-29.3';
 
 function doGet() {
   return json_({ ok: true, service: 'petfriend', version: SERVER_VERSION, parts: ['pos', 'orders', 'shipments'] });
@@ -536,7 +536,9 @@ function saveOrderPhoto_(o) {
 
 function fulfill_(items, notify, orderName, tracking, photo, carrier) {
   if (!items || !items.length) return { ok: false, error: 'No items' };
-  needShipmentPhoto_(tracking, photo);
+  // the waybill and the photo are optional in Fulfill (owner, 2026-11-28); a photo sent must be a real photo
+  if (photo && !/^data:image\/(jpeg|png|webp);base64,/.test(String(photo))) throw uerr_('The photo could not be read: take it again');
+  if (photo && String(photo).length > 8 * 1024 * 1024) throw uerr_('The photo is too large: take it again');
   // a Bosta waybill scanned with the order: checked again here, so only a real Bosta number for this order is saved
   let track = null;
   carrier = String(carrier || '').trim().slice(0, 40);
@@ -574,7 +576,7 @@ function fulfill_(items, notify, orderName, tracking, photo, carrier) {
   }
   logActivity_('Orders', 'fulfill', orderName || '', items.reduce(function (t, i) { return t + (Number(i.qty) || 0); }, 0), track ? { tracking: track.number } : null);
   // the photo (and, for Bosta, the hourly bulky check) follows this shipment
-  const saved = saveOrderPhoto_({ tn: track.number, photo: photo, order: orderName, carrier: carrier || 'Bosta' });
+  const saved = track && photo ? saveOrderPhoto_({ tn: track.number, photo: photo, order: orderName, carrier: carrier || 'Bosta' }) : false;
   return { ok: true, status: r.fulfillment.status, tracking: track ? track.number : '', photo: saved };
 }
 

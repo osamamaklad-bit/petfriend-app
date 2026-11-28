@@ -259,7 +259,7 @@
 <body>
 <header>
   <img class="logo" src="../icon-192.png" alt="Pet Friend">
-  <h1><span id="pageTitle">Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-28.13</span></small></h1>
+  <h1><span id="pageTitle">Orders</span><small><span id="modeLabel">Fulfill</span> <span class="ver" data-no-i18n>· app 2026-11-28.14</span></small></h1>
   <button id="settingsBtn">Settings</button>
 </header>
 
@@ -850,7 +850,8 @@
       return;
     }
     $('fulfillBtn').disabled = isRcv() ? totalGot() + sumOf((i) => i.rej + i.can) === 0
-      : (isRet() ? totalGot() === 0 : (totalNeed() === 0 || totalGot() !== totalNeed())) || !state.tracking || !state.photo;   // + the 2 steps
+      : isRet() ? totalGot() === 0 || !state.tracking || !state.photo     // Returns: + the 2 steps
+      : totalNeed() === 0 || totalGot() !== totalNeed();                  // Fulfill: waybill and photo are optional
   }
 
   // ---------- the 2 required steps: 1 scan the shipment barcode, 2 take its photo (Fulfill, Returns, tracking) ----------
@@ -863,24 +864,24 @@
     const mk = function (n, cls) { const d = document.createElement('div'); d.className = 'st ' + cls; const c = document.createElement('span'); c.className = 'n'; c.textContent = n; d.appendChild(c); return d; };
     const btn = function (text, id, cls) { const b = document.createElement('button'); b.type = 'button'; b.id = id; b.textContent = text; if (cls) b.className = cls; return b; };
     // step 1
-    const s1 = mk(tr ? '✓' : '1', tr ? 'ok' : 'now'), t1 = document.createElement('div'); t1.className = 'tx';
+    const s1 = mk(tr ? '✓' : '1', tr ? 'ok' : optSteps() ? 'off' : 'now'), t1 = document.createElement('div'); t1.className = 'tx';
     if (tr) {
       const l = document.createElement('span'); l.textContent = (ret ? 'Return shipment:' : tr.carrier ? 'Shipment (' + tr.carrier + '):' : 'Bosta waybill:') + ' ';
       const v = document.createElement('b'); v.textContent = tr.number; v.dir = 'ltr'; v.setAttribute('data-no-i18n', '');
       t1.appendChild(l); t1.appendChild(v); s1.appendChild(t1); s1.appendChild(btn('✕', 'trackClear'));
     } else {
-      t1.textContent = ret ? 'Step 1: scan the barcode of the return shipment' : 'Step 1: scan the shipment waybill barcode';
+      t1.textContent = ret ? 'Step 1: scan the barcode of the return shipment' : optSteps() ? 'Optional: scan the shipment waybill barcode' : 'Step 1: scan the shipment waybill barcode';
       s1.appendChild(t1);
       if (state.pendingRef && !(state.order && state.order.done)) s1.appendChild(btn('Other carrier', 'otherBtn'));
     }
     tl.appendChild(s1);
     // step 2
-    const s2 = mk(state.photo ? '✓' : '2', state.photo ? 'ok' : tr ? 'now' : 'off'), t2 = document.createElement('div'); t2.className = 'tx';
+    const s2 = mk(state.photo ? '✓' : '2', state.photo ? 'ok' : tr && !optSteps() ? 'now' : 'off'), t2 = document.createElement('div'); t2.className = 'tx';
     if (state.photo) {
       const im = document.createElement('img'); im.src = state.photo; im.alt = '';
       s2.appendChild(im); t2.textContent = 'Photo taken'; s2.appendChild(t2); s2.appendChild(btn('Take again', 'photoBtn'));
     } else {
-      t2.textContent = ret ? 'Step 2: photo of the return shipment' : 'Step 2: photo of the shipment';
+      t2.textContent = ret ? 'Step 2: photo of the return shipment' : optSteps() ? 'Optional: photo of the shipment' : 'Step 2: photo of the shipment';
       s2.appendChild(t2);
       const b = btn('📷 Take photo', 'photoBtn', 'big'); b.disabled = !tr; s2.appendChild(b);
     }
@@ -909,7 +910,10 @@
       say(readyMsg(), 'ok');
     } catch (e) { say(e.message, 'bad'); feedback('bad'); }
   });
+  // Fulfill (not "Save tracking" on a fulfilled order, not Returns): the waybill and the photo are optional
+  function optSteps() { return !isRet() && !isRcv() && !isChk() && !(state.order && state.order.done); }
   function readyMsg() {
+    if (optSteps()) return totalGot() === totalNeed() ? 'Ready: tap Fulfill.' : 'Scan the remaining items.';
     if (!state.tracking) return isRet() ? 'Step 1: scan the barcode of the return shipment' : 'Step 1: scan the shipment waybill barcode';
     if (!state.photo) return isRet() ? 'Step 2: photo of the return shipment' : 'Step 2: photo of the shipment';
     if (isRet()) return totalGot() ? 'Ready: tap Return.' : 'Scan the items being returned.';
@@ -1209,7 +1213,6 @@
   async function submitFulfill() {
     if (state.busy) return;
     if (state.items.some((i) => !i.verified)) { say('Scan the barcode of every item first', 'bad'); feedback('bad'); return; }
-    if (!state.tracking || !state.photo) { say(readyMsg(), 'bad'); feedback('bad'); return; }
     state.busy = true; $('fulfillBtn').disabled = true;
     say('Fulfilling ' + state.order.name + '...');
     try {

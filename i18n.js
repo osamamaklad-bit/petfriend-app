@@ -276,6 +276,8 @@
     'Private courier': 'مندوب خاص',
     'Wrong PIN, try again': 'رقم سري خاطئ، حاول مرة أخرى',
     'Wrong PIN': 'رقم سري خاطئ',
+    'Optional: scan the shipment waybill barcode': 'اختياري: امسح باركود بوليصة الشحنة',
+    'Optional: photo of the shipment': 'اختياري: صورة الشحنة',
     'Too many wrong passes: this login is locked for 15 minutes': 'محاولات دخول خاطئة كثيرة: أُوقف هذا الدخول 15 دقيقة',
     'Scan or type the tracking number, then take the photo': 'امسح أو اكتب رقم التتبع، ثم التقط الصورة',
     'Point the camera at the barcode...': 'وجّه الكاميرا نحو الباركود...',
